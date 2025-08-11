@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GreenKart - Fresh Trade Platform</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            background: #f6fff6;
+            color: #333;
+        }
+        header {
+            background: linear-gradient(90deg, #2d8659, #3da374);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        nav {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            background: #3da374;
+            padding: 10px;
+            flex-wrap: wrap;
+        }
+        nav a {
+            color: white;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        nav a:hover {
+            text-decoration: underline;
+        }
+        section {
+            padding: 20px;
+            max-width: 1100px;
+            margin: auto;
+        }
+        .search-bar {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .search-bar input {
+            width: 60%;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #bbb;
+        }
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        .card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0px 3px 6px rgba(0,0,0,0.1);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .card:hover {
+            transform: scale(1.03);
+            box-shadow: 0px 6px 12px rgba(0,0,0,0.2);
+        }
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            background: #dff5df;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .stat {
+            text-align: center;
+        }
+        .cta {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .btn {
+            background: #2d8659;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            text-decoration: none;
+            margin: 5px;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #256d4a;
+        }
+        .testimonials {
+            background: #eef9ee;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .testimonial {
+            font-style: italic;
+            margin-bottom: 10px;
+        }
+        footer {
+            text-align: center;
+            padding: 15px;
+            background: #2d8659;
+            color: white;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>GreenKart 🌱</h1>
+        <p>Connecting Farmers & Customers for Fresh Deals</p>
+    </header>
+
+    <nav>
+        <a href="#">Login</a>
+        <a href="#">Signup</a>
+        <a href="#">Home</a>
+        <a href="#">About</a>
+        <a href="#">Contact</a>
+    </nav>
+
+    <section class="search-bar">
+        <input type="text" placeholder="Search vegetables, sellers, or categories...">
+    </section>
+
+    <section class="stats">
+        <div class="stat">
+            <h2>500+</h2>
+            <p>Registered Sellers</p>
+        </div>
+        <div class="stat">
+            <h2>1200+</h2>
+            <p>Happy Customers</p>
+        </div>
+        <div class="stat">
+            <h2>10K+</h2>
+            <p>Orders Delivered</p>
+        </div>
+    </section>
+
+    <section>
+        <h2>For Customers</h2>
+        <div class="features">
+            <div class="card">
+                <h3>Vegetable Page</h3>
+                <p>View fresh produce with data visualization of sellers.</p>
+            </div>
+            <div class="card">
+                <h3>Tracking</h3>
+                <p>Track your orders in real time.</p>
+            </div>
+            <div class="card">
+                <h3>Reviews & Ratings</h3>
+                <p>Rate sellers and read reviews from other buyers.</p>
+            </div>
+            <div class="card">
+                <h3>Smart Notifications</h3>
+                <p>Get notified when your desired quantity is available.</p>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2>For Sellers</h2>
+        <div class="features">
+            <div class="card">
+                <h3>Gallery Section</h3>
+                <p>Showcase your vegetables with high-quality images.</p>
+            </div>
+            <div class="card">
+                <h3>Tracking</h3>
+                <p>Track your delivery progress and transport details.</p>
+            </div>
+            <div class="card">
+                <h3>Bookmarks & Notifications</h3>
+                <p>Bookmark buyers and get alerts for orders.</p>
+            </div>
+            <div class="card">
+                <h3>Insurance Policy</h3>
+                <p>Secure your produce with insurance coverage options.</p>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2>Platform Features</h2>
+        <div class="features">
+            <div class="card">
+                <h3>Recommendation System</h3>
+                <p>Personalized suggestions based on buying and selling history.</p>
+            </div>
+            <div class="card">
+                <h3>UPI Payments</h3>
+                <p>Seamless and secure online transactions.</p>
+            </div>
+            <div class="card">
+                <h3>Filter & Sort</h3>
+                <p>Quickly find products by price, rating, or freshness.</p>
+            </div>
+            <div class="card">
+                <h3>24/7 Support</h3>
+                <p>Customer support to help you anytime.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="cta">
+        <a href="#" class="btn">Join as Seller</a>
+        <a href="#" class="btn">Shop Now</a>
+    </section>
+
+    <section class="testimonials">
+        <h2>What Our Users Say</h2>
+        <p class="testimonial">"GreenKart helped me reach more customers than ever before!" – Ramesh, Farmer</p>
+        <p class="testimonial">"I get the freshest vegetables at the best prices." – Priya, Customer</p>
+    </section>
+
+    <footer>
+        <p>© 2025 GreenKart. All Rights Reserved.</p>
+    </footer>
+
+</body>
+</html>
