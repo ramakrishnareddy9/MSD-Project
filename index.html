@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+
+<body>
+    <div class="Container">
+        <div class="imageSection">
+            <div class="imageContent">
+                <h2>Welcome Back!</h2>
+                <p>Sign in to access your personalized dashboard and manage your account settings.</p>
+            </div>
+        </div>
+        <div class="MainContainer">
+            <div class="Header">
+                <div>Login</div>
+                <div>Register</div>
+                <div>Forget</div>
+            </div>
+            <div class="mainData">
+                <div class="form" id="login">
+                    <h1>Login to your account</h1>
+                    <div class="input">
+                        <i class="fas fa-envelope"></i>
+                        <input type="email" placeholder="Email Address">
+                    </div>
+                    <div class="input">
+                        <i class="fas fa-lock"></i>
+                        <input type="password" placeholder="Password">
+                    </div>
+                    <button>Login</button>
+                    <div class="social">
+                        <p>Or login with</p>
+                        <div class="socialicons">
+                            <a href="#"><i class="fab fa-google"></i></a>
+                            <a href="#"><i class="fab fa-facebook-f"></i></a>
+                            <a href="#"><i class="fab fa-twitter"></i></a>
+                        </div>
+                    </div>
+                </div>
+                <div class="form" id="Register">
+                    <h1>Create New Account</h1>
+                    <div class="input">
+                        <i class="fas fa-envelope"></i>
+                        <input type="email" placeholder="Email Address">
+                    </div>
+                    <div class="input">
+                        <i class="fas fa-lock"></i>
+                        <input type="password" placeholder="Password">
+                    </div>
+                    <div class="input">
+                        <input type="number" placeholder="AdharNumber">
+                    </div>
+                    <div class="input">
+                        <input type="text" placeholder="Name">
+                    </div>
+                    <div class="input">
+                        <input type="number" placeholder="Mobile Number">
+                    </div>
+                    <div class="input">
+                        <select name="Type" id="Type">
+                            <option value="Coustomer">Coustomer</option>
+                            <option value="Coustomer">Farmer</option>
+                            <option value="Coustomer">Transpoter</option>
+                        </select>
+                    </div>
+                    <button>Create account</button>
+                </div>
+                <div class="form" id="ForgetPassword">
+                    <h1>Reset Your Password</h1>
+                    <p>Enter your email address and we'll send you a link to reset your password.</p>
+                    <div class="input-group">
+                        <i class="fas fa-envelope"></i>
+                        <input type="email" placeholder="Email Address">
+                    </div>
+                    <button>Send Reset Link</button>
+                    <div class="form-footer" style="text-align: center; margin-top: 20px;">
+                        <a href="#" class="back-to-login">Back to Login</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
+<script src="script.js"></script>
