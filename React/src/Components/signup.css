@@ -5,13 +5,7 @@
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
-body {
-    background: url('OIP.webp') no-repeat center/cover;
-    height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-}
+/* Body styling moved to AuthPage wrapper */
 
 .Container {
     display: flex;

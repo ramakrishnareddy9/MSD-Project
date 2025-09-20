@@ -1,10 +1,12 @@
 import "./FarmKartLanding.css";
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import {
   FaLeaf,
-  FaSearch,
+  FaMagnifyingGlass,
   FaCartShopping,
   FaStar,
-  FaStarHalfAlt,
+  FaStarHalf,
   FaInstagram,
   FaFacebook,
   FaTwitter,
@@ -12,6 +14,9 @@ import {
 } from "react-icons/fa6";
 
 function FarmKartLanding() {
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+
   return (
     <>
       {/* Header */}
@@ -22,7 +27,7 @@ function FarmKartLanding() {
         </div>
 
         <div className="searchContainer">
-          <FaSearch />
+          <FaMagnifyingGlass />
           <div className="search">Search fresh produce...</div>
         </div>
 
@@ -31,8 +36,18 @@ function FarmKartLanding() {
           <div className="nav-item">Support</div>
           <div className="nav-item">Community</div>
           <div className="auth-buttons">
-            <button className="btn btn-signup">Sign up</button>
-            <button className="btn btn-login">Log in</button>
+            {user ? (
+              <>
+                <span style={{color: '#333', marginRight: '10px'}}>Welcome, {user.role}!</span>
+                <button className="btn btn-login" onClick={() => navigate(`/dashboard/${user.role}`)}>Dashboard</button>
+                <button className="btn btn-signup" onClick={logout}>Logout</button>
+              </>
+            ) : (
+              <>
+                <button className="btn btn-signup" onClick={() => navigate('/signup')}>Sign up</button>
+                <button className="btn btn-login" onClick={() => navigate('/login')}>Log in</button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -187,7 +202,7 @@ function FarmKartLanding() {
               <p className="farmer-name">Ramesh Patel</p>
               <p className="farmer-specialty">Organic Vegetables</p>
               <p className="farmer-rating">
-                <FaStar /> <FaStar /> <FaStar /> <FaStar /> <FaStarHalfAlt /> 4.5
+                <FaStar /> <FaStar /> <FaStar /> <FaStar /> <FaStarHalf /> 4.5
                 (120 reviews)
               </p>
             </div>
