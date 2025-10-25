@@ -1,0 +1,97 @@
+{
+  "categories": [
+    { "name": "Vegetables", "slug": "vegetables", "description": "Fresh vegetables" },
+    { "name": "Fruits", "slug": "fruits", "description": "Seasonal fruits" },
+    { "name": "Grains", "slug": "grains", "description": "Grains and cereals" },
+    { "name": "Dairy", "slug": "dairy", "description": "Milk, butter, cheese" },
+    { "name": "Spices", "slug": "spices", "description": "Indian spices" },
+    { "name": "Pulses", "slug": "pulses", "description": "Lentils and pulses" },
+    { "name": "Oils", "slug": "oils", "description": "Cold-pressed oils" },
+    { "name": "Organic", "slug": "organic", "description": "Certified organic" }
+  ],
+  "users": [
+    { "name": "Aarav Customer", "email": "customer@farmkart.com", "phone": "+919900000001", "password": "customer123", "roles": ["customer"], "addresses": [
+      {"type":"shipping","line1":"12 MG Road","city":"Bengaluru","state":"Karnataka","postalCode":"560001","country":"India","coordinates":{"type":"Point","coordinates":[77.5946,12.9716]}}
+    ]},
+    { "name": "Rohan Farmer", "email": "farmer1@farmkart.com", "phone": "+919900000010", "password": "farmer123", "roles": ["farmer"], "addresses": [
+      {"type":"farm","line1":"Village Khetpura","city":"Deesa","state":"Gujarat","postalCode":"385535","country":"India","coordinates":{"type":"Point","coordinates":[72.5,24.5]}}
+    ]},
+    { "name": "Suman Farmer", "email": "farmer2@farmkart.com", "phone": "+919900000011", "password": "farmer123", "roles": ["farmer"], "addresses": [
+      {"type":"farm","line1":"Village Rampur","city":"Jaipur","state":"Rajasthan","postalCode":"302001","country":"India","coordinates":{"type":"Point","coordinates":[75.7873,26.9124]}}
+    ]},
+    { "name": "Fresh Mart Pvt Ltd", "email": "business@farmkart.com", "phone": "+919900000020", "password": "business123", "roles": ["business"] },
+    { "name": "Green Cuisine", "email": "restaurant@farmkart.com", "phone": "+919900000030", "password": "restaurant123", "roles": ["restaurant"] },
+    { "name": "Swift Logistics", "email": "delivery@farmkart.com", "phone": "+919900000040", "password": "delivery123", "roles": ["delivery"] },
+    { "name": "Admin User", "email": "admin@farmkart.com", "phone": "+919900000050", "password": "admin123", "roles": ["admin"] }
+  ],
+  "profiles": {
+    "farmers": [
+      { "email": "farmer1@farmkart.com", "farmName": "Green Fields North", "farmType": "organic", "farmSize": 20, "certifications": ["organic"], "experienceYears": 10 },
+      { "email": "farmer2@farmkart.com", "farmName": "Sunrise Farm", "farmType": "conventional", "farmSize": 35, "certifications": ["global_gap"], "experienceYears": 7 }
+    ],
+    "businesses": [
+      { "email": "business@farmkart.com", "companyName": "Fresh Mart Pvt Ltd", "companyType": "wholesaler", "gstNumber": "GSTIN22AAAAA0000A1Z5", "paymentTerms": "net_15", "creditLimit": 500000 }
+    ],
+    "restaurants": [
+      { "email": "restaurant@farmkart.com", "restaurantName": "Green Cuisine", "cuisineType": ["Indian", "Continental"], "fssaiLicense": "FSSAI123456", "deliveryWindowPreference": "early_morning" }
+    ],
+    "deliveries": [
+      { "email": "delivery@farmkart.com", "companyName": "Swift Logistics", "scale": "large", "vehicleTypes": ["truck", "refrigerated_truck"], "coldChainCapable": true, "capacity": {"maxWeight": 10000, "maxVolume": 200} }
+    ]
+  },
+  "locations": [
+    { "type": "farm", "name": "Green Fields North Farm", "ownerEmail": "farmer1@farmkart.com", "address": {"line1": "Village Khetpura", "city": "Deesa", "state": "Gujarat", "postalCode": "385535", "country": "India"}, "coordinates": {"type": "Point", "coordinates": [72.5, 24.5]}, "capacity": {"maxWeight": 5000, "coldStorage": true} },
+    { "type": "farm", "name": "Sunrise Farm Yard", "ownerEmail": "farmer2@farmkart.com", "address": {"line1": "Village Rampur", "city": "Jaipur", "state": "Rajasthan", "postalCode": "302001", "country": "India"}, "coordinates": {"type": "Point", "coordinates": [75.7873, 26.9124]}, "capacity": {"maxWeight": 6000, "coldStorage": false} },
+    { "type": "hub", "name": "Ahmedabad Central Hub", "address": {"line1": "APMC Market", "city": "Ahmedabad", "state": "Gujarat", "postalCode": "380001", "country": "India"}, "coordinates": {"type": "Point", "coordinates": [72.58, 23.02]}, "capacity": {"maxWeight": 50000, "coldStorage": true} }
+  ],
+  "products": [
+    { "ownerEmail": "farmer1@farmkart.com", "categorySlug": "vegetables", "name": "Fresh Tomatoes", "description": "Juicy vine-ripened tomatoes", "unit": "kg", "basePrice": 34, "images": ["https://images.unsplash.com/photo-1567306226416-28f0efdc88ce?w=800"], "isPerishable": true, "shelfLife": 7, "storageRequirements": "refrigerated", "tags": ["fresh","vegetable"], "status": "active", "discount": 10 },
+    { "ownerEmail": "farmer1@farmkart.com", "categorySlug": "vegetables", "name": "Organic Carrots", "description": "Crunchy organic carrots", "unit": "kg", "basePrice": 45, "images": ["https://images.unsplash.com/photo-1455619452474-d2be8b1e70cd?w=800"], "isPerishable": true, "shelfLife": 14, "storageRequirements": "refrigerated", "tags": ["organic"], "status": "active" },
+    { "ownerEmail": "farmer1@farmkart.com", "categorySlug": "fruits", "name": "Bananas", "description": "Sweet bananas", "unit": "kg", "basePrice": 55, "images": ["https://images.unsplash.com/photo-1571772996211-2f02c9727629?w=800"], "isPerishable": true, "shelfLife": 5, "storageRequirements": "ambient", "tags": ["fruit"], "status": "active" },
+    { "ownerEmail": "farmer1@farmkart.com", "categorySlug": "grains", "name": "Basmati Rice", "description": "Aromatic basmati rice", "unit": "kg", "basePrice": 62, "images": ["https://images.unsplash.com/photo-1604908175330-c6471e2b99f6?w=800"], "isPerishable": false, "tags": ["rice"], "status": "active" },
+    { "ownerEmail": "farmer1@farmkart.com", "categorySlug": "grains", "name": "Organic Wheat", "description": "Premium organic wheat", "unit": "kg", "basePrice": 52, "images": ["https://images.unsplash.com/photo-1534670007418-fbb7f6cf32c3?w=800"], "isPerishable": false, "tags": ["grain","organic"], "status": "active" },
+
+    { "ownerEmail": "farmer2@farmkart.com", "categorySlug": "vegetables", "name": "Spinach", "description": "Fresh spinach leaves", "unit": "kg", "basePrice": 28, "images": ["https://images.unsplash.com/photo-1542444459-db63c3d15501?w=800"], "isPerishable": true, "shelfLife": 5, "storageRequirements": "refrigerated", "tags": ["leafy"], "status": "active", "discount": 5 },
+    { "ownerEmail": "farmer2@farmkart.com", "categorySlug": "fruits", "name": "Apples", "description": "Kashmiri apples", "unit": "kg", "basePrice": 140, "images": ["https://images.unsplash.com/photo-1567306226416-28f0efdc88ce?w=800"], "isPerishable": true, "shelfLife": 10, "storageRequirements": "refrigerated", "tags": ["fruit"], "status": "active" },
+    { "ownerEmail": "farmer2@farmkart.com", "categorySlug": "dairy", "name": "Cow Milk", "description": "Farm fresh milk", "unit": "liter", "basePrice": 65, "images": ["https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=800"], "isPerishable": true, "shelfLife": 3, "storageRequirements": "refrigerated", "tags": ["dairy"], "status": "active" },
+    { "ownerEmail": "farmer2@farmkart.com", "categorySlug": "pulses", "name": "Toor Dal", "description": "Premium toor dal", "unit": "kg", "basePrice": 125, "images": ["https://images.unsplash.com/photo-1604908175330-c6471e2b99f6?w=800"], "isPerishable": false, "tags": ["dal","pulses"], "status": "active" },
+    { "ownerEmail": "farmer2@farmkart.com", "categorySlug": "spices", "name": "Turmeric", "description": "Organic turmeric powder", "unit": "kg", "basePrice": 240, "images": ["https://images.unsplash.com/photo-1517263904808-5dc91e3e7044?w=800"], "isPerishable": false, "tags": ["spice","organic"], "status": "active" },
+
+    { "ownerEmail": "farmer1@farmkart.com", "categorySlug": "oils", "name": "Cold-Pressed Groundnut Oil", "description": "Cold-pressed groundnut oil", "unit": "liter", "basePrice": 220, "images": ["https://images.unsplash.com/photo-1605478185583-3e5f85d59ccb?w=800"], "isPerishable": false, "tags": ["oil","groundnut"], "status": "active" },
+    { "ownerEmail": "farmer2@farmkart.com", "categorySlug": "oils", "name": "Mustard Oil", "description": "Kachi ghani mustard oil", "unit": "liter", "basePrice": 190, "images": ["https://images.unsplash.com/photo-1605478185583-3e5f85d59ccb?w=800"], "isPerishable": false, "tags": ["oil","mustard"], "status": "active" },
+
+    { "ownerEmail": "farmer1@farmkart.com", "categorySlug": "fruits", "name": "Mango (Alphonso)", "description": "Seasonal Alphonso mangoes", "unit": "kg", "basePrice": 180, "images": ["https://images.unsplash.com/photo-1550258987-190a2d41a8ba?w=800"], "isPerishable": true, "shelfLife": 6, "storageRequirements": "ambient", "tags": ["fruit","seasonal"], "status": "active" },
+    { "ownerEmail": "farmer2@farmkart.com", "categorySlug": "fruits", "name": "Pomegranates", "description": "Fresh pomegranates", "unit": "kg", "basePrice": 160, "images": ["https://images.unsplash.com/photo-1567306226416-28f0efdc88ce?w=800"], "isPerishable": true, "shelfLife": 10, "storageRequirements": "ambient", "tags": ["fruit"], "status": "active" },
+
+    { "ownerEmail": "farmer1@farmkart.com", "categorySlug": "pulses", "name": "Chana Dal", "description": "Split chickpeas", "unit": "kg", "basePrice": 90, "images": ["https://images.unsplash.com/photo-1604908175330-c6471e2b99f6?w=800"], "isPerishable": false, "tags": ["pulses"], "status": "active" },
+    { "ownerEmail": "farmer2@farmkart.com", "categorySlug": "pulses", "name": "Moong Dal", "description": "Yellow moong dal", "unit": "kg", "basePrice": 110, "images": ["https://images.unsplash.com/photo-1604908175330-c6471e2b99f6?w=800"], "isPerishable": false, "tags": ["pulses"], "status": "active" },
+
+    { "ownerEmail": "farmer1@farmkart.com", "categorySlug": "spices", "name": "Cumin Seeds", "description": "Whole jeera", "unit": "kg", "basePrice": 420, "images": ["https://images.unsplash.com/photo-1517263904808-5dc91e3e7044?w=800"], "isPerishable": false, "tags": ["spice"], "status": "active" },
+    { "ownerEmail": "farmer2@farmkart.com", "categorySlug": "spices", "name": "Coriander Powder", "description": "Dhaniya powder", "unit": "kg", "basePrice": 220, "images": ["https://images.unsplash.com/photo-1517263904808-5dc91e3e7044?w=800"], "isPerishable": false, "tags": ["spice"], "status": "active" }
+  ],
+  "inventory": [
+    { "productName": "Fresh Tomatoes", "locationName": "Green Fields North Farm", "quantity": 500, "unit": "kg", "qualityGrade": "A" },
+    { "productName": "Organic Carrots", "locationName": "Green Fields North Farm", "quantity": 350, "unit": "kg", "qualityGrade": "A" },
+    { "productName": "Bananas", "locationName": "Green Fields North Farm", "quantity": 600, "unit": "kg", "qualityGrade": "A" },
+    { "productName": "Basmati Rice", "locationName": "Green Fields North Farm", "quantity": 1000, "unit": "kg", "qualityGrade": "A" },
+    { "productName": "Organic Wheat", "locationName": "Green Fields North Farm", "quantity": 1200, "unit": "kg", "qualityGrade": "A" },
+
+    { "productName": "Spinach", "locationName": "Sunrise Farm Yard", "quantity": 400, "unit": "kg", "qualityGrade": "A" },
+    { "productName": "Apples", "locationName": "Sunrise Farm Yard", "quantity": 450, "unit": "kg", "qualityGrade": "A" },
+    { "productName": "Cow Milk", "locationName": "Sunrise Farm Yard", "quantity": 800, "unit": "liter", "qualityGrade": "A" },
+    { "productName": "Toor Dal", "locationName": "Sunrise Farm Yard", "quantity": 900, "unit": "kg", "qualityGrade": "A" },
+    { "productName": "Turmeric", "locationName": "Sunrise Farm Yard", "quantity": 300, "unit": "kg", "qualityGrade": "A" },
+
+    { "productName": "Cold-Pressed Groundnut Oil", "locationName": "Green Fields North Farm", "quantity": 500, "unit": "liter", "qualityGrade": "A" },
+    { "productName": "Mustard Oil", "locationName": "Sunrise Farm Yard", "quantity": 450, "unit": "liter", "qualityGrade": "A" },
+
+    { "productName": "Mango (Alphonso)", "locationName": "Green Fields North Farm", "quantity": 200, "unit": "kg", "qualityGrade": "A" },
+    { "productName": "Pomegranates", "locationName": "Sunrise Farm Yard", "quantity": 250, "unit": "kg", "qualityGrade": "A" },
+
+    { "productName": "Chana Dal", "locationName": "Green Fields North Farm", "quantity": 700, "unit": "kg", "qualityGrade": "A" },
+    { "productName": "Moong Dal", "locationName": "Sunrise Farm Yard", "quantity": 650, "unit": "kg", "qualityGrade": "A" },
+
+    { "productName": "Cumin Seeds", "locationName": "Green Fields North Farm", "quantity": 180, "unit": "kg", "qualityGrade": "A" },
+    { "productName": "Coriander Powder", "locationName": "Sunrise Farm Yard", "quantity": 220, "unit": "kg", "qualityGrade": "A" }
+  ]
+}
