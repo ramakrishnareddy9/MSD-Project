@@ -1,0 +1,60 @@
+# General
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Node.js
+node_modules/
+
+# Environment files
+.env
+.env.*
+*.local
+backend/.env
+FrontEnd/.env
+
+# Build outputs
+build/
+dist/
+FrontEnd/dist/
+
+# Vite/Cache
+.vite/
+FrontEnd/.vite/
+
+# Coverage
+coverage/
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Misc
+*.bak
+*.orig
+
+# OS-specific
+$RECYCLE.BIN/
+._*
+
+# Local data/cache
+/tmp/
+.cache/
+
+# Logs directory
+logs/
+backend/logs/
+FrontEnd/logs/
+
+# lockfiles (keep lockfiles committed; do not ignore)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
