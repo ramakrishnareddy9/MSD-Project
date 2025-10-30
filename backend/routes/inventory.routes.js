@@ -1,5 +1,8 @@
 import express from 'express';
 import InventoryLot from '../models/InventoryLot.model.js';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { authorize } from '../middleware/role.middleware.js';
+import { validateObjectId } from '../middleware/validation.middleware.js';
 
 const router = express.Router();
 
@@ -39,7 +42,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get lot by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', validateObjectId('id'), async (req, res) => {
   try {
     const lot = await InventoryLot.findById(req.params.id)
       .populate('productId')
@@ -64,8 +67,8 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Create inventory lot
-router.post('/', async (req, res) => {
+// Create inventory lot (farmers and admins only)
+router.post('/', authenticate, authorize('farmer', 'admin'), async (req, res) => {
   try {
     const lot = new InventoryLot(req.body);
     await lot.save();
@@ -83,8 +86,8 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Update inventory lot
-router.put('/:id', async (req, res) => {
+// Update inventory lot (farmers and admins only)
+router.put('/:id', authenticate, authorize('farmer', 'admin'), validateObjectId('id'), async (req, res) => {
   try {
     const lot = await InventoryLot.findByIdAndUpdate(
       req.params.id,
@@ -112,8 +115,8 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Delete inventory lot
-router.delete('/:id', async (req, res) => {
+// Delete inventory lot (farmers and admins only)
+router.delete('/:id', authenticate, authorize('farmer', 'admin'), validateObjectId('id'), async (req, res) => {
   try {
     const lot = await InventoryLot.findByIdAndDelete(req.params.id);
 

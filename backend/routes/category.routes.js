@@ -1,5 +1,8 @@
 import express from 'express';
 import Category from '../models/Category.model.js';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { authorize } from '../middleware/role.middleware.js';
+import { validateObjectId } from '../middleware/validation.middleware.js';
 
 const router = express.Router();
 
@@ -29,7 +32,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get category by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', validateObjectId('id'), async (req, res) => {
   try {
     const category = await Category.findById(req.params.id);
     
@@ -52,8 +55,8 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Create category
-router.post('/', async (req, res) => {
+// Create category (admin only)
+router.post('/', authenticate, authorize('admin'), async (req, res) => {
   try {
     const category = new Category(req.body);
     await category.save();
@@ -71,8 +74,8 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Update category
-router.put('/:id', async (req, res) => {
+// Update category (admin only)
+router.put('/:id', authenticate, authorize('admin'), validateObjectId('id'), async (req, res) => {
   try {
     const category = await Category.findByIdAndUpdate(
       req.params.id,
@@ -100,8 +103,8 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Delete category
-router.delete('/:id', async (req, res) => {
+// Delete category (admin only)
+router.delete('/:id', authenticate, authorize('admin'), validateObjectId('id'), async (req, res) => {
   try {
     const category = await Category.findByIdAndDelete(req.params.id);
 

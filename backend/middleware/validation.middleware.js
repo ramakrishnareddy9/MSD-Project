@@ -257,10 +257,6 @@ export const validateSearch = [
  * Recurring Order Validation
  */
 export const validateRecurringOrder = [
-  body('buyerId')
-    .isMongoId()
-    .withMessage('Valid buyer ID is required'),
-  
   body('type')
     .isIn(['b2c', 'b2b'])
     .withMessage('Order type must be b2c or b2b'),
@@ -276,6 +272,20 @@ export const validateRecurringOrder = [
   body('itemsTemplate.*.quantity')
     .isInt({ min: 1 })
     .withMessage('Quantity must be at least 1'),
+
+  // Delivery address snapshot validation
+  body('deliveryAddress.line1')
+    .isString().notEmpty()
+    .withMessage('Delivery address line1 is required'),
+  body('deliveryAddress.city')
+    .isString().notEmpty()
+    .withMessage('Delivery address city is required'),
+  body('deliveryAddress.state')
+    .isString().notEmpty()
+    .withMessage('Delivery address state is required'),
+  body('deliveryAddress.postalCode')
+    .isString().notEmpty()
+    .withMessage('Delivery address postal code is required'),
   
   body('schedule.frequency')
     .isIn(['weekly', 'biweekly', 'monthly', 'custom'])

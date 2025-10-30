@@ -23,22 +23,14 @@ async function processRecurringOrder(recurringOrder) {
   try {
     console.log(`Processing recurring order: ${recurringOrder._id}`);
     
-    // Fetch buyer details
-    const buyer = await User.findById(recurringOrder.buyerId)
-      .populate('addresses')
-      .session(session);
+    // Optionally fetch buyer (not required for address anymore)
+    const buyer = await User.findById(recurringOrder.buyerId).session(session);
+    if (!buyer) throw new Error('Buyer not found');
     
-    if (!buyer) {
-      throw new Error('Buyer not found');
-    }
-    
-    // Find delivery address
-    const deliveryAddress = buyer.addresses.find(
-      addr => addr._id.toString() === recurringOrder.deliveryAddressId
-    );
-    
-    if (!deliveryAddress) {
-      throw new Error('Delivery address not found');
+    // Use delivery address snapshot stored on recurring order
+    const deliveryAddress = recurringOrder.deliveryAddress;
+    if (!deliveryAddress || !deliveryAddress.line1) {
+      throw new Error('Recurring order missing delivery address');
     }
     
     // Process items and check inventory
@@ -84,12 +76,11 @@ async function processRecurringOrder(recurringOrder) {
       orderItems.push({
         productId: product._id,
         productName: product.name,
-        productImage: product.images?.[0]?.url,
         quantity: template.quantity,
         unit: product.unit,
         unitPrice: product.basePrice,
         totalPrice: itemTotal,
-        farmerId: product.ownerId
+        lotId: inventory._id
       });
       
       subtotal += itemTotal;
@@ -100,22 +91,18 @@ async function processRecurringOrder(recurringOrder) {
     const tax = subtotal * 0.05; // 5% tax
     const total = subtotal + deliveryFee + tax;
     
-    // Create order
+    // Create order (conform to Order.model.js schema)
     const order = new Order({
       type: recurringOrder.type,
       buyerId: recurringOrder.buyerId,
       sellerId: sellerId,
-      orderItems: orderItems,
-      pricing: {
-        subtotal,
-        deliveryFee,
-        tax,
-        total,
-        currency: 'INR'
-      },
-      status: 'pending',
+      orderItems,
+      subtotal,
+      deliveryFee,
+      tax,
+      total,
+      currency: 'INR',
       deliveryAddress: {
-        recipientName: buyer.name,
         line1: deliveryAddress.line1,
         line2: deliveryAddress.line2,
         city: deliveryAddress.city,
@@ -124,16 +111,8 @@ async function processRecurringOrder(recurringOrder) {
         country: deliveryAddress.country,
         coordinates: deliveryAddress.coordinates
       },
-      deliverySchedule: {
-        preferredTimeSlot: recurringOrder.deliveryPreferences?.preferredTimeSlot || 'morning'
-      },
-      payment: {
-        method: recurringOrder.type === 'b2b' ? 'credit' : 'prepaid',
-        status: 'pending'
-      },
-      notes: {
-        internal: `Auto-generated from recurring order ${recurringOrder._id}`
-      }
+      paymentTerms: recurringOrder.type === 'b2b' ? 'net_15' : 'prepaid',
+      notes: `Auto-generated from recurring order ${recurringOrder._id}`
     });
     
     await order.save({ session });

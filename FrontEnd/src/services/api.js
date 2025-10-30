@@ -305,6 +305,261 @@ export const reviewAPI = {
   }
 };
 
+// ===== PAYMENT API =====
+export const paymentAPI = {
+  getAll: async (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/payments?${query}`);
+  },
+
+  getById: async (id) => {
+    return apiCall(`/payments/${id}`);
+  },
+
+  create: async (paymentData) => {
+    return apiCall('/payments', {
+      method: 'POST',
+      body: JSON.stringify(paymentData)
+    });
+  },
+
+  markSuccess: async (id, data) => {
+    return apiCall(`/payments/${id}/success`, {
+      method: 'PATCH',
+      body: JSON.stringify(data)
+    });
+  },
+
+  markFailed: async (id, reason) => {
+    return apiCall(`/payments/${id}/failed`, {
+      method: 'PATCH',
+      body: JSON.stringify({ reason })
+    });
+  },
+
+  processRefund: async (id, amount, reason) => {
+    return apiCall(`/payments/${id}/refund`, {
+      method: 'POST',
+      body: JSON.stringify({ amount, reason })
+    });
+  },
+
+  getStats: async (startDate, endDate) => {
+    const params = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/payments/stats/overview?${query}`);
+  }
+};
+
+// ===== PRICE AGREEMENT API =====
+export const priceAgreementAPI = {
+  getAll: async (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/price-agreements?${query}`);
+  },
+
+  getById: async (id) => {
+    return apiCall(`/price-agreements/${id}`);
+  },
+
+  create: async (agreementData) => {
+    return apiCall('/price-agreements', {
+      method: 'POST',
+      body: JSON.stringify(agreementData)
+    });
+  },
+
+  update: async (id, agreementData) => {
+    return apiCall(`/price-agreements/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(agreementData)
+    });
+  },
+
+  approve: async (id, notes) => {
+    return apiCall(`/price-agreements/${id}/approve`, {
+      method: 'PATCH',
+      body: JSON.stringify({ notes })
+    });
+  },
+
+  reject: async (id, reason) => {
+    return apiCall(`/price-agreements/${id}/reject`, {
+      method: 'PATCH',
+      body: JSON.stringify({ reason })
+    });
+  },
+
+  cancel: async (id, reason) => {
+    return apiCall(`/price-agreements/${id}/cancel`, {
+      method: 'DELETE',
+      body: JSON.stringify({ reason })
+    });
+  }
+};
+
+// ===== RECURRING ORDER API =====
+export const recurringOrderAPI = {
+  getAll: async (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/recurring-orders?${query}`);
+  },
+
+  getById: async (id) => {
+    return apiCall(`/recurring-orders/${id}`);
+  },
+
+  create: async (orderData) => {
+    return apiCall('/recurring-orders', {
+      method: 'POST',
+      body: JSON.stringify(orderData)
+    });
+  },
+
+  update: async (id, orderData) => {
+    return apiCall(`/recurring-orders/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(orderData)
+    });
+  },
+
+  pause: async (id) => {
+    return apiCall(`/recurring-orders/${id}/pause`, {
+      method: 'PATCH'
+    });
+  },
+
+  resume: async (id) => {
+    return apiCall(`/recurring-orders/${id}/resume`, {
+      method: 'PATCH'
+    });
+  },
+
+  cancel: async (id) => {
+    return apiCall(`/recurring-orders/${id}`, {
+      method: 'DELETE'
+    });
+  }
+};
+
+// ===== DELIVERY API =====
+export const deliveryAPI = {
+  // Shipment methods (long-haul)
+  shipments: {
+    getAll: async (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return apiCall(`/delivery/shipments?${query}`);
+    },
+
+    getById: async (id) => {
+      return apiCall(`/delivery/shipments/${id}`);
+    },
+
+    create: async (shipmentData) => {
+      return apiCall('/delivery/shipments', {
+        method: 'POST',
+        body: JSON.stringify(shipmentData)
+      });
+    },
+
+    updateTracking: async (id, coordinates, checkpoint) => {
+      return apiCall(`/delivery/shipments/${id}/tracking`, {
+        method: 'PATCH',
+        body: JSON.stringify({ coordinates, checkpoint })
+      });
+    },
+
+    markDelivered: async (id) => {
+      return apiCall(`/delivery/shipments/${id}/deliver`, {
+        method: 'PATCH'
+      });
+    }
+  },
+
+  // Delivery task methods (last-mile)
+  tasks: {
+    getAll: async (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return apiCall(`/delivery/tasks?${query}`);
+    },
+
+    getById: async (id) => {
+      return apiCall(`/delivery/tasks/${id}`);
+    },
+
+    create: async (taskData) => {
+      return apiCall('/delivery/tasks', {
+        method: 'POST',
+        body: JSON.stringify(taskData)
+      });
+    },
+
+    accept: async (id) => {
+      return apiCall(`/delivery/tasks/${id}/accept`, {
+        method: 'PATCH'
+      });
+    },
+
+    start: async (id) => {
+      return apiCall(`/delivery/tasks/${id}/start`, {
+        method: 'PATCH'
+      });
+    },
+
+    complete: async (id, proof) => {
+      return apiCall(`/delivery/tasks/${id}/complete`, {
+        method: 'PATCH',
+        body: JSON.stringify({ proof })
+      });
+    },
+
+    updateLocation: async (id, coordinates) => {
+      return apiCall(`/delivery/tasks/${id}/location`, {
+        method: 'PATCH',
+        body: JSON.stringify({ coordinates })
+      });
+    }
+  }
+};
+
+// ===== COMMISSION API (Admin) =====
+export const commissionAPI = {
+  getAll: async (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/commissions?${query}`);
+  },
+
+  getById: async (id) => {
+    return apiCall(`/commissions/${id}`);
+  },
+
+  getSettlementSummary: async (sellerId, cycleId) => {
+    return apiCall(`/commissions/settlement/${sellerId}/${cycleId}`);
+  },
+
+  markCollected: async (id) => {
+    return apiCall(`/commissions/${id}/collect`, {
+      method: 'PATCH'
+    });
+  },
+
+  processPayout: async (id, paymentDetails) => {
+    return apiCall(`/commissions/${id}/payout`, {
+      method: 'POST',
+      body: JSON.stringify(paymentDetails)
+    });
+  },
+
+  addAdjustment: async (id, type, amount, reason) => {
+    return apiCall(`/commissions/${id}/adjustment`, {
+      method: 'POST',
+      body: JSON.stringify({ type, amount, reason })
+    });
+  }
+};
+
 export default {
   auth: authAPI,
   user: userAPI,
@@ -313,5 +568,10 @@ export default {
   order: orderAPI,
   inventory: inventoryAPI,
   location: locationAPI,
-  review: reviewAPI
+  review: reviewAPI,
+  payment: paymentAPI,
+  priceAgreement: priceAgreementAPI,
+  recurringOrder: recurringOrderAPI,
+  delivery: deliveryAPI,
+  commission: commissionAPI
 };

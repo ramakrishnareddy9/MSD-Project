@@ -53,6 +53,7 @@ const reviewSchema = new mongoose.Schema({
 // Indexes
 reviewSchema.index({ productId: 1, status: 1, createdAt: -1 });
 reviewSchema.index({ userId: 1, createdAt: -1 });
+reviewSchema.index({ userId: 1, orderId: 1 }, { unique: true }); // Prevent duplicate reviews per order
 
 // Update product average rating after review is saved
 reviewSchema.post('save', async function() {

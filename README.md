@@ -13,18 +13,23 @@ MSD-Project/
 │   ├── server.js        # Express server
 │   └── package.json
 │
-├── React/               # React + Vite frontend
+├── FrontEnd/            # React + Vite frontend
 │   ├── src/
 │   │   ├── Components/  # Reusable UI components
-│   │   ├── contexts/    # React contexts (Auth)
+│   │   ├── contexts/    # React contexts (Auth, Cart)
 │   │   ├── pages/       # Page components
 │   │   ├── services/    # API service layer
 │   │   └── App.jsx
 │   └── package.json
 │
-├── notes.md            # Platform documentation
-├── ERD.md              # Entity-Relationship diagram
-└── README.md           # This file
+├── prompts/             # Implementation guides (DO NOT DELETE)
+│   ├── SYSTEM_OVERVIEW_PROMPT.md
+│   ├── BACKEND_API_PROMPT.md
+│   └── REACT_FRONTEND_PROMPT.md
+│
+├── PROJECT_STATUS.md    # Current implementation status
+├── SETUP_GUIDE.md       # Detailed setup instructions
+└── README.md            # This file
 ```
 
 ## 🚀 Quick Start Guide
@@ -479,6 +484,16 @@ See [ERD.md](./ERD.md) for complete entity-relationship diagram.
 ## 📝 License
 
 This project is for educational purposes as part of MSD coursework.
+
+---
+
+## 📚 Documentation
+
+- **[PROJECT_STATUS.md](PROJECT_STATUS.md)** - Current implementation status, features, and next steps
+- **[SETUP_GUIDE.md](SETUP_GUIDE.md)** - Detailed setup and configuration guide
+- **[backend/README.md](backend/README.md)** - Backend API documentation
+- **[FrontEnd/README.md](FrontEnd/README.md)** - Frontend setup guide
+- **[prompts/](prompts/)** - Complete implementation guides (system design, backend specs, frontend specs)
 
 ---
 

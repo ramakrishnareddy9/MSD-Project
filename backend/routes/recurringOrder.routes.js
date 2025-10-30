@@ -69,7 +69,7 @@ router.get('/', authenticate, asyncHandler(async (req, res) => {
  */
 router.get('/:id', authenticate, validateObjectId('id'), asyncHandler(async (req, res) => {
   const order = await RecurringOrder.findById(req.params.id)
-    .populate('buyerId', 'name email addresses')
+    .populate('buyerId', 'name email')
     .populate('itemsTemplate.productId', 'name description basePrice unit images')
     .populate('lastRun.orderId');
   
@@ -108,32 +108,20 @@ router.post('/',
     const {
       type,
       itemsTemplate,
-      deliveryAddressId,
+      deliveryAddress,
       deliveryPreferences,
       pricingPreferences,
       schedule
     } = req.body;
     
-    // Ensure buyerId matches authenticated user
     const buyerId = req.user._id;
     
-    // Validate delivery address exists in user's addresses
-    const user = await mongoose.model('User').findById(buyerId);
-    const addressExists = user.addresses.some(addr => addr._id.toString() === deliveryAddressId);
-    
-    if (!addressExists) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid delivery address ID'
-      });
-    }
-    
-    // Create recurring order
+    // Create recurring order with address snapshot
     const recurringOrder = new RecurringOrder({
       buyerId,
       type,
       itemsTemplate,
-      deliveryAddressId,
+      deliveryAddress,
       deliveryPreferences,
       pricingPreferences,
       schedule: {

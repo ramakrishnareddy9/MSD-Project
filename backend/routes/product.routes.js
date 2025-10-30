@@ -1,5 +1,8 @@
 import express from 'express';
 import Product from '../models/Product.model.js';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { authorize } from '../middleware/role.middleware.js';
+import { validateProduct, validateObjectId } from '../middleware/validation.middleware.js';
 
 const router = express.Router();
 
@@ -88,75 +91,87 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Create product
-router.post('/', async (req, res) => {
+// Create product (farmers and admins only)
+router.post(
+  '/',
+  authenticate,
+  authorize('farmer', 'admin'),
+  // Ensure ownerId defaults to the authenticated farmer if not provided
+  (req, res, next) => {
+    if (!req.body.ownerId && req.user.roles?.includes('farmer')) {
+      req.body.ownerId = req.user._id;
+    }
+    next();
+  },
+  validateProduct,
+  async (req, res) => {
+    try {
+      // Non-admin farmers can only create products for themselves
+      if (!req.user.roles.includes('admin') && req.user.roles.includes('farmer')) {
+        if (String(req.body.ownerId) !== String(req.user._id)) {
+          return res.status(403).json({ success: false, message: 'Forbidden: You can only create products for yourself' });
+        }
+      }
+
+      const product = new Product(req.body);
+      await product.save();
+
+      res.status(201).json({
+        success: true,
+        message: 'Product created successfully',
+        data: { product }
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+);
+
+// Update product (owner or admin)
+router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
   try {
-    const product = new Product(req.body);
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    // Only admin or owner can update
+    const isOwner = String(product.ownerId) === String(req.user._id);
+    const isAdmin = req.user.roles.includes('admin');
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'Forbidden: Only the owner or admin can update this product' });
+    }
+
+    Object.assign(product, req.body);
     await product.save();
 
-    res.status(201).json({
-      success: true,
-      message: 'Product created successfully',
-      data: { product }
-    });
+    res.json({ success: true, message: 'Product updated successfully', data: { product } });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// Update product
-router.put('/:id', async (req, res) => {
+// Delete product (owner or admin)
+router.delete('/:id', authenticate, validateObjectId('id'), async (req, res) => {
   try {
-    const product = await Product.findByIdAndUpdate(
-      req.params.id,
-      { $set: req.body },
-      { new: true, runValidators: true }
-    );
-
+    const product = await Product.findById(req.params.id);
     if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found'
-      });
+      return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    res.json({
-      success: true,
-      message: 'Product updated successfully',
-      data: { product }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-});
-
-// Delete product
-router.delete('/:id', async (req, res) => {
-  try {
-    const product = await Product.findByIdAndDelete(req.params.id);
-
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found'
-      });
+    const isOwner = String(product.ownerId) === String(req.user._id);
+    const isAdmin = req.user.roles.includes('admin');
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'Forbidden: Only the owner or admin can delete this product' });
     }
 
-    res.json({
-      success: true,
-      message: 'Product deleted successfully'
-    });
+    await product.deleteOne();
+    res.json({ success: true, message: 'Product deleted successfully' });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

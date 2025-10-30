@@ -2,9 +2,11 @@ import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import DashboardLayout from './layouts/DashboardLayout';
 import ProtectedRoute from './Components/ProtectedRoute';
-import FarmKartLanding from './Components/LandingPaage';
+import FarmKartLanding from './Components/LandingPage';
 import AuthPage from './pages/AuthPage';
+import Unauthorized from './pages/Unauthorized';
 import Loader from './Components/common/Loader';
+import ToastProvider from './Components/common/Toast';
 
 // Lazy load dashboards for better performance
 const CustomerDashboard = lazy(() => import('./pages/dashboards/CustomerDashboard'));
@@ -22,8 +24,10 @@ const CommunityDashboard = lazy(() => import('./pages/dashboards/CommunityDashbo
 
 function App() {
   return (
-    <Suspense fallback={<Loader fullScreen message="Loading..." />}>
-      <Routes>
+    <>
+      <ToastProvider />
+      <Suspense fallback={<Loader fullScreen message="Loading..." />}>
+        <Routes>
         {/* Public */}
         <Route path="/" element={<FarmKartLanding />} />
         <Route path="/shop" element={<ProductCatalog />} />
@@ -160,9 +164,11 @@ function App() {
         </Route>
 
         {/* Fallback */}
+        <Route path="/unauthorized" element={<Unauthorized />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
+    </>
   );
 }
 

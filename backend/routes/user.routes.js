@@ -1,10 +1,13 @@
 import express from 'express';
 import User from '../models/User.model.js';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { authorize } from '../middleware/role.middleware.js';
+import { validateObjectId } from '../middleware/validation.middleware.js';
 
 const router = express.Router();
 
 // Get all users (admin only)
-router.get('/', async (req, res) => {
+router.get('/', authenticate, authorize('admin'), async (req, res) => {
   try {
     const { role, status, page = 1, limit = 10 } = req.query;
     
@@ -36,8 +39,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get user by ID
-router.get('/:id', async (req, res) => {
+// Get user by ID (admin or self)
+router.get('/:id', authenticate, validateObjectId('id'), async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     
@@ -60,8 +63,8 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Update user
-router.put('/:id', async (req, res) => {
+// Update user (admin or self)
+router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
   try {
     const user = await User.findByIdAndUpdate(
       req.params.id,
@@ -89,8 +92,8 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Delete user
-router.delete('/:id', async (req, res) => {
+// Delete user (admin only)
+router.delete('/:id', authenticate, authorize('admin'), validateObjectId('id'), async (req, res) => {
   try {
     const user = await User.findByIdAndDelete(req.params.id);
 

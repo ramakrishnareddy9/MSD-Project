@@ -7,6 +7,16 @@ const orderItemSchema = new mongoose.Schema({
     required: true
   },
   productName: String, // snapshot
+  productImage: String, // snapshot of primary image
+  farmerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }, // for payout tracking
+  farmerName: String, // snapshot
+  categoryId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category'
+  }, // for analytics
   quantity: {
     type: Number,
     required: true,
@@ -20,6 +30,10 @@ const orderItemSchema = new mongoose.Schema({
   totalPrice: {
     type: Number,
     required: true
+  },
+  discountApplied: {
+    type: Number,
+    default: 0
   },
   lotId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -94,7 +108,49 @@ const orderSchema = new mongoose.Schema({
     enum: ['prepaid', 'net_7', 'net_15', 'net_30', 'cod'],
     default: 'prepaid'
   },
+  // Price Agreement Reference (for B2B orders)
+  priceAgreementId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'PriceAgreement'
+  },
+  // Delivery Tracking
+  delivery: {
+    shipmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Shipment'
+    },
+    deliveryTaskId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'DeliveryTask'
+    },
+    trackingNumber: String,
+    estimatedDelivery: Date,
+    actualDelivery: Date
+  },
+  // Platform Commission Tracking
+  commission: {
+    rate: {
+      type: Number,
+      default: 0.10 // 10% default platform commission
+    },
+    amount: Number,
+    status: {
+      type: String,
+      enum: ['pending', 'collected', 'paid_out'],
+      default: 'pending'
+    },
+    paidOutAt: Date
+  },
   notes: String,
+  statusHistory: [{
+    status: String,
+    timestamp: { type: Date, default: Date.now },
+    updatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    notes: String
+  }],
   createdAt: {
     type: Date,
     default: Date.now

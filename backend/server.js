@@ -15,12 +15,16 @@ import inventoryRoutes from './routes/inventory.routes.js';
 import locationRoutes from './routes/location.routes.js';
 import reviewRoutes from './routes/review.routes.js';
 import recurringOrderRoutes from './routes/recurringOrder.routes.js';
+import paymentRoutes from './routes/payment.routes.js';
+import priceAgreementRoutes from './routes/priceAgreement.routes.js';
+import deliveryRoutes from './routes/delivery.routes.js';
 
 // Import middleware
 import { errorHandler, notFoundHandler } from './middleware/error.middleware.js';
 
 // Import services
 import { startRecurringOrderScheduler } from './services/recurringOrderScheduler.js';
+import { startInventoryCleanupScheduler } from './services/inventoryCleanupScheduler.js';
 
 dotenv.config();
 
@@ -70,7 +74,10 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/reviews', reviewRoutes);
-app.use('/api/recurring-orders', recurringOrderRoutes); // NEW: Per BACKEND_API_PROMPT lines 419-427
+app.use('/api/recurring-orders', recurringOrderRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/price-agreements', priceAgreementRoutes);
+app.use('/api/delivery', deliveryRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -93,10 +100,11 @@ app.listen(PORT, () => {
   console.log(`🔒 Security: Helmet enabled, Rate limiting active`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   
-  // Start recurring order scheduler (Per BACKEND_API_PROMPT lines 564-574)
+  // Start schedulers
   if (process.env.ENABLE_SCHEDULER !== 'false') {
     startRecurringOrderScheduler();
+    startInventoryCleanupScheduler();
   } else {
-    console.log('⏸️  Recurring order scheduler disabled');
+    console.log('⏸️  Schedulers disabled');
   }
 });

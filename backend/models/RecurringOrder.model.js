@@ -97,10 +97,18 @@ const recurringOrderSchema = new mongoose.Schema({
       message: 'Items template must contain at least one item'
     }
   },
-  deliveryAddressId: {
-    type: String,
-    // Reference to User.addresses array element
-    required: true
+  // Snapshot of delivery address to avoid dependency on User.addresses subdoc IDs
+  deliveryAddress: {
+    line1: { type: String, required: true },
+    line2: String,
+    city: { type: String, required: true },
+    state: { type: String, required: true },
+    postalCode: { type: String, required: true },
+    country: { type: String, default: 'India' },
+    coordinates: {
+      type: { type: String, enum: ['Point'], default: 'Point' },
+      coordinates: { type: [Number] }
+    }
   },
   deliveryPreferences: {
     preferredTimeSlot: {
@@ -253,13 +261,7 @@ recurringOrderSchema.methods.cancel = async function(userId) {
   return this.save();
 };
 
-// Virtual: Get delivery address from buyer
-recurringOrderSchema.virtual('deliveryAddress', {
-  ref: 'User',
-  localField: 'buyerId',
-  foreignField: '_id',
-  justOne: true
-});
+// No virtuals needed for delivery address snapshot
 
 const RecurringOrder = mongoose.model('RecurringOrder', recurringOrderSchema);
 

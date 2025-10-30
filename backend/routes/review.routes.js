@@ -1,5 +1,7 @@
 import express from 'express';
 import Review from '../models/Review.model.js';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { validateReview } from '../middleware/validation.middleware.js';
 
 const router = express.Router();
 
@@ -39,8 +41,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Create review
-router.post('/', async (req, res) => {
+// Create review (authenticated users only, validated)
+router.post('/', authenticate, validateReview, async (req, res) => {
   try {
     const review = new Review(req.body);
     await review.save();

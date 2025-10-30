@@ -1,5 +1,8 @@
 import express from 'express';
 import Location from '../models/Location.model.js';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { authorize } from '../middleware/role.middleware.js';
+import { validateObjectId } from '../middleware/validation.middleware.js';
 
 const router = express.Router();
 
@@ -30,7 +33,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get location by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', validateObjectId('id'), async (req, res) => {
   try {
     const location = await Location.findById(req.params.id)
       .populate('ownerId', 'name email phone');
@@ -54,8 +57,8 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Create location
-router.post('/', async (req, res) => {
+// Create location (farmers and admins only)
+router.post('/', authenticate, authorize('farmer', 'admin'), async (req, res) => {
   try {
     const location = new Location(req.body);
     await location.save();
@@ -73,8 +76,8 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Update location
-router.put('/:id', async (req, res) => {
+// Update location (owner or admin)
+router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
   try {
     const location = await Location.findByIdAndUpdate(
       req.params.id,
@@ -102,8 +105,8 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Delete location
-router.delete('/:id', async (req, res) => {
+// Delete location (owner or admin)
+router.delete('/:id', authenticate, validateObjectId('id'), async (req, res) => {
   try {
     const location = await Location.findByIdAndDelete(req.params.id);
 

@@ -1,4 +1,4 @@
-import { Box, CircularProgress, Typography, Skeleton, Card, CardContent } from '@mui/material';
+import { Box, Typography, Skeleton, Card, CardContent } from '@mui/material';
 import { FaLeaf } from 'react-icons/fa';
 
 const LoadingSpinner = ({ size = 40, text = 'Loading...' }) => {

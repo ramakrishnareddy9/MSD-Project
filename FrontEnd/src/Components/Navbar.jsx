@@ -9,6 +9,21 @@ const Navbar = () => {
 
   const isActive = (path) => location.pathname === path;
 
+  const routeForRole = (role) => {
+    switch (role) {
+      case 'customer': return '/customer';
+      case 'farmer': return '/farmer';
+      case 'business': return '/business';
+      case 'restaurant': return '/restaurant';
+      case 'delivery_large': return '/delivery-large';
+      case 'delivery_small': return '/delivery-small';
+      case 'delivery': return '/delivery-large';
+      case 'admin': return '/admin';
+      case 'community': return '/dashboard/community';
+      default: return '/';
+    }
+  };
+
   return (
     <AppBar 
       position="sticky" 
@@ -19,7 +34,7 @@ const Navbar = () => {
         <Toolbar disableGutters className="min-h-[70px] flex justify-between items-center">
           {/* Logo */}
           <Link 
-            to={user ? `/dashboard/${user.role}` : '/'}
+            to={user ? routeForRole(user.role) : '/'}
             className="flex items-center gap-2 no-underline group"
           >
             <div className="bg-gradient-to-br from-green-500 to-green-600 p-2 rounded-lg group-hover:scale-110 transition-transform duration-200">
@@ -43,10 +58,10 @@ const Navbar = () => {
                 </div>
                 <Button
                   component={NavLink}
-                  to={`/dashboard/${user.role}`}
-                  variant={isActive(`/dashboard/${user.role}`) ? 'contained' : 'outlined'}
+                  to={routeForRole(user.role)}
+                  variant={isActive(routeForRole(user.role)) ? 'contained' : 'outlined'}
                   className={`${
-                    isActive(`/dashboard/${user.role}`)
+                    isActive(routeForRole(user.role))
                       ? 'bg-gradient-to-r from-green-500 to-green-600 text-white hover:from-green-600 hover:to-green-700'
                       : 'border-green-500 text-green-600 hover:bg-green-50'
                   } font-semibold rounded-lg px-6 py-2 transition-all duration-200 transform hover:scale-105`}
