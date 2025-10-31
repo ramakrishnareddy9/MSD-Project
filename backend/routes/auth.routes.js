@@ -4,6 +4,7 @@ import FarmerProfile from '../models/FarmerProfile.model.js';
 import BusinessProfile from '../models/BusinessProfile.model.js';
 import RestaurantProfile from '../models/RestaurantProfile.model.js';
 import DeliveryProfile from '../models/DeliveryProfile.model.js';
+import { authenticate } from '../middleware/auth.middleware.js';
 import jwt from 'jsonwebtoken';
 
 const router = express.Router();
@@ -42,7 +43,7 @@ router.post('/register', async (req, res) => {
           await new BusinessProfile({ userId: user._id, ...profileData.business }).save();
         } else if (role === 'restaurant' && profileData?.restaurant) {
           await new RestaurantProfile({ userId: user._id, ...profileData.restaurant }).save();
-        } else if (role === 'delivery' && profileData?.delivery) {
+        } else if ((role === 'delivery_large' || role === 'delivery_small') && profileData?.delivery) {
           await new DeliveryProfile({ userId: user._id, ...profileData.delivery }).save();
         }
       }
@@ -120,29 +121,11 @@ router.post('/login', async (req, res) => {
 });
 
 // Get current user
-router.get('/me', async (req, res) => {
+router.get('/me', authenticate, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'No token provided'
-      });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId);
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
     res.json({
       success: true,
-      data: { user }
+      data: { user: req.user }
     });
   } catch (error) {
     res.status(500).json({

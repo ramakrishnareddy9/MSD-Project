@@ -4,8 +4,7 @@ const businessProfileSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
-    unique: true
+    required: true
   },
   companyName: {
     type: String,
@@ -18,7 +17,6 @@ const businessProfileSchema = new mongoose.Schema({
   },
   gstNumber: {
     type: String,
-    unique: true,
     sparse: true
   },
   panNumber: String,
@@ -49,8 +47,8 @@ const businessProfileSchema = new mongoose.Schema({
 });
 
 // Indexes
-businessProfileSchema.index({ userId: 1 });
-businessProfileSchema.index({ gstNumber: 1 });
+businessProfileSchema.index({ userId: 1 }, { unique: true });
+businessProfileSchema.index({ gstNumber: 1 }, { unique: true, sparse: true });
 
 const BusinessProfile = mongoose.model('BusinessProfile', businessProfileSchema);
 

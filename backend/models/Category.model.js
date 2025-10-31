@@ -3,13 +3,11 @@ import mongoose from 'mongoose';
 const categorySchema = new mongoose.Schema({
   name: {
     type: String,
-    required: true,
-    unique: true
+    required: true
   },
   slug: {
     type: String,
     required: true,
-    unique: true,
     lowercase: true
   },
   parentId: {
@@ -40,7 +38,8 @@ const categorySchema = new mongoose.Schema({
 });
 
 // Indexes
-categorySchema.index({ slug: 1 });
+categorySchema.index({ name: 1 }, { unique: true });
+categorySchema.index({ slug: 1 }, { unique: true });
 categorySchema.index({ parentId: 1, displayOrder: 1 });
 
 const Category = mongoose.model('Category', categorySchema);

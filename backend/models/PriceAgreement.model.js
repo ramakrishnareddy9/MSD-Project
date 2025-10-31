@@ -39,8 +39,7 @@ const priceAgreementSchema = new mongoose.Schema({
     required: true
   },
   agreementNumber: {
-    type: String,
-    unique: true
+    type: String
   },
   tiers: {
     type: [tierSchema],
@@ -112,7 +111,7 @@ const priceAgreementSchema = new mongoose.Schema({
 priceAgreementSchema.index({ sellerId: 1, buyerId: 1, productId: 1 });
 priceAgreementSchema.index({ validFrom: 1, validUntil: 1 });
 priceAgreementSchema.index({ status: 1 });
-priceAgreementSchema.index({ agreementNumber: 1 });
+priceAgreementSchema.index({ agreementNumber: 1 }, { unique: true });
 
 // Generate agreement number before saving
 priceAgreementSchema.pre('save', async function(next) {

@@ -4,8 +4,7 @@ const deliveryProfileSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
-    unique: true
+    required: true
   },
   companyName: {
     type: String,
@@ -68,7 +67,7 @@ const deliveryProfileSchema = new mongoose.Schema({
 });
 
 // Indexes
-deliveryProfileSchema.index({ userId: 1 });
+deliveryProfileSchema.index({ userId: 1 }, { unique: true });
 deliveryProfileSchema.index({ scale: 1 });
 deliveryProfileSchema.index({ 'serviceAreas.coordinates': '2dsphere' });
 

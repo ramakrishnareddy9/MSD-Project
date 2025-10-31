@@ -1,10 +1,10 @@
 import cron from 'node-cron';
+import mongoose from 'mongoose';
 import RecurringOrder from '../models/RecurringOrder.model.js';
 import Order from '../models/Order.model.js';
 import Product from '../models/Product.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
 import User from '../models/User.model.js';
-import mongoose from 'mongoose';
 
 /**
  * Recurring Order Scheduler Service
@@ -147,6 +147,12 @@ async function processRecurringOrder(recurringOrder) {
  */
 async function checkDueOrders() {
   try {
+    // Check if mongoose is connected
+    if (mongoose.connection.readyState !== 1) {
+      console.log('⏸️  MongoDB not connected, skipping recurring order check');
+      return;
+    }
+    
     console.log('🔄 Checking for due recurring orders...');
     
     // Find all active recurring orders that are due
@@ -174,7 +180,8 @@ async function checkDueOrders() {
     console.log(`✅ Processed ${successful} recurring orders successfully, ${failed} failed`);
     
   } catch (error) {
-    console.error('Error in recurring order scheduler:', error);
+    console.error('❌ Error in recurring order scheduler:', error);
+    // Don't throw to prevent server crash
   }
 }
 

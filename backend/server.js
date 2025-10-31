@@ -18,6 +18,7 @@ import recurringOrderRoutes from './routes/recurringOrder.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import priceAgreementRoutes from './routes/priceAgreement.routes.js';
 import deliveryRoutes from './routes/delivery.routes.js';
+import commissionRoutes from './routes/commission.routes.js';
 
 // Import middleware
 import { errorHandler, notFoundHandler } from './middleware/error.middleware.js';
@@ -58,10 +59,7 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 // Database connection
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
+mongoose.connect(process.env.MONGODB_URI)
 .then(() => console.log('✅ MongoDB connected successfully'))
 .catch((err) => console.error('❌ MongoDB connection error:', err));
 
@@ -78,6 +76,7 @@ app.use('/api/recurring-orders', recurringOrderRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/price-agreements', priceAgreementRoutes);
 app.use('/api/delivery', deliveryRoutes);
+app.use('/api/commissions', commissionRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

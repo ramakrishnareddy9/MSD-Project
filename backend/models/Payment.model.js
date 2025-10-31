@@ -32,7 +32,6 @@ const paymentSchema = new mongoose.Schema({
   },
   transactionId: {
     type: String,
-    unique: true,
     sparse: true // Allow null for pending payments
   },
   gatewayOrderId: String,
@@ -67,7 +66,7 @@ const paymentSchema = new mongoose.Schema({
 
 // Indexes
 paymentSchema.index({ orderId: 1 });
-paymentSchema.index({ transactionId: 1 });
+paymentSchema.index({ transactionId: 1 }, { unique: true, sparse: true });
 paymentSchema.index({ status: 1, createdAt: -1 });
 paymentSchema.index({ method: 1, status: 1 });
 

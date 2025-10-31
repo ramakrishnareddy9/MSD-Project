@@ -4,8 +4,7 @@ const farmerProfileSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
-    unique: true
+    required: true
   },
   farmName: {
     type: String,
@@ -51,7 +50,7 @@ const farmerProfileSchema = new mongoose.Schema({
 });
 
 // Indexes
-farmerProfileSchema.index({ userId: 1 });
+farmerProfileSchema.index({ userId: 1 }, { unique: true });
 
 const FarmerProfile = mongoose.model('FarmerProfile', farmerProfileSchema);
 

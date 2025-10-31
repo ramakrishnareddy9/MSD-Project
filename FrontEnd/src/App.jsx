@@ -5,8 +5,8 @@ import ProtectedRoute from './Components/ProtectedRoute';
 import FarmKartLanding from './Components/LandingPage';
 import AuthPage from './pages/AuthPage';
 import Unauthorized from './pages/Unauthorized';
-import Loader from './Components/common/Loader';
-import ToastProvider from './Components/common/Toast';
+import { Loader } from './Components/common/Loader';
+import { ToastProvider } from './Components/common/Toast';
 
 // Lazy load dashboards for better performance
 const CustomerDashboard = lazy(() => import('./pages/dashboards/CustomerDashboard'));

@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 const addressSchema = new mongoose.Schema({
   type: {
     type: String,
-    enum: ['billing', 'shipping', 'farm', 'warehouse'],
+    enum: ['billing', 'shipping', 'farm', 'warehouse', 'home', 'office', 'restaurant'],
     required: true
   },
   line1: { type: String, required: true },
@@ -23,14 +23,12 @@ const userSchema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
-    unique: true,
     lowercase: true,
     trim: true
   },
   phone: {
     type: String,
-    required: true,
-    unique: true
+    required: true
   },
   passwordHash: {
     type: String,
@@ -55,6 +53,18 @@ const userSchema = new mongoose.Schema({
     enum: ['not_started', 'pending', 'verified', 'rejected'],
     default: 'not_started'
   },
+  emailVerified: {
+    type: Boolean,
+    default: false
+  },
+  phoneVerified: {
+    type: Boolean,
+    default: false
+  },
+  loyaltyPoints: {
+    type: Number,
+    default: 0
+  },
   addresses: [addressSchema],
   profileImage: String,
   createdAt: {
@@ -70,8 +80,8 @@ const userSchema = new mongoose.Schema({
 });
 
 // Indexes
-userSchema.index({ email: 1 });
-userSchema.index({ phone: 1 });
+userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ phone: 1 }, { unique: true });
 userSchema.index({ roles: 1, status: 1 });
 userSchema.index({ 'addresses.coordinates': '2dsphere' });
 

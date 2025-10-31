@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import mongoose from 'mongoose';
 import InventoryLot from '../models/InventoryLot.model.js';
 
 /**
@@ -8,6 +9,12 @@ import InventoryLot from '../models/InventoryLot.model.js';
 
 async function cleanupExpiredReservations() {
   try {
+    // Check if mongoose is connected
+    if (mongoose.connection.readyState !== 1) {
+      console.log('⏸️  MongoDB not connected, skipping inventory cleanup');
+      return [];
+    }
+    
     console.log('🧹 Starting inventory reservation cleanup...');
     
     const result = await InventoryLot.cleanupAllExpiredReservations();
@@ -17,7 +24,8 @@ async function cleanupExpiredReservations() {
     return result;
   } catch (error) {
     console.error('❌ Error in inventory cleanup scheduler:', error);
-    throw error;
+    // Don't throw error to prevent server crash
+    return [];
   }
 }
 
@@ -38,11 +46,11 @@ export function startInventoryCleanupScheduler() {
   
   console.log(`✅ Inventory cleanup scheduler running with cron: ${schedule}`);
   
-  // Run immediately on startup
+  // Run immediately on startup, but with delay
   setTimeout(() => {
     console.log('🔄 Running initial inventory cleanup...');
     cleanupExpiredReservations();
-  }, 3000); // Wait 3 seconds after server starts
+  }, 10000); // Wait 10 seconds after server starts
 }
 
 export default {

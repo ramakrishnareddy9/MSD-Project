@@ -4,8 +4,7 @@ const restaurantProfileSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
-    unique: true
+    required: true
   },
   restaurantName: {
     type: String,
@@ -14,7 +13,6 @@ const restaurantProfileSchema = new mongoose.Schema({
   cuisineType: [String],
   fssaiLicense: {
     type: String,
-    unique: true,
     sparse: true
   },
   seatingCapacity: Number,
@@ -50,8 +48,8 @@ const restaurantProfileSchema = new mongoose.Schema({
 });
 
 // Indexes
-restaurantProfileSchema.index({ userId: 1 });
-restaurantProfileSchema.index({ fssaiLicense: 1 });
+restaurantProfileSchema.index({ userId: 1 }, { unique: true });
+restaurantProfileSchema.index({ fssaiLicense: 1 }, { unique: true, sparse: true });
 
 const RestaurantProfile = mongoose.model('RestaurantProfile', restaurantProfileSchema);
 
