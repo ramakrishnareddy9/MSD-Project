@@ -48,8 +48,19 @@ app.use(setSecurityHeaders); // Additional security headers
 // CORS configuration
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
-    ? process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173']
-    : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:5174', 'http://localhost:5175'],
+    ? process.env.ALLOWED_ORIGINS?.split(',') || [
+        'http://localhost:5173',
+        'http://localhost:5174', 
+        'http://localhost:5175',
+        'https://msd-project-farmkart.netlify.app'
+      ]
+    : [
+        'http://localhost:5173', 
+        'http://localhost:3000', 
+        'http://localhost:5174', 
+        'http://localhost:5175',
+        'https://msd-project-farmkart.netlify.app'
+      ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
