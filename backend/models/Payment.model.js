@@ -31,8 +31,7 @@ const paymentSchema = new mongoose.Schema({
     default: 'razorpay'
   },
   transactionId: {
-    type: String,
-    sparse: true // Allow null for pending payments
+    type: String
   },
   gatewayOrderId: String,
   gatewayPaymentId: String,

@@ -12,8 +12,7 @@ const restaurantProfileSchema = new mongoose.Schema({
   },
   cuisineType: [String],
   fssaiLicense: {
-    type: String,
-    sparse: true
+    type: String
   },
   seatingCapacity: Number,
   operatingHours: {

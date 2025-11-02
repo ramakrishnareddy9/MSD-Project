@@ -11,11 +11,11 @@ import Loader from './common/Loader';
  * @param {string[]} allowedRoles - Array of role names that can access this route
  */
 const ProtectedRoute = ({ children, allowedRoles = [] }) => {
-  const { user, loading } = useAuth();
+  const { user, isLoading } = useAuth();
   const location = useLocation();
 
   // Show loader while checking authentication
-  if (loading) {
+  if (isLoading) {
     return <Loader />;
   }
 

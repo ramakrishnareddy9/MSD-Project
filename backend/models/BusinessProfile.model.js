@@ -16,8 +16,7 @@ const businessProfileSchema = new mongoose.Schema({
     required: true
   },
   gstNumber: {
-    type: String,
-    sparse: true
+    type: String
   },
   panNumber: String,
   businessLicense: String,

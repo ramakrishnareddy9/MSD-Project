@@ -11,7 +11,7 @@ import {
   Add, Delete, Notifications, Menu as MenuIcon, Dashboard,
   CheckCircle, Schedule, Cancel, LocationOn, Speed, AttachMoney,
   DirectionsCar, Home, ShoppingCart, Business,
-  Agriculture, CalendarMonth
+  Agriculture, CalendarMonth, Visibility
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
 

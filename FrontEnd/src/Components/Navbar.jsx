@@ -1,4 +1,4 @@
-import { Link, NavLink, useLocation } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { AppBar, Toolbar, Typography, Button, Box, Container, Chip } from '@mui/material';
 import { FaLeaf, FaUser } from 'react-icons/fa';
 import { useAuth } from '../contexts/AuthContext';
@@ -6,8 +6,14 @@ import { useAuth } from '../contexts/AuthContext';
 const Navbar = () => {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const isActive = (path) => location.pathname === path;
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login', { replace: true });
+  };
 
   const routeForRole = (role) => {
     switch (role) {
@@ -71,7 +77,7 @@ const Navbar = () => {
                 </Button>
                 <Button
                   variant="outlined"
-                  onClick={logout}
+                  onClick={handleLogout}
                   className="border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400 font-semibold rounded-lg px-6 py-2 transition-all duration-200"
                   size="small"
                 >

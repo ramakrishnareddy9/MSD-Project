@@ -5,12 +5,13 @@ import BusinessProfile from '../models/BusinessProfile.model.js';
 import RestaurantProfile from '../models/RestaurantProfile.model.js';
 import DeliveryProfile from '../models/DeliveryProfile.model.js';
 import { authenticate } from '../middleware/auth.middleware.js';
+import { validateRegister, validateLogin } from '../middleware/validation.middleware.js';
 import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
 // Register
-router.post('/register', async (req, res) => {
+router.post('/register', validateRegister, async (req, res) => {
   try {
     const { email, phone, password, name, roles, profileData } = req.body;
 
@@ -70,7 +71,7 @@ router.post('/register', async (req, res) => {
 });
 
 // Login
-router.post('/login', async (req, res) => {
+router.post('/login', validateLogin, async (req, res) => {
   try {
     const { email, password } = req.body;
 

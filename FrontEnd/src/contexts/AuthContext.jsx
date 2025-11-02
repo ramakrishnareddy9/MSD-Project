@@ -69,22 +69,25 @@ export const AuthProvider = ({ children }) => {
       
       // MOCK LOGIN FALLBACK - For development without backend
       const mockUsers = {
-        'customer@farmkart.com': { name: 'John Doe', email: 'customer@farmkart.com', roles: ['customer'] },
-        'farmer@farmkart.com': { name: 'Ramesh Patel', email: 'farmer@farmkart.com', roles: ['farmer'] },
-        'business@farmkart.com': { name: 'ABC Corp', email: 'business@farmkart.com', roles: ['business'] },
-        'restaurant@farmkart.com': { name: 'Food Palace', email: 'restaurant@farmkart.com', roles: ['restaurant'] },
-        'delivery@farmkart.com': { name: 'Fast Delivery', email: 'delivery@farmkart.com', roles: ['delivery'] },
-        'admin@farmkart.com': { name: 'Admin User', email: 'admin@farmkart.com', roles: ['admin'] },
+        'customer@farmkart.com': { name: 'Aarav Customer', email: 'customer@farmkart.com', roles: ['customer'], password: 'customer123' },
+        'farmer1@farmkart.com': { name: 'Rohan Farmer', email: 'farmer1@farmkart.com', roles: ['farmer'], password: 'farmer123' },
+        'farmer2@farmkart.com': { name: 'Suman Farmer', email: 'farmer2@farmkart.com', roles: ['farmer'], password: 'farmer123' },
+        'business@farmkart.com': { name: 'Fresh Mart Pvt Ltd', email: 'business@farmkart.com', roles: ['business'], password: 'business123' },
+        'restaurant@farmkart.com': { name: 'Green Cuisine', email: 'restaurant@farmkart.com', roles: ['restaurant'], password: 'restaurant123' },
+        'delivery@farmkart.com': { name: 'Swift Logistics', email: 'delivery@farmkart.com', roles: ['delivery'], password: 'delivery123' },
+        'admin@farmkart.com': { name: 'Admin User', email: 'admin@farmkart.com', roles: ['admin'], password: 'admin123' },
         // Legacy test emails
-        'customer@test.com': { name: 'Test Customer', email: 'customer@test.com', roles: ['customer'] },
-        'farmer@test.com': { name: 'Test Farmer', email: 'farmer@test.com', roles: ['farmer'] }
+        'customer@test.com': { name: 'Test Customer', email: 'customer@test.com', roles: ['customer'], password: 'password' },
+        'farmer@test.com': { name: 'Test Farmer', email: 'farmer@test.com', roles: ['farmer'], password: 'password' }
       };
 
       const mockUser = mockUsers[email.toLowerCase()];
       
-      if (mockUser && (password === 'password' || password === password.split('@')[0] + '123')) {
+      if (mockUser && mockUser.password === password) {
         const userData = {
-          ...mockUser,
+          name: mockUser.name,
+          email: mockUser.email,
+          roles: mockUser.roles,
           token: 'mock-jwt-token-' + Date.now(),
           role: mockUser.roles[0],
           _id: 'mock-user-' + Date.now()
@@ -96,7 +99,7 @@ export const AuthProvider = ({ children }) => {
         return { success: true, role: userData.role, user: userData };
       }
       
-      return { success: false, error: 'Invalid credentials. Backend unavailable - use mock credentials.' };
+      return { success: false, error: 'Invalid email or password. Please check your credentials.' };
     }
   };
 

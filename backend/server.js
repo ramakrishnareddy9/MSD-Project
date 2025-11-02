@@ -4,6 +4,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import compression from 'compression';
 
 // Import routes
 import authRoutes from './routes/auth.routes.js';
@@ -22,6 +23,12 @@ import commissionRoutes from './routes/commission.routes.js';
 
 // Import middleware
 import { errorHandler, notFoundHandler } from './middleware/error.middleware.js';
+import { requestLogger, errorLogger } from './middleware/logger.middleware.js';
+import { 
+  sanitizeInput, 
+  preventSQLInjection,
+  setSecurityHeaders 
+} from './middleware/sanitize.middleware.js';
 
 // Import services
 import { startRecurringOrderScheduler } from './services/recurringOrderScheduler.js';
@@ -32,9 +39,26 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Trust proxy (for rate limiting behind reverse proxy)
+app.set('trust proxy', 1);
+
 // Security Middleware (Per BACKEND_API_PROMPT lines 536-539)
 app.use(helmet()); // Security headers
-app.use(cors()); // CORS for development
+app.use(setSecurityHeaders); // Additional security headers
+// CORS configuration
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production' 
+    ? process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173']
+    : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:5174', 'http://localhost:5175'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions)); // CORS configured for security
+
+// Compression middleware
+app.use(compression());
 
 // Rate limiting (Per BACKEND_API_PROMPT line 538)
 const limiter = rateLimit({
@@ -47,15 +71,16 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // Body parsing middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Input sanitization (must be after body parsing)
+app.use(sanitizeInput);
+app.use(preventSQLInjection);
 
 // Request logging in development
 if (process.env.NODE_ENV === 'development') {
-  app.use((req, res, next) => {
-    console.log(`${req.method} ${req.path}`);
-    next();
-  });
+  app.use(requestLogger);
 }
 
 // Database connection
@@ -89,6 +114,9 @@ app.get('/api/health', (req, res) => {
 
 // 404 handler - must be after all routes
 app.use(notFoundHandler);
+
+// Error logging
+app.use(errorLogger);
 
 // Global error handling middleware (Per BACKEND_API_PROMPT lines 484-514)
 app.use(errorHandler);

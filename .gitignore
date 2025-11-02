@@ -54,6 +54,14 @@ logs/
 backend/logs/
 FrontEnd/logs/
 
+# Uploads (user-generated content)
+backend/uploads/*
+!backend/uploads/.gitkeep
+!backend/uploads/products/
+!backend/uploads/profiles/
+!backend/uploads/documents/
+!backend/uploads/misc/
+
 # lockfiles (keep lockfiles committed; do not ignore)
 # package-lock.json
 # yarn.lock

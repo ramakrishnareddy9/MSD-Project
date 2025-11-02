@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ShoppingCart, Favorite, FavoriteBorder, Person,
   Add, Remove, Delete, LocalShipping, Menu as MenuIcon, Store,
-  AccountCircle, LocalOffer, Verified, Close,
+  AccountCircle, LocalOffer, Verified, Close, Notifications,
   CheckCircle, ArrowForward, Search, TrendingUp, Home, Groups, PersonAdd, Send,
   ThumbUp, ThumbDown, AdminPanelSettings, CardGiftcard
 } from '@mui/icons-material';

@@ -43,6 +43,11 @@ function FarmKartLanding() {
     }
   };
 
+  const handleLogout = () => {
+    logout();
+    navigate('/login', { replace: true });
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-white to-blue-50">
       {/* Header */}
@@ -68,7 +73,7 @@ function FarmKartLanding() {
                   <button className="px-6 py-2.5 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transform hover:scale-105 transition-all duration-200 shadow-md hover:shadow-lg" onClick={() => navigate(routeForRole(user.role))}>
                     Dashboard
                   </button>
-                  <button className="px-6 py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition-all duration-200" onClick={logout}>
+                  <button className="px-6 py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition-all duration-200" onClick={handleLogout}>
                     Logout
                   </button>
                 </>

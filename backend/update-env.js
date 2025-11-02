@@ -5,8 +5,9 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// MongoDB Atlas connection with password
-const MONGODB_URI = 'mongodb+srv://ramakrishnareddyd9_db_user:9014923870@msd.ivea6xc.mongodb.net/farmkart?retryWrites=true&w=majority';
+// MongoDB Atlas connection - get from environment variable or command line argument
+// Usage: node update-env.js "mongodb+srv://user:pass@cluster.mongodb.net/dbname"
+const MONGODB_URI = process.argv[2] || process.env.MONGODB_URI || 'mongodb://localhost:27017/farmkart';
 
 // Read existing .env or create new one
 const envPath = path.join(__dirname, '.env');
@@ -48,5 +49,7 @@ const newEnvContent = Object.entries(envVars)
 
 fs.writeFileSync(envPath, newEnvContent);
 
-console.log('✅ MongoDB Atlas connection updated in .env file');
-console.log('📝 Connection string:', MONGODB_URI);
+console.log('✅ MongoDB connection updated in .env file');
+if (!process.argv[2] && !process.env.MONGODB_URI) {
+  console.log('⚠️  Warning: Using default local MongoDB URI. Provide connection string as argument or set MONGODB_URI env variable.');
+}

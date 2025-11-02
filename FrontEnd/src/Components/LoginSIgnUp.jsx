@@ -20,19 +20,31 @@ export default function SignUpPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    const res = login(loginForm.username, loginForm.password);
-    if (!res.success) {
-      setError(res.error);
-      return;
+    setError('');
+    setLoading(true);
+    
+    try {
+      const res = await login(loginForm.email, loginForm.password);
+      
+      if (!res.success) {
+        setError(res.error || 'Login failed. Please try again.');
+        setLoading(false);
+        return;
+      }
+      
+      const role = res.role;
+      const from = location.state?.from?.pathname || `/dashboard/${role}`;
+      navigate(from, { replace: true });
+    } catch (err) {
+      setError('An error occurred during login. Please try again.');
+      setLoading(false);
     }
-    const role = res.role;
-    const from = location.state?.from?.pathname || `/dashboard/${role}`;
-    navigate(from, { replace: true });
   };
 
   const renderForm = () => {
@@ -54,15 +66,16 @@ export default function SignUpPage() {
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <FaUser className="text-gray-400" />
+                  <FaEnvelope className="text-gray-400" />
                 </div>
                 <input 
-                  type="text" 
-                  placeholder="Username" 
-                  value={loginForm.username}
-                  onChange={(e) => setLoginForm({...loginForm, username: e.target.value})}
+                  type="email" 
+                  placeholder="Email Address" 
+                  value={loginForm.email}
+                  onChange={(e) => setLoginForm({...loginForm, email: e.target.value})}
                   className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 outline-none"
                   required
+                  disabled={loading}
                 />
               </div>
               
@@ -77,14 +90,16 @@ export default function SignUpPage() {
                   onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
                   className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 outline-none"
                   required
+                  disabled={loading}
                 />
               </div>
               
               <button 
                 type="submit"
-                className="w-full bg-gradient-to-r from-green-500 to-green-600 text-white font-semibold py-3 rounded-lg hover:from-green-600 hover:to-green-700 transform hover:scale-[1.02] transition-all duration-200 shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+                disabled={loading}
+                className="w-full bg-gradient-to-r from-green-500 to-green-600 text-white font-semibold py-3 rounded-lg hover:from-green-600 hover:to-green-700 transform hover:scale-[1.02] transition-all duration-200 shadow-lg hover:shadow-xl flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Login <FaArrowRight />
+                {loading ? 'Logging in...' : 'Login'} <FaArrowRight />
               </button>
             </form>
             
@@ -93,12 +108,12 @@ export default function SignUpPage() {
                 <FaCheckCircle className="text-blue-600" /> Demo Credentials:
               </p>
               <div className="text-xs text-blue-800 space-y-1">
-                <p>👤 <strong>Customer:</strong> customer/customer123</p>
-                <p>🌾 <strong>Farmer:</strong> farmer/farmer123</p>
-                <p>🚚 <strong>Transporter:</strong> transporter/transport123</p>
-                <p>👥 <strong>Community:</strong> community/community123</p>
-                <p>💼 <strong>Business:</strong> business/business123</p>
-                <p>⚙️ <strong>Admin:</strong> admin/admin123</p>
+                <p>👤 <strong>Customer:</strong> customer@farmkart.com/customer123</p>
+                <p>🌾 <strong>Farmer:</strong> farmer1@farmkart.com/farmer123</p>
+                <p>🚚 <strong>Delivery:</strong> delivery@farmkart.com/delivery123</p>
+                <p>🍽️ <strong>Restaurant:</strong> restaurant@farmkart.com/restaurant123</p>
+                <p>💼 <strong>Business:</strong> business@farmkart.com/business123</p>
+                <p>⚙️ <strong>Admin:</strong> admin@farmkart.com/admin123</p>
               </div>
             </div>
             

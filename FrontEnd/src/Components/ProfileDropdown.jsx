@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Avatar, Menu, MenuItem, ListItemIcon, ListItemText, Divider, Box, Typography } from '@mui/material';
 import { 
   Person as PersonIcon,
@@ -13,6 +14,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 const ProfileDropdown = ({ activeTab, setActiveTab }) => {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [anchorEl, setAnchorEl] = useState(null);
   const open = Boolean(anchorEl);
 
@@ -22,6 +24,12 @@ const ProfileDropdown = ({ activeTab, setActiveTab }) => {
 
   const handleClose = () => {
     setAnchorEl(null);
+  };
+
+  const handleLogout = () => {
+    handleClose();
+    logout();
+    navigate('/login', { replace: true });
   };
 
   // Get user initials
@@ -173,7 +181,7 @@ const ProfileDropdown = ({ activeTab, setActiveTab }) => {
 
         <Divider />
 
-        <MenuItem onClick={logout} sx={{ color: 'error.main' }}>
+        <MenuItem onClick={handleLogout} sx={{ color: 'error.main' }}>
           <ListItemIcon>
             <LogoutIcon fontSize="small" color="error" />
           </ListItemIcon>
