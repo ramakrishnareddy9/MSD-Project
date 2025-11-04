@@ -3,8 +3,8 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import DashboardLayout from './layouts/DashboardLayout';
 import ProtectedRoute from './Components/ProtectedRoute';
 import FarmKartLanding from './Components/LandingPage';
-import AuthPage from './pages/AuthPage';
-import Unauthorized from './pages/Unauthorized';
+import AuthPage from './pages/AuthPage.jsx';
+import Unauthorized from './pages/Unauthorized.jsx';
 import { Loader } from './Components/common/Loader';
 import { ToastProvider } from './Components/common/Toast';
 
