@@ -1,3 +1,3 @@
 // Alias for compatibility with prompt naming; re-export existing ProtectedRoute
-import ProtectedRoute from '../Components/ProtectedRoute';
+import ProtectedRoute from '../Components/ProtectedRoute.jsx';
 export default ProtectedRoute;

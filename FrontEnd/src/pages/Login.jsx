@@ -1,5 +1,5 @@
 import { Container, Card, CardContent, Typography, Box, Paper, Grid, Chip } from '@mui/material';
-import LoginForm from '../Components/LoginForm';
+import LoginForm from '../Components/LoginForm.jsx';
 import { useState } from 'react';
 
 const Login = () => {

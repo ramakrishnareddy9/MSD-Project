@@ -1,4 +1,4 @@
-import SignUpPage from '../Components/LoginSignUp';
+import SignUpPage from '../Components/LoginSignUp.jsx';
 
 const AuthPage = () => {
   return (
