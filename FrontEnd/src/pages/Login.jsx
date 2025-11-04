@@ -1,93 +1,109 @@
-import { Container, Card, CardContent, Typography, Box, Paper, Grid, Chip } from '@mui/material';
-import LoginForm from '../Components/LoginForm.jsx';
+import { Container, Card, CardContent, Typography, Box, TextField, Button, Alert, CircularProgress } from '@mui/material';
 import { useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 const Login = () => {
-  const [selectedDemo, setSelectedDemo] = useState(null);
+  const { login } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const demoAccounts = [
-    { role: 'Admin', email: 'admin@farmkart.com', password: 'Admin@123', color: 'error' },
-    { role: 'Customer', email: 'customer@farmkart.com', password: 'Customer@123', color: 'primary' },
-    { role: 'Farmer', email: 'farmer@farmkart.com', password: 'Farmer@123', color: 'success' },
-    { role: 'Business', email: 'business@farmkart.com', password: 'Business@123', color: 'warning' },
-    { role: 'Restaurant', email: 'restaurant@farmkart.com', password: 'Restaurant@123', color: 'secondary' },
-    { role: 'Large Delivery', email: 'delivery.large@farmkart.com', password: 'Delivery@123', color: 'info' },
-    { role: 'Small Delivery', email: 'delivery.small@farmkart.com', password: 'Delivery@123', color: 'default' }
-  ];
+  const routeForRole = (roles) => {
+    const primaryRole = roles && roles.length > 0 ? roles[0] : 'customer';
+    
+    switch (primaryRole) {
+      case 'customer': return '/customer';
+      case 'farmer': return '/farmer';
+      case 'business': return '/business';
+      case 'restaurant': return '/restaurant';
+      case 'delivery_large': return '/delivery-large';
+      case 'delivery_small': return '/delivery-small';
+      case 'admin': return '/admin';
+      default: return '/';
+    }
+  };
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    
+    try {
+      const res = await login(email, password);
+      if (!res.success) {
+        setError(res.error || 'Login failed');
+        setLoading(false);
+        return;
+      }
+      
+      const userRoles = res.user?.roles || res.roles || ['customer'];
+      const from = location.state?.from?.pathname || routeForRole(userRoles);
+      navigate(from, { replace: true });
+    } catch (err) {
+      setError(err.message || 'Login failed. Please check your credentials.');
+      setLoading(false);
+    }
+  };
 
   return (
-    <Container maxWidth="md">
-      <Box sx={{ minHeight: '90vh', py: 4 }}>
-        <Grid container spacing={3}>
-          {/* Login Form */}
-          <Grid item xs={12} md={6}>
-            <Card sx={{ height: '100%' }}>
-              <CardContent sx={{ p: 4 }}>
-                <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom color="text.primary">
-                  Login
-                </Typography>
-                <LoginForm selectedDemo={selectedDemo} />
-              </CardContent>
-            </Card>
-          </Grid>
-
-          {/* Demo Accounts */}
-          <Grid item xs={12} md={6}>
-            <Card sx={{ height: '100%', bgcolor: 'background.default' }}>
-              <CardContent sx={{ p: 4 }}>
-                <Typography variant="h5" component="h2" fontWeight="bold" gutterBottom color="text.primary">
-                  Demo Accounts
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Click any account to auto-fill credentials
-                </Typography>
-                
-                {demoAccounts.map((account) => (
-                  <Paper 
-                    key={account.role}
-                    elevation={selectedDemo?.email === account.email ? 3 : 1}
-                    sx={{ 
-                      p: 2, 
-                      mb: 2, 
-                      cursor: 'pointer',
-                      transition: 'all 0.2s',
-                      border: selectedDemo?.email === account.email ? '2px solid' : '1px solid',
-                      borderColor: selectedDemo?.email === account.email ? 'primary.main' : 'divider',
-                      '&:hover': { 
-                        transform: 'translateX(5px)',
-                        boxShadow: 3 
-                      }
-                    }}
-                    onClick={() => setSelectedDemo(account)}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <Box>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                          <Chip 
-                            label={account.role} 
-                            size="small" 
-                            color={account.color}
-                            sx={{ fontWeight: 'bold' }}
-                          />
-                        </Box>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                          📧 {account.email}
-                        </Typography>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                          🔑 {account.password}
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </Paper>
-                ))}
-
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block' }}>
-                  💡 These are test accounts with pre-loaded data
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
+    <Container maxWidth="sm">
+      <Box sx={{ minHeight: '80vh', display: 'flex', alignItems: 'center', justifyContent: 'center', py: 4 }}>
+        <Card sx={{ width: '100%', maxWidth: 400, boxShadow: 3 }}>
+          <CardContent sx={{ p: 4 }}>
+            <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom color="text.primary" textAlign="center">
+              Welcome Back
+            </Typography>
+            <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ mb: 3 }}>
+              Sign in to your account
+            </Typography>
+            
+            <Box component="form" onSubmit={onSubmit} sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+              {error && <Alert severity="error">{error}</Alert>}
+              
+              <TextField
+                label="Email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Enter your email"
+                fullWidth
+                variant="outlined"
+                required
+                disabled={loading}
+                autoComplete="email"
+              />
+              
+              <TextField
+                label="Password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your password"
+                fullWidth
+                variant="outlined"
+                required
+                disabled={loading}
+                autoComplete="current-password"
+              />
+              
+              <Button 
+                type="submit" 
+                variant="contained" 
+                color="primary" 
+                fullWidth 
+                size="large"
+                disabled={loading || !email || !password}
+                sx={{ mt: 2, py: 1.5 }}
+              >
+                {loading ? <CircularProgress size={24} color="inherit" /> : 'Sign In'}
+              </Button>
+            </Box>
+          </CardContent>
+        </Card>
       </Box>
     </Container>
   );

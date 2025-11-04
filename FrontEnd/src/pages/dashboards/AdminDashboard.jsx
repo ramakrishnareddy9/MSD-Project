@@ -10,7 +10,7 @@ import {
   Dashboard, People, Settings, Notifications, Menu as MenuIcon,
   TrendingUp, ShoppingCart, Agriculture, LocalShipping,
   MoreVert, Block, CheckCircle, Warning, Error as ErrorIcon,
-  PersonAdd, Edit, Delete, Visibility,
+  PersonAdd, Edit, Delete, Visibility, Assessment,
   Security, AdminPanelSettings, Schedule, Cancel
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
