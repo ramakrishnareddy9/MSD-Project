@@ -3,8 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import DashboardLayout from './layouts/DashboardLayout';
 import ProtectedRoute from './Components/ProtectedRoute';
 import FarmKartLanding from './Components/LandingPage';
-import Login from './pages/Login';
-import Signup from './pages/Signup';
+import AuthPage from './pages/AuthPage';
 import Unauthorized from './pages/Unauthorized';
 import { Loader } from './Components/common/Loader';
 import { ToastProvider } from './Components/common/Toast';
@@ -41,9 +40,9 @@ function App() {
             </ProtectedRoute>
           }
         />
-        {/* Login and Signup routes */}
-        <Route path="/login" element={<Login />} />
-        <Route path="/signup" element={<Signup />} />
+        {/* Use your existing tabbed Login/Signup UI for both routes */}
+        <Route path="/login" element={<AuthPage />} />
+        <Route path="/signup" element={<AuthPage />} />
 
         {/* Shared layout with navbar/footer and nested dashboards */}
         <Route element={<DashboardLayout />}>        
