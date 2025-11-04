@@ -13,10 +13,13 @@ node_modules/
 
 # Environment files
 .env
-.env.*
-*.local
+.env.local
+.env.*.local
 backend/.env
 FrontEnd/.env
+!.env.example
+!backend/.env.example
+!FrontEnd/.env.example
 
 # Build outputs
 build/

@@ -8,7 +8,6 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "build": "node server.js",
-    "vercel-build": "echo 'Building for Vercel'",
     "seed": "node seed/seedData.js",
     "seed:json": "node seed/seedFromJson.js"
   },
