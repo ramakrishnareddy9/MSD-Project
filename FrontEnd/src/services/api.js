@@ -560,6 +560,410 @@ export const commissionAPI = {
   }
 };
 
+// ===== COMMUNITY API =====
+export const communityAPI = {
+  getAll: async () => {
+    return apiCall(`/communities`);
+  },
+
+  getMy: async () => {
+    return apiCall(`/communities/mine`);
+  },
+
+  join: async (id) => {
+    return apiCall(`/communities/${id}/join`, {
+      method: 'POST'
+    });
+  },
+
+  getPools: async (id) => {
+    return apiCall(`/communities/${id}/pools`);
+  },
+
+  contributeToPool: async (poolId, contributionData) => {
+    return apiCall(`/communities/pools/${poolId}/contribute`, {
+      method: 'POST',
+      body: JSON.stringify(contributionData)
+    });
+  },
+
+  getChat: async (id) => {
+    return apiCall(`/communities/${id}/chat`);
+  },
+
+  sendChatMessage: async (id, message) => {
+    return apiCall(`/communities/${id}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ message })
+    });
+  }
+};
+
+// ===== CART API =====
+export const cartAPI = {
+  getCart: async () => {
+    return apiCall('/cart');
+  },
+
+  addItem: async (productId, qty = 1) => {
+    return apiCall('/cart', {
+      method: 'POST',
+      body: JSON.stringify({ productId, qty })
+    });
+  },
+
+  updateItem: async (productId, qty) => {
+    return apiCall(`/cart/${productId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ productId, qty })
+    });
+  },
+
+  removeItem: async (productId) => {
+    return apiCall(`/cart/${productId}`, {
+      method: 'DELETE'
+    });
+  },
+
+  clear: async () => {
+    return apiCall('/cart', {
+      method: 'DELETE'
+    });
+  }
+};
+
+// ===== WISHLIST API =====
+export const wishlistAPI = {
+  getWishlist: async () => {
+    return apiCall('/wishlist');
+  },
+
+  addItem: async (productId) => {
+    return apiCall('/wishlist', {
+      method: 'POST',
+      body: JSON.stringify({ productId })
+    });
+  },
+
+  removeItem: async (productId) => {
+    return apiCall(`/wishlist/${productId}`, {
+      method: 'DELETE'
+    });
+  },
+
+  clear: async () => {
+    return apiCall('/wishlist', {
+      method: 'DELETE'
+    });
+  }
+};
+
+// ===== NOTIFICATION API =====
+export const notificationAPI = {
+  getAll: async (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/notifications?${query}`);
+  },
+
+  create: async (notificationData) => {
+    return apiCall('/notifications', {
+      method: 'POST',
+      body: JSON.stringify(notificationData)
+    });
+  },
+
+  markAsRead: async (id) => {
+    return apiCall(`/notifications/${id}/read`, {
+      method: 'PUT'
+    });
+  },
+
+  markAllAsRead: async () => {
+    return apiCall('/notifications/read-all', {
+      method: 'PUT'
+    });
+  },
+
+  delete: async (id) => {
+    return apiCall(`/notifications/${id}`, {
+      method: 'DELETE'
+    });
+  }
+};
+
+// ===== VEHICLE API =====
+export const vehicleAPI = {
+  getAll: async (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/vehicles?${query}`);
+  },
+
+  getById: async (id) => {
+    return apiCall(`/vehicles/${id}`);
+  },
+
+  create: async (vehicleData) => {
+    return apiCall('/vehicles', {
+      method: 'POST',
+      body: JSON.stringify(vehicleData)
+    });
+  },
+
+  update: async (id, vehicleData) => {
+    return apiCall(`/vehicles/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(vehicleData)
+    });
+  },
+
+  delete: async (id) => {
+    return apiCall(`/vehicles/${id}`, {
+      method: 'DELETE'
+    });
+  },
+
+  updateStatus: async (id, status) => {
+    return apiCall(`/vehicles/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status })
+    });
+  },
+
+  assignDriver: async (id, driverId) => {
+    return apiCall(`/vehicles/${id}/driver`, {
+      method: 'PATCH',
+      body: JSON.stringify({ driverId })
+    });
+  },
+
+  updateLocation: async (id, address, lat, lng) => {
+    return apiCall(`/vehicles/${id}/location`, {
+      method: 'PATCH',
+      body: JSON.stringify({ address, lat, lng })
+    });
+  }
+};
+
+// ===== ANALYTICS API =====
+export const analyticsAPI = {
+  getDashboardMetrics: async () => {
+    return apiCall('/analytics/dashboard');
+  },
+
+  getUserMetrics: async (userId) => {
+    return apiCall(`/analytics/user/${userId}`);
+  },
+
+  getRevenueMetrics: async (startDate, endDate) => {
+    const params = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/analytics/revenue?${query}`);
+  },
+
+  getOrderAnalytics: async (sellerId) => {
+    const params = sellerId ? { sellerId } : {};
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/analytics/orders?${query}`);
+  },
+
+  getProductAnalytics: async (ownerId) => {
+    const params = ownerId ? { ownerId } : {};
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/analytics/products?${query}`);
+  }
+};
+
+// ===== UTILITY / HELPER API METHODS =====
+export const searchAPI = {
+  // Global search across products, users, communities
+  search: async (query, filters = {}) => {
+    const params = { q: query, ...filters };
+    const queryStr = new URLSearchParams(params).toString();
+    return apiCall(`/search?${queryStr}`);
+  },
+
+  // Search products by name, category, location
+  searchProducts: async (query, filters = {}) => {
+    return productAPI.search(query, filters);
+  },
+
+  // Search users (farmers, businesses, delivery partners)
+  searchUsers: async (query, userType = null) => {
+    const params = { search: query };
+    if (userType) params.role = userType;
+    return userAPI.getAll(params);
+  },
+
+  // Search by location
+  searchByLocation: async (state, city = null, radius = null) => {
+    const params = { state };
+    if (city) params.city = city;
+    if (radius) params.radius = radius;
+    return locationAPI.getAll(params);
+  }
+};
+
+export const filterAPI = {
+  // Get products with pagination
+  getProductsPaginated: async (page = 1, limit = 20, filters = {}) => {
+    return productAPI.getAll({ page, limit, ...filters });
+  },
+
+  // Get orders with filters
+  getOrdersFiltered: async (filters = {}, page = 1, limit = 20) => {
+    return orderAPI.getAll({ ...filters, page, limit });
+  },
+
+  // Get users with role filtering
+  getUsersByRole: async (role, page = 1, limit = 20) => {
+    return userAPI.getAll({ role, page, limit });
+  },
+
+  // Get products by category
+  getByCategory: async (categoryName, page = 1, limit = 20) => {
+    return productAPI.getAll({ category: categoryName, page, limit });
+  },
+
+  // Get available products (in stock)
+  getAvailableProducts: async (page = 1, limit = 20) => {
+    return productAPI.getAll({ status: 'active', inStock: true, page, limit });
+  },
+
+  // Get high-rated products
+  getTopRatedProducts: async (minRating = 4.0, limit = 20) => {
+    return productAPI.getAll({ minRating, sortBy: 'rating', sortOrder: 'desc', limit });
+  }
+};
+
+export const statisticsAPI = {
+  // Get trending products
+  getTrendingProducts: async (days = 30, limit = 10) => {
+    return apiCall(`/analytics/trending-products?days=${days}&limit=${limit}`);
+  },
+
+  // Get best sellers
+  getBestSellers: async (limit = 10) => {
+    return apiCall(`/analytics/best-sellers?limit=${limit}`);
+  },
+
+  // Get platform stats
+  getPlatformStats: async () => {
+    return apiCall(`/analytics/platform-stats`);
+  },
+
+  // Get price trends for a product
+  getPriceTrends: async (productId, days = 30) => {
+    return apiCall(`/analytics/price-trends/${productId}?days=${days}`);
+  },
+
+  // Get user activity stats
+  getUserActivity: async (userId, days = 30) => {
+    return apiCall(`/analytics/user-activity/${userId}?days=${days}`);
+  }
+};
+
+export const batchAPI = {
+  // Bulk update order statuses
+  updateOrderStatuses: async (orderIds, status) => {
+    return apiCall('/orders/bulk-update-status', {
+      method: 'PATCH',
+      body: JSON.stringify({ orderIds, status })
+    });
+  },
+
+  // Bulk delete products (admin only)
+  deleteProducts: async (productIds) => {
+    return apiCall('/products/bulk-delete', {
+      method: 'DELETE',
+      body: JSON.stringify({ productIds })
+    });
+  },
+
+  // Bulk mark notifications as read
+  markNotificationsRead: async (notificationIds) => {
+    return apiCall('/notifications/bulk-read', {
+      method: 'PATCH',
+      body: JSON.stringify({ notificationIds })
+    });
+  },
+
+  // Bulk create orders (for recurring orders)
+  createMultipleOrders: async (ordersData) => {
+    return apiCall('/orders/bulk-create', {
+      method: 'POST',
+      body: JSON.stringify({ orders: ordersData })
+    });
+  }
+};
+
+export const exportAPI = {
+  // Export orders to CSV
+  exportOrders: async (filters = {}) => {
+    const query = new URLSearchParams({ ...filters, format: 'csv' }).toString();
+    return apiCall(`/export/orders?${query}`);
+  },
+
+  // Export products to CSV
+  exportProducts: async (filters = {}) => {
+    const query = new URLSearchParams({ ...filters, format: 'csv' }).toString();
+    return apiCall(`/export/products?${query}`);
+  },
+
+  // Export analytics report
+  exportAnalytics: async (reportType = 'dashboard', format = 'pdf') => {
+    return apiCall(`/export/analytics?type=${reportType}&format=${format}`);
+  },
+
+  // Export transaction history
+  exportTransactions: async (startDate, endDate, format = 'csv') => {
+    const query = new URLSearchParams({ startDate, endDate, format }).toString();
+    return apiCall(`/export/transactions?${query}`);
+  }
+};
+
+export const settingsAPI = {
+  // Get user settings
+  getSettings: async () => {
+    return apiCall('/settings/user');
+  },
+
+  // Update user settings
+  updateSettings: async (settingsData) => {
+    return apiCall('/settings/user', {
+      method: 'PUT',
+      body: JSON.stringify(settingsData)
+    });
+  },
+
+  // Get notification preferences
+  getNotificationPreferences: async () => {
+    return apiCall('/settings/notifications');
+  },
+
+  // Update notification preferences
+  updateNotificationPreferences: async (preferences) => {
+    return apiCall('/settings/notifications', {
+      method: 'PUT',
+      body: JSON.stringify(preferences)
+    });
+  },
+
+  // Get privacy settings
+  getPrivacySettings: async () => {
+    return apiCall('/settings/privacy');
+  },
+
+  // Update privacy settings
+  updatePrivacySettings: async (settings) => {
+    return apiCall('/settings/privacy', {
+      method: 'PUT',
+      body: JSON.stringify(settings)
+    });
+  }
+};
+
 export default {
   auth: authAPI,
   user: userAPI,
@@ -573,5 +977,12 @@ export default {
   priceAgreement: priceAgreementAPI,
   recurringOrder: recurringOrderAPI,
   delivery: deliveryAPI,
-  commission: commissionAPI
+  commission: commissionAPI,
+  community: communityAPI,
+  search: searchAPI,
+  filter: filterAPI,
+  statistics: statisticsAPI,
+  batch: batchAPI,
+  export: exportAPI,
+  settings: settingsAPI
 };

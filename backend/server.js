@@ -20,6 +20,12 @@ import paymentRoutes from './routes/payment.routes.js';
 import priceAgreementRoutes from './routes/priceAgreement.routes.js';
 import deliveryRoutes from './routes/delivery.routes.js';
 import commissionRoutes from './routes/commission.routes.js';
+import communityRoutes from './routes/community.routes.js';
+import cartRoutes from './routes/cart.routes.js';
+import wishlistRoutes from './routes/wishlist.routes.js';
+import notificationRoutes from './routes/notification.routes.js';
+import vehicleRoutes from './routes/vehicle.routes.js';
+import analyticsRoutes from './routes/analytics.routes.js';
 
 // Import middleware
 import { errorHandler, notFoundHandler } from './middleware/error.middleware.js';
@@ -113,6 +119,12 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/price-agreements', priceAgreementRoutes);
 app.use('/api/delivery', deliveryRoutes);
 app.use('/api/commissions', commissionRoutes);
+app.use('/api/communities', communityRoutes);
+app.use('/api/cart', cartRoutes);
+app.use('/api/wishlist', wishlistRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/vehicles', vehicleRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

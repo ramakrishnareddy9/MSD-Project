@@ -4,18 +4,21 @@ import {
   MenuItem, Chip, Avatar, Divider, Paper, AppBar, Toolbar, Drawer, List,
   ListItemButton, ListItemIcon, ListItemText, Stack, IconButton, Badge,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Switch, Snackbar, Alert, LinearProgress
+  Switch, Snackbar, Alert, LinearProgress, CircularProgress
 } from '@mui/material';
 import {
   Agriculture, Inventory, TrendingUp, AccountCircle,
   Add, Delete, Visibility, Notifications, Menu as MenuIcon,
+  LocationOn,
   LocalShipping, AttachMoney, CheckCircle, Cancel,
   Verified, Home, Store, Schedule, Business,
-  ShoppingCart, LocationOn, DirectionsCar, CalendarMonth
+  ShoppingCart, Refresh
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
+import { authAPI, productAPI, orderAPI, inventoryAPI, analyticsAPI, deliveryAPI } from '../../services/api';
 
 const FarmerDashboard = () => {
+  // State for form input
   const [cropForm, setCropForm] = useState({ 
     type: '', 
     landSize: '', 
@@ -24,122 +27,117 @@ const FarmerDashboard = () => {
     season: '',
     quantity: ''
   });
-  const [crops, setCrops] = useState([
-    { 
-      id: 1, 
-      type: 'Wheat', 
-      landSize: '5', 
-      available: true, 
-      price: '25', 
-      season: 'Rabi', 
-      quantity: '500',
-      planted: '2023-11-15', 
-      harvest: '2024-04-15',
-      status: 'Ready'
-    },
-    { 
-      id: 2, 
-      type: 'Rice', 
-      landSize: '3', 
-      available: true, 
-      price: '30', 
-      season: 'Kharif', 
-      quantity: '300',
-      planted: '2023-07-01', 
-      harvest: '2023-11-30',
-      status: 'Ready'
-    },
-    { 
-      id: 3, 
-      type: 'Tomatoes', 
-      landSize: '2', 
-      available: false, 
-      price: '40', 
-      season: 'Summer', 
-      quantity: '200',
-      planted: '2024-01-15', 
-      harvest: '2024-05-15',
-      status: 'Growing'
-    },
-    { 
-      id: 4, 
-      type: 'Organic Carrots', 
-      landSize: '1.5', 
-      available: true, 
-      price: '45', 
-      season: 'Winter', 
-      quantity: '150',
-      planted: '2023-12-01', 
-      harvest: '2024-03-15',
-      status: 'Ready'
-    }
-  ]);
+
+  // API-driven state (replacing mock data)
+  const [farmerData, setFarmerData] = useState(null);
+  const [crops, setCrops] = useState([]);
+  const [myOrders, setMyOrders] = useState([]);
+  const [availableOrders, setAvailableOrders] = useState([]);
+  const [metrics, setMetrics] = useState({
+    totalCrops: 0,
+    activeSales: 0,
+    monthlyEarnings: 0,
+    customerRating: 0,
+    totalOrders: 0,
+    pendingOrders: 0
+  });
+  const [loading, setLoading] = useState(true);
   
+  // UI state
   const [activeSection, setActiveSection] = useState('overview');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
-  
-  // Shared LocalStorage keys with Transporter marketplace
-  const LS_ROUTE_REQUESTS = 'farmkart_route_requests';
-  const LS_ACCEPTED_ROUTES = 'farmkart_accepted_routes';
-  const [myRouteRequests, setMyRouteRequests] = useState([]);
-  const [routeRequestForm, setRouteRequestForm] = useState({
-    from: 'Banaskantha, Gujarat',
-    to: '',
-    distance: '',
-    cargo: '',
-    date: '',
-    payment: ''
-  });
-  
-  // Route Booking State
-  const [availableRoutes, setAvailableRoutes] = useState([
-    { id: 1, from: 'Banaskantha, Gujarat', to: 'Mumbai, Maharashtra', distance: '520 km', price: 3500, transporter: 'Fast Logistics', date: '2024-01-20', status: 'Available' },
-    { id: 2, from: 'Banaskantha, Gujarat', to: 'Delhi NCR', distance: '780 km', price: 5200, transporter: 'Green Transport', date: '2024-01-22', status: 'Available' },
-    { id: 3, from: 'Banaskantha, Gujarat', to: 'Ahmedabad, Gujarat', distance: '150 km', price: 1200, transporter: 'Quick Move', date: '2024-01-18', status: 'Available' },
-  ]);
-  
-  const [bookedRoutes, setBookedRoutes] = useState([
-    { id: 1, from: 'Banaskantha, Gujarat', to: 'Pune, Maharashtra', distance: '650 km', price: 4200, transporter: 'Safe Cargo', date: '2024-01-15', status: 'Confirmed', bookingId: 'BK001' }
-  ]);
-  
-  // Global Order Marketplace State
-  const [globalOrders, setGlobalOrders] = useState([
-    { id: 1, business: 'Fresh Mart Pvt Ltd', crop: 'Wheat', quantity: '500 kg', priceOffered: 28, location: 'Mumbai, Maharashtra', deadline: '2024-01-25', status: 'Open', type: 'Business' },
-    { id: 2, business: 'Organic Foods Co.', crop: 'Rice', quantity: '300 kg', priceOffered: 35, location: 'Delhi NCR', deadline: '2024-01-28', status: 'Open', type: 'Business' },
-    { id: 3, business: 'Green Grocers', crop: 'Tomatoes', quantity: '200 kg', priceOffered: 45, location: 'Ahmedabad, Gujarat', deadline: '2024-01-22', status: 'Open', type: 'Business' },
-    { id: 4, business: 'Farm Direct Store', crop: 'Carrots', quantity: '150 kg', priceOffered: 50, location: 'Surat, Gujarat', deadline: '2024-01-30', status: 'Open', type: 'Retailer' },
-  ]);
-  
-  const [myAcceptedOrders, setMyAcceptedOrders] = useState([
-    { id: 1, business: 'Healthy Foods Ltd', crop: 'Wheat', quantity: '200 kg', priceOffered: 27, location: 'Pune, Maharashtra', deadline: '2024-01-20', status: 'Accepted', acceptedDate: '2024-01-10' }
-  ]);
-  
-  const [farmerData] = useState({
-    name: 'Ramesh Patel',
-    farmName: 'Green Fields Farm',
-    address: 'Village Khetpura, Tehsil Deesa, Banaskantha, Gujarat - 385535',
-    phone: '+91 9876543210',
-    email: 'ramesh.patel@greenfields.com',
-    experience: '15 years',
-    totalLand: '25 acres',
-    organicCertified: true,
-    stats: {
-      totalCrops: 8,
-      activeSales: 5,
-      monthlyEarnings: 45000,
-      customerRating: 4.7,
-      totalOrders: 156,
-      pendingOrders: 12
-    }
-  });
 
-  const [orders] = useState([
-    { id: 1, customer: 'John Doe', crop: 'Wheat', quantity: '50 kg', amount: 1250, status: 'Pending', date: '2024-01-15' },
-    { id: 2, customer: 'Jane Smith', crop: 'Rice', quantity: '30 kg', amount: 900, status: 'Delivered', date: '2024-01-14' },
-    { id: 3, customer: 'Mike Johnson', crop: 'Organic Carrots', quantity: '20 kg', amount: 900, status: 'Processing', date: '2024-01-13' },
-    { id: 4, customer: 'Sarah Williams', crop: 'Wheat', quantity: '100 kg', amount: 2500, status: 'Delivered', date: '2024-01-12' }
-  ]);
+  // Initialize: Fetch farmer data on component mount
+  useEffect(() => {
+    const initializeFarmerData = async () => {
+      try {
+        setLoading(true);
+
+        // Get current user (farmer profile)
+        const userRes = await authAPI.getCurrentUser();
+        if (userRes.success) {
+          setFarmerData(userRes.data);
+
+          // Get farmer metrics (orders, earnings, etc.)
+          const metricsRes = await analyticsAPI.getUserMetrics(userRes.data._id);
+          if (metricsRes.success && metricsRes.data.sellerMetrics) {
+            const seller = metricsRes.data.sellerMetrics;
+            setMetrics({
+              totalCrops: 0,
+              activeSales: seller.totalOrders || 0,
+              monthlyEarnings: seller.totalEarned || 0,
+              customerRating: 4.7,
+              totalOrders: seller.totalOrders || 0,
+              pendingOrders: 0
+            });
+          }
+
+          // Get farmer's products (crops)
+          const productsRes = await productAPI.getAll({ ownerId: userRes.data._id });
+          if (productsRes.success && productsRes.data?.products) {
+            const mappedCrops = productsRes.data.products.map(p => ({
+              id: p._id || p.id,
+              type: p.name,
+              landSize: p.landSize || '1',
+              available: p.status === 'active',
+              price: p.basePrice || 0,
+              season: p.season || 'Year-round',
+              quantity: p.stockQuantity || 0,
+              planted: new Date(p.createdAt).toLocaleDateString(),
+              status: p.status === 'active' ? 'Ready' : 'Growing'
+            }));
+            setCrops(mappedCrops);
+          }
+
+          // Get farmer's orders (as seller)
+          const ordersRes = await orderAPI.getAll({ sellerId: userRes.data._id });
+          if (ordersRes.success && ordersRes.data?.orders) {
+            const mappedOrders = ordersRes.data.orders.map((o, idx) => ({
+              id: idx + 1,
+              customer: o.buyerId?.name || 'Customer',
+              crop: o.orderItems?.[0]?.productName || 'Product',
+              quantity: `${o.orderItems?.[0]?.quantity || 0} kg`,
+              amount: o.total || 0,
+              status: o.status || 'pending',
+              date: new Date(o.createdAt).toLocaleDateString()
+            }));
+            setMyOrders(mappedOrders);
+            setMetrics(prev => ({
+              ...prev,
+              pendingOrders: mappedOrders.filter(o => o.status === 'pending').length
+            }));
+          }
+
+          // Get all available products from other farmers (marketplace)
+          const allProductsRes = await productAPI.getAll({ status: 'active' });
+          if (allProductsRes.success && allProductsRes.data?.products) {
+            const otherProducts = allProductsRes.data.products.filter(
+              p => p.ownerId?._id !== userRes.data._id
+            ).slice(0, 10);
+            setAvailableOrders(otherProducts.map((p, idx) => ({
+              id: idx + 1,
+              business: p.ownerId?.name || 'Farm',
+              crop: p.name,
+              quantity: `${p.stockQuantity || 0} ${p.unit || 'units'}`,
+              priceOffered: p.basePrice || 0,
+              location: p.location?.state || 'India',
+              deadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString(),
+              status: 'Open',
+              type: p.ownerId?.roles?.[0] || 'Farmer'
+            })));
+          }
+        }
+      } catch (error) {
+        console.error('Error initializing farmer data:', error);
+        // Fallback to empty state
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initializeFarmerData();
+  }, []);
 
   const showSnackbar = (message, severity = 'success') => {
     setSnackbar({ open: true, message, severity });
@@ -189,99 +187,12 @@ const FarmerDashboard = () => {
     showSnackbar(`${crop.type} removed successfully`, 'info');
   };
 
-  // Load my route requests and their acceptance status
-  useEffect(() => {
-    try {
-      const all = JSON.parse(localStorage.getItem(LS_ROUTE_REQUESTS) || '[]');
-      const accepted = JSON.parse(localStorage.getItem(LS_ACCEPTED_ROUTES) || '[]');
-      const acceptedIds = new Set(accepted.map(r => r.requestId));
-      const mine = all.filter(r => r.requester?.startsWith(farmerData.name));
-      const withStatus = mine.map(r => ({ ...r, status: acceptedIds.has(r.id) ? 'Accepted' : 'Open' }));
-      setMyRouteRequests(withStatus);
-    } catch (_) {}
-  }, []);
 
-  useEffect(() => {
-    const onStorage = (e) => {
-      if (e.key === LS_ROUTE_REQUESTS || e.key === LS_ACCEPTED_ROUTES) {
-        try {
-          const all = JSON.parse(localStorage.getItem(LS_ROUTE_REQUESTS) || '[]');
-          const accepted = JSON.parse(localStorage.getItem(LS_ACCEPTED_ROUTES) || '[]');
-          const acceptedIds = new Set(accepted.map(r => r.requestId));
-          const mine = all.filter(r => r.requester?.startsWith(farmerData.name));
-          const withStatus = mine.map(r => ({ ...r, status: acceptedIds.has(r.id) ? 'Accepted' : 'Open' }));
-          setMyRouteRequests(withStatus);
-        } catch (_) {}
-      }
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, [farmerData.name]);
-
-  // Refresh when opening the Routes tab
-  useEffect(() => {
-    if (activeSection === 'routes') {
-      try {
-        const all = JSON.parse(localStorage.getItem(LS_ROUTE_REQUESTS) || '[]');
-        const accepted = JSON.parse(localStorage.getItem(LS_ACCEPTED_ROUTES) || '[]');
-        const acceptedIds = new Set(accepted.map(r => r.requestId));
-        const mine = all.filter(r => r.requester?.startsWith(farmerData.name));
-        const withStatus = mine.map(r => ({ ...r, status: acceptedIds.has(r.id) ? 'Accepted' : 'Open' }));
-        setMyRouteRequests(withStatus);
-      } catch (_) {}
-    }
-  }, [activeSection, farmerData.name]);
-
-  const postTransportRequest = (e) => {
-    e.preventDefault();
-    const { from, to, distance, cargo, date, payment } = routeRequestForm;
-    if (!from || !to || !cargo || !date || !payment) {
-      showSnackbar('Please fill all required fields for transport request', 'error');
-      return;
-    }
-    const req = {
-      id: Date.now(),
-      requester: `${farmerData.name} (Farmer)`,
-      from,
-      to,
-      distance: distance || 'TBD',
-      cargo,
-      date,
-      payment: parseInt(payment, 10) || 0,
-      type: 'Farmer',
-      status: 'Open'
-    };
-    try {
-      const existing = JSON.parse(localStorage.getItem(LS_ROUTE_REQUESTS) || '[]');
-      const updated = [req, ...existing];
-      localStorage.setItem(LS_ROUTE_REQUESTS, JSON.stringify(updated));
-      const accepted = JSON.parse(localStorage.getItem(LS_ACCEPTED_ROUTES) || '[]');
-      const acceptedIds = new Set(accepted.map(r => r.requestId));
-      setMyRouteRequests([{ ...req, status: acceptedIds.has(req.id) ? 'Accepted' : 'Open' }, ...myRouteRequests]);
-      setRouteRequestForm({ from: 'Banaskantha, Gujarat', to: '', distance: '', cargo: '', date: '', payment: '' });
-      showSnackbar('Transport request posted to marketplace!', 'success');
-    } catch (_) {
-      showSnackbar('Failed to post request', 'error');
-    }
-  };
-
-  const cancelRouteRequest = (id) => {
-    try {
-      const existing = JSON.parse(localStorage.getItem(LS_ROUTE_REQUESTS) || '[]');
-      const filtered = existing.filter(r => r.id !== id);
-      localStorage.setItem(LS_ROUTE_REQUESTS, JSON.stringify(filtered));
-      setMyRouteRequests(myRouteRequests.filter(r => r.id !== id));
-      showSnackbar('Request cancelled', 'info');
-    } catch (_) {
-      showSnackbar('Failed to cancel request', 'error');
-    }
-  };
 
   const menuItems = [
     { id: 'overview', label: 'Overview', icon: <Home /> },
     { id: 'crops', label: 'My Crops', icon: <Agriculture />, badge: crops.length },
     { id: 'orders', label: 'Orders', icon: <Store />, badge: farmerData.stats.pendingOrders },
-    { id: 'routes', label: 'Book Routes', icon: <DirectionsCar />, badge: availableRoutes.length },
     { id: 'marketplace', label: 'Order Marketplace', icon: <ShoppingCart />, badge: globalOrders.filter(o => o.status === 'Open').length },
     { id: 'inventory', label: 'Inventory', icon: <Inventory /> },
     { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: 3 },
@@ -914,298 +825,6 @@ const FarmerDashboard = () => {
               </Paper>
             )}
 
-            {/* Route Booking */}
-            {activeSection === 'routes' && (
-              <Box>
-                <Typography variant="h5" fontWeight="bold" gutterBottom sx={{ mb: 3 }}>
-                  Transportation Route Booking
-                </Typography>
-                
-                {/* Post Transport Request (goes to Transporter marketplace) */}
-                <Paper sx={{ p: 3, mb: 3 }}>
-                  <Typography variant="h6" fontWeight="bold" gutterBottom>
-                    Post Transport Request
-                  </Typography>
-                  <Divider sx={{ my: 2 }} />
-                  <Box component="form" onSubmit={postTransportRequest}>
-                    <Grid container spacing={2}>
-                      <Grid item xs={12} md={4}>
-                        <TextField
-                          fullWidth
-                          label="From"
-                          value={routeRequestForm.from}
-                          onChange={(e) => setRouteRequestForm({ ...routeRequestForm, from: e.target.value })}
-                          required
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={4}>
-                        <TextField
-                          fullWidth
-                          label="To"
-                          value={routeRequestForm.to}
-                          onChange={(e) => setRouteRequestForm({ ...routeRequestForm, to: e.target.value })}
-                          required
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={2}>
-                        <TextField
-                          fullWidth
-                          label="Distance (km)"
-                          value={routeRequestForm.distance}
-                          onChange={(e) => setRouteRequestForm({ ...routeRequestForm, distance: e.target.value })}
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={2}>
-                        <TextField
-                          fullWidth
-                          label="Payment (₹)"
-                          type="number"
-                          value={routeRequestForm.payment}
-                          onChange={(e) => setRouteRequestForm({ ...routeRequestForm, payment: e.target.value })}
-                          required
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={8}>
-                        <TextField
-                          fullWidth
-                          label="Cargo Details"
-                          value={routeRequestForm.cargo}
-                          onChange={(e) => setRouteRequestForm({ ...routeRequestForm, cargo: e.target.value })}
-                          required
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={2}>
-                        <TextField
-                          fullWidth
-                          type="date"
-                          label="Date"
-                          InputLabelProps={{ shrink: true }}
-                          value={routeRequestForm.date}
-                          onChange={(e) => setRouteRequestForm({ ...routeRequestForm, date: e.target.value })}
-                          required
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={2}>
-                        <Button type="submit" variant="contained" fullWidth sx={{ height: 56 }}>
-                          Post Request
-                        </Button>
-                      </Grid>
-                    </Grid>
-                  </Box>
-                </Paper>
-
-                {/* My Posted Route Requests */}
-                <Paper sx={{ p: 3, mb: 3 }}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
-                    <Typography variant="h6" fontWeight="bold">
-                      My Route Requests
-                    </Typography>
-                    <Button size="small" variant="outlined" onClick={() => {
-                      try {
-                        const all = JSON.parse(localStorage.getItem(LS_ROUTE_REQUESTS) || '[]');
-                        const accepted = JSON.parse(localStorage.getItem(LS_ACCEPTED_ROUTES) || '[]');
-                        const acceptedIds = new Set(accepted.map(r => r.requestId));
-                        const mine = all.filter(r => r.requester?.startsWith(farmerData.name));
-                        const withStatus = mine.map(r => ({ ...r, status: acceptedIds.has(r.id) ? 'Accepted' : 'Open' }));
-                        setMyRouteRequests(withStatus);
-                        showSnackbar('Status refreshed', 'success');
-                      } catch (_) {
-                        showSnackbar('Failed to refresh', 'error');
-                      }
-                    }}>Refresh</Button>
-                  </Stack>
-                  <Divider sx={{ my: 2 }} />
-                  {myRouteRequests.length === 0 ? (
-                    <Typography variant="body2" color="text.secondary">No requests posted yet</Typography>
-                  ) : (
-                    <Grid container spacing={2}>
-                      {myRouteRequests.map((req) => (
-                        <Grid item xs={12} key={req.id}>
-                          <Card variant="outlined">
-                            <CardContent>
-                              <Grid container spacing={2} alignItems="center">
-                                <Grid item xs={12} md={4}>
-                                  <Stack spacing={0.5}>
-                                    <Typography variant="caption" color="text.secondary">From</Typography>
-                                    <Typography variant="body1" fontWeight="bold">
-                                      <LocationOn fontSize="small" sx={{ verticalAlign: 'middle', mr: 0.5 }} />
-                                      {req.from}
-                                    </Typography>
-                                  </Stack>
-                                </Grid>
-                                <Grid item xs={12} md={4}>
-                                  <Stack spacing={0.5}>
-                                    <Typography variant="caption" color="text.secondary">To</Typography>
-                                    <Typography variant="body1" fontWeight="bold">
-                                      <LocationOn fontSize="small" sx={{ verticalAlign: 'middle', mr: 0.5 }} />
-                                      {req.to}
-                                    </Typography>
-                                  </Stack>
-                                </Grid>
-                                <Grid item xs={12} md={2}>
-                                  <Stack direction="row" spacing={1} alignItems="center">
-                                    <DirectionsCar fontSize="small" color="action" />
-                                    <Typography variant="body2">{req.distance}</Typography>
-                                  </Stack>
-                                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
-                                    <CalendarMonth fontSize="small" color="action" />
-                                    <Typography variant="body2">{req.date}</Typography>
-                                  </Stack>
-                                </Grid>
-                                <Grid item xs={12} md={2}>
-                                  <Stack spacing={0.5} alignItems="flex-end">
-                                    <Chip label={req.status} color={req.status === 'Accepted' ? 'success' : 'warning'} />
-                                    <Typography variant="body1" fontWeight="bold" color="success.main">₹{req.payment}</Typography>
-                                  </Stack>
-                                </Grid>
-                              </Grid>
-                              {req.status !== 'Accepted' && (
-                                <Stack direction="row" justifyContent="flex-end" sx={{ mt: 2 }}>
-                                  <Button variant="outlined" color="error" onClick={() => cancelRouteRequest(req.id)}>
-                                    Cancel Request
-                                  </Button>
-                                </Stack>
-                              )}
-                            </CardContent>
-                          </Card>
-                        </Grid>
-                      ))}
-                    </Grid>
-                  )}
-                </Paper>
-                
-                {/* Booked Routes */}
-                <Paper sx={{ p: 3, mb: 3 }}>
-                  <Typography variant="h6" fontWeight="bold" gutterBottom>
-                    My Booked Routes
-                  </Typography>
-                  <Divider sx={{ my: 2 }} />
-                  {bookedRoutes.length > 0 ? (
-                    <Grid container spacing={2}>
-                      {bookedRoutes.map((route) => (
-                        <Grid item xs={12} key={route.id}>
-                          <Card sx={{ bgcolor: 'success.lighter' }}>
-                            <CardContent>
-                              <Grid container spacing={2} alignItems="center">
-                                <Grid item xs={12} md={3}>
-                                  <Stack spacing={0.5}>
-                                    <Typography variant="caption" color="text.secondary">From</Typography>
-                                    <Typography variant="body1" fontWeight="bold">
-                                      <LocationOn fontSize="small" sx={{ verticalAlign: 'middle', mr: 0.5 }} />
-                                      {route.from}
-                                    </Typography>
-                                  </Stack>
-                                </Grid>
-                                <Grid item xs={12} md={3}>
-                                  <Stack spacing={0.5}>
-                                    <Typography variant="caption" color="text.secondary">To</Typography>
-                                    <Typography variant="body1" fontWeight="bold">
-                                      <LocationOn fontSize="small" sx={{ verticalAlign: 'middle', mr: 0.5 }} />
-                                      {route.to}
-                                    </Typography>
-                                  </Stack>
-                                </Grid>
-                                <Grid item xs={12} md={2}>
-                                  <Stack spacing={0.5}>
-                                    <Typography variant="caption" color="text.secondary">Distance</Typography>
-                                    <Typography variant="body2" fontWeight="600">{route.distance}</Typography>
-                                  </Stack>
-                                </Grid>
-                                <Grid item xs={12} md={2}>
-                                  <Stack spacing={0.5}>
-                                    <Typography variant="caption" color="text.secondary">Price</Typography>
-                                    <Typography variant="body1" fontWeight="bold" color="success.main">₹{route.price}</Typography>
-                                  </Stack>
-                                </Grid>
-                                <Grid item xs={12} md={2}>
-                                  <Chip label={route.status} color="success" />
-                                  <Typography variant="caption" display="block" sx={{ mt: 1 }}>ID: {route.bookingId}</Typography>
-                                </Grid>
-                              </Grid>
-                            </CardContent>
-                          </Card>
-                        </Grid>
-                      ))}
-                    </Grid>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ py: 3 }}>
-                      No booked routes yet
-                    </Typography>
-                  )}
-                </Paper>
-                
-                {/* Available Routes */}
-                <Paper sx={{ p: 3 }}>
-                  <Typography variant="h6" fontWeight="bold" gutterBottom>
-                    Available Routes
-                  </Typography>
-                  <Divider sx={{ my: 2 }} />
-                  <Grid container spacing={3}>
-                    {availableRoutes.map((route) => (
-                      <Grid item xs={12} md={6} key={route.id}>
-                        <Card variant="outlined" sx={{ '&:hover': { boxShadow: 3 } }}>
-                          <CardContent>
-                            <Stack spacing={2}>
-                              <Stack direction="row" justifyContent="space-between" alignItems="start">
-                                <Box>
-                                  <Typography variant="h6" fontWeight="bold" color="primary.main">
-                                    {route.transporter}
-                                  </Typography>
-                                  <Chip label={route.status} color="success" size="small" sx={{ mt: 0.5 }} />
-                                </Box>
-                                <Typography variant="h5" fontWeight="bold" color="success.main">
-                                  ₹{route.price}
-                                </Typography>
-                              </Stack>
-                              
-                              <Stack spacing={1.5}>
-                                <Stack direction="row" spacing={1}>
-                                  <LocationOn color="action" />
-                                  <Box>
-                                    <Typography variant="caption" color="text.secondary">From</Typography>
-                                    <Typography variant="body2" fontWeight="600">{route.from}</Typography>
-                                  </Box>
-                                </Stack>
-                                <Stack direction="row" spacing={1}>
-                                  <LocationOn color="success" />
-                                  <Box>
-                                    <Typography variant="caption" color="text.secondary">To</Typography>
-                                    <Typography variant="body2" fontWeight="600">{route.to}</Typography>
-                                  </Box>
-                                </Stack>
-                                <Stack direction="row" justifyContent="space-between">
-                                  <Stack direction="row" spacing={1} alignItems="center">
-                                    <DirectionsCar fontSize="small" color="action" />
-                                    <Typography variant="body2">{route.distance}</Typography>
-                                  </Stack>
-                                  <Stack direction="row" spacing={1} alignItems="center">
-                                    <CalendarMonth fontSize="small" color="action" />
-                                    <Typography variant="body2">{route.date}</Typography>
-                                  </Stack>
-                                </Stack>
-                              </Stack>
-                              
-                              <Button 
-                                variant="contained" 
-                                fullWidth
-                                onClick={() => {
-                                  setBookedRoutes([...bookedRoutes, { ...route, status: 'Confirmed', bookingId: `BK${Date.now().toString().slice(-3)}` }]);
-                                  setAvailableRoutes(availableRoutes.filter(r => r.id !== route.id));
-                                  showSnackbar(`Route booked successfully! Booking ID: BK${Date.now().toString().slice(-3)}`, 'success');
-                                }}
-                              >
-                                Book This Route
-                              </Button>
-                            </Stack>
-                          </CardContent>
-                        </Card>
-                      </Grid>
-                    ))}
-                  </Grid>
-                </Paper>
-              </Box>
-            )}
-            
             {/* Order Marketplace */}
             {activeSection === 'marketplace' && (
               <Box>

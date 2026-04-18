@@ -1,30 +1,51 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Grid, Box, Typography, TextField, MenuItem, Select, InputLabel, FormControl } from '@mui/material';
 import { ProductCard } from '../../Components/products';
-
-const SAMPLE_PRODUCTS = [
-  { id: 'p1', name: 'Tomatoes', image: '/assets/tomatoes.jpg', price: 60, rating: 4.5, farmer: 'Green Farm' },
-  { id: 'p2', name: 'Potatoes', image: '/assets/potatoes.jpg', price: 40, rating: 4.2, farmer: 'Fresh Fields' },
-  { id: 'p3', name: 'Onions', image: '/assets/onions.jpg', price: 45, rating: 4.1, farmer: 'Nature Farm' },
-  { id: 'p4', name: 'Carrots', image: '/assets/carrots.jpg', price: 55, rating: 4.3, farmer: 'Green Farm' }
-];
+import { productAPI } from '../../services/api';
 
 const ProductCatalog = () => {
+  const [allProducts, setAllProducts] = useState([]);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('price-asc');
+  const [loading, setLoading] = useState(true);
+
+  // Fetch products from API
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const response = await productAPI.getProducts();
+        setAllProducts(response || []);
+      } catch (error) {
+        console.error('Error fetching products:', error);
+        setAllProducts([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchProducts();
+  }, []);
 
   const products = useMemo(() => {
-    const filtered = SAMPLE_PRODUCTS.filter(p =>
+    const filtered = allProducts.filter(p =>
       p.name.toLowerCase().includes(query.toLowerCase())
     );
     const sorted = [...filtered].sort((a,b) => {
-      if (sort === 'price-asc') return a.price - b.price;
-      if (sort === 'price-desc') return b.price - a.price;
+      if (sort === 'price-asc') return (a.price || 0) - (b.price || 0);
+      if (sort === 'price-desc') return (b.price || 0) - (a.price || 0);
       if (sort === 'rating') return (b.rating || 0) - (a.rating || 0);
       return 0;
     });
     return sorted;
-  }, [query, sort]);
+  }, [query, sort, allProducts]);
+
+  if (loading) {
+    return (
+      <Box sx={{ p: 2 }}>
+        <Typography>Loading products...</Typography>
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ p: 2 }}>

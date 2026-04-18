@@ -82,7 +82,7 @@ function App() {
           <Route
             path="/delivery-large"
             element={
-              <ProtectedRoute allowedRoles={["delivery_large"]}>
+              <ProtectedRoute allowedRoles={["delivery_large", "delivery"]}>
                 <LargeScaleDashboard />
               </ProtectedRoute>
             }
@@ -90,7 +90,7 @@ function App() {
           <Route
             path="/delivery-small"
             element={
-              <ProtectedRoute allowedRoles={["delivery_small"]}>
+              <ProtectedRoute allowedRoles={["delivery_small", "delivery"]}>
                 <SmallScaleDashboard />
               </ProtectedRoute>
             }
@@ -125,7 +125,7 @@ function App() {
             path="/dashboard/delivery"
             element={
               <ProtectedRoute allowedRoles={["delivery","delivery_large","delivery_small"]}>
-                <DeliveryDashboard />
+                <DeliveryDashboard mode="large" />
               </ProtectedRoute>
             }
           />

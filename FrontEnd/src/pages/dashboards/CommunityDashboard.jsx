@@ -1,53 +1,136 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Box, Container, Grid, Card, CardContent, Typography, Button, TextField,
   Avatar, Divider, Paper, AppBar, Toolbar, Drawer, List, ListItemButton,
   ListItemIcon, ListItemText, Stack, IconButton, Badge, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, Chip, LinearProgress,
-  Snackbar, Alert, Dialog, DialogTitle, DialogContent, DialogActions
+  Snackbar, Alert, Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress
 } from '@mui/material';
 import {
   People, ShoppingCart, AccountCircle,
   Add, Notifications, Menu as MenuIcon, Dashboard, Home,
   LocalShipping, AttachMoney, Event, Message,
   CheckCircle, Schedule, Cancel, Apartment, Phone,
-  Savings, Store
+  Savings, Store, Refresh
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
+import { authAPI, communityAPI, orderAPI, userAPI, analyticsAPI } from '../../services/api';
 
 const CommunityDashboard = () => {
-  const [bulkOrders, setBulkOrders] = useState([
-    { id: 1, item: 'Rice', quantity: '500 kg', notes: 'Premium quality needed', date: '2024-01-15', status: 'Delivered', amount: 15000 },
-    { id: 2, item: 'Wheat', quantity: '300 kg', notes: 'Organic preferred', date: '2024-01-10', status: 'In Transit', amount: 9000 },
-    { id: 3, item: 'Vegetables Mix', quantity: '200 kg', notes: 'Fresh seasonal vegetables', date: '2024-01-05', status: 'Processing', amount: 8000 },
-    { id: 4, item: 'Fruits Basket', quantity: '150 kg', notes: 'Seasonal fruits', date: '2024-01-03', status: 'Delivered', amount: 12000 }
-  ]);
-  
+  // ── API-driven State ────────────────────────────────────────────────────────
+  const [communityData, setCommunityData] = useState(null);
+  const [bulkOrders, setBulkOrders] = useState([]);
+  const [members, setMembers] = useState([]);
+  const [stats, setStats] = useState({
+    totalMembers: 0,
+    activeOrders: 0,
+    totalSpent: 0,
+    monthlySavings: 0,
+    bulkOrders: 0,
+    satisfaction: 0
+  });
+  const [loading, setLoading] = useState(true);
+
+  // ── Form State ──────────────────────────────────────────────────────────────
   const [form, setForm] = useState({ item: '', quantity: '', notes: '' });
+
+  // ── UI State ────────────────────────────────────────────────────────────────
   const [activeSection, setActiveSection] = useState('overview');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
-  const [communityData] = useState({
-    name: 'Green Valley Community',
-    address: 'Green Valley Housing Society, Sector 15, Pune, Maharashtra - 411045',
-    manager: {
-      name: 'Rajesh Kumar',
-      phone: '+91 9876543210',
-      email: 'rajesh.kumar@greenvalley.com',
-      position: 'Community Manager',
-      joinDate: 'March 2023'
-    },
-    stats: {
-      totalMembers: 450,
-      activeOrders: 12,
-      totalSpent: 125000,
-      monthlySavings: 15000,
-      bulkOrders: 45,
-      satisfaction: 92
-    },
-    members: [
+  // ── Initialize: Fetch community data on mount ──────────────────────────────
+  useEffect(() => {
+    const initializeCommunityData = async () => {
+      try {
+        setLoading(true);
+
+        // Get current user (community admin/member)
+        const userRes = await authAPI.getCurrentUser();
+        if (userRes.success) {
+          // Get community data
+          const communityRes = await communityAPI.getMy();
+          if (communityRes.success && communityRes.data) {
+            // Assuming API returns array or single community
+            const community = Array.isArray(communityRes.data) ? communityRes.data[0] : communityRes.data;
+            setCommunityData({
+              name: community.name || 'Community',
+              address: community.address || 'Location',
+              manager: {
+                name: community.adminId?.name || userRes.data.name,
+                phone: community.adminId?.phone || '+91 XXXXXXXXXX',
+                email: community.adminId?.email || 'contact@community.com',
+                position: 'Community Manager',
+                joinDate: new Date(community.createdAt).toLocaleDateString()
+              },
+              stats: {
+                totalMembers: community.members?.length || 0,
+                activeOrders: 0,
+                totalSpent: 0,
+                monthlySavings: 0,
+                bulkOrders: 0,
+                satisfaction: 92
+              },
+              poolData: community.pools || []
+            });
+
+            // Get community orders (bulk orders)
+            const ordersRes = await orderAPI.getAll({ communityId: community._id });
+            if (ordersRes.success && ordersRes.data?.orders) {
+              const mappedOrders = ordersRes.data.orders.map((o, idx) => ({
+                id: idx + 1,
+                item: o.orderItems?.[0]?.productName || 'Product',
+                quantity: `${o.orderItems?.[0]?.quantity || 0} ${o.orderItems?.[0]?.unit || 'units'}`,
+                notes: o.notes || 'Bulk order from community',
+                date: new Date(o.createdAt).toLocaleDateString(),
+                status: o.status || 'pending',
+                amount: o.total || 0
+              }));
+              setBulkOrders(mappedOrders);
+
+              setStats(prev => ({
+                ...prev,
+                activeOrders: mappedOrders.filter(o => ['pending', 'confirmed', 'processing'].includes(o.status)).length,
+                totalSpent: mappedOrders.reduce((sum, o) => sum + o.amount, 0),
+                bulkOrders: mappedOrders.length
+              }));
+            }
+
+            // Get community members
+            const membersRes = await userAPI.getAll({ 
+              communityId: community._id, 
+              limit: 100 
+            });
+            if (membersRes.success && membersRes.data?.users) {
+              const mappedMembers = membersRes.data.users.map((m, idx) => ({
+                id: idx + 1,
+                name: m.name,
+                role: m.roles?.[0] || 'Member',
+                joinDate: new Date(m.createdAt).toLocaleDateString(),
+                email: m.email,
+                phone: m.phone || 'N/A',
+                totalOrders: 0,
+                spent: 0
+              }));
+              setMembers(mappedMembers);
+
+              setStats(prev => ({
+                ...prev,
+                totalMembers: mappedMembers.length
+              }));
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error initializing community data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initializeCommunityData();
+  }, []);
       { id: 1, name: 'Amit Sharma', apartment: 'A-101', phone: '+91 9876543211', joinDate: '2023-01-15', status: 'Active' },
       { id: 2, name: 'Priya Patel', apartment: 'B-205', phone: '+91 9876543212', joinDate: '2023-02-20', status: 'Active' },
       { id: 3, name: 'Suresh Reddy', apartment: 'C-304', phone: '+91 9876543213', joinDate: '2023-03-10', status: 'Active' },
@@ -56,11 +139,27 @@ const CommunityDashboard = () => {
     ]
   });
 
-  const [announcements] = useState([
-    { id: 1, title: 'Bulk Order Discount', message: 'Get 15% off on orders above ₹10,000', date: '2024-01-20', type: 'offer' },
-    { id: 2, title: 'Community Meeting', message: 'Monthly meeting scheduled for Jan 25th', date: '2024-01-18', type: 'event' },
-    { id: 3, title: 'New Farmer Partnership', message: 'Fresh organic produce now available', date: '2024-01-15', type: 'info' }
-  ]);
+  const [announcements, setAnnouncements] = useState([]);
+
+  // ─── Fetch Announcements from API ─────────────────────────────────────
+  useEffect(() => {
+    const fetchAnnouncements = async () => {
+      try {
+        // TODO: Replace with actual API call when announcements endpoint is available
+        // const response = await fetch(`${API_BASE_URL}/announcements`);
+        // const data = await response.json();
+        // setAnnouncements(data);
+        
+        // For now, initialize with empty array to prevent errors
+        setAnnouncements([]);
+      } catch (error) {
+        console.error('Error fetching announcements:', error);
+        setAnnouncements([]);
+      }
+    };
+    
+    fetchAnnouncements();
+  }, []);
 
   const showSnackbar = (message, severity = 'success') => {
     setSnackbar({ open: true, message, severity });

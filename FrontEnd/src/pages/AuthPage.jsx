@@ -67,6 +67,7 @@ const AuthPage = () => {
       case 'farmer': return '/farmer';
       case 'business': return '/business';
       case 'restaurant': return '/restaurant';
+      case 'delivery': return '/delivery-large';       // generic delivery role → large-scale
       case 'delivery_large': return '/delivery-large';
       case 'delivery_small': return '/delivery-small';
       case 'admin': return '/admin';
