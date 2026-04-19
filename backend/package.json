@@ -9,7 +9,13 @@
     "dev": "nodemon server.js",
     "build": "node server.js",
     "seed": "node seed/seedData.js",
-    "seed:json": "node seed/seedFromJson.js"
+    "seed:json": "node seed/seedFromJson.js",
+    "seed:local": "node seed/seedInitialData.js",
+    "db:check-relations": "node scripts/dbIntegrityCheck.js",
+    "db:repair-product-owners": "node scripts/repairProductOwners.js",
+    "db:repair-product-owners:apply": "node scripts/repairProductOwners.js --apply",
+    "db:sync-inventory": "node scripts/syncInventoryForActiveProducts.js",
+    "db:sync-inventory:apply": "node scripts/syncInventoryForActiveProducts.js --apply"
   },
   "engines": {
     "node": ">=18.x"

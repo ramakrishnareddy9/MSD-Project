@@ -3,6 +3,7 @@ import Order from '../models/Order.model.js';
 import Payment from '../models/Payment.model.js';
 import Product from '../models/Product.model.js';
 import Commission from '../models/Commission.model.js';
+import mongoose from 'mongoose';
 
 // @desc    Get platform dashboard metrics
 // @route   GET /api/analytics/dashboard
@@ -130,14 +131,14 @@ export const getUserMetrics = async (req, res) => {
     // As buyer
     const ordersAsBuyer = await Order.countDocuments({ buyerId: userId });
     const totalSpent = await Order.aggregate([
-      { $match: { buyerId: mongoose.Types.ObjectId(userId) } },
+      { $match: { buyerId: new mongoose.Types.ObjectId(userId) } },
       { $group: { _id: null, total: { $sum: '$total' } } }
     ]);
     
     // As seller
     const ordersAsSeller = await Order.countDocuments({ sellerId: userId });
     const totalEarned = await Order.aggregate([
-      { $match: { sellerId: mongoose.Types.ObjectId(userId) } },
+      { $match: { sellerId: new mongoose.Types.ObjectId(userId) } },
       { $group: { _id: null, total: { $sum: '$total' } } }
     ]);
     

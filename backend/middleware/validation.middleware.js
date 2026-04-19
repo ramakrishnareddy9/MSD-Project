@@ -55,13 +55,22 @@ export const validateRegister = [
   
   body('roles')
     .optional()
+    .trim()
     .isArray()
     .withMessage('Roles must be an array'),
   
   body('roles.*')
     .optional()
-    .isIn(['customer', 'farmer', 'business', 'restaurant', 'delivery', 'admin'])
+    .isIn(['customer', 'farmer', 'business', 'travel_agency', 'restaurant', 'delivery', 'delivery_large', 'delivery_small', 'admin'])
     .withMessage('Invalid role'),
+
+  body('roles')
+    .optional()
+    .custom((value) => {
+      if (!Array.isArray(value)) return true;
+      return value.length > 0;
+    })
+    .withMessage('At least one role is required when roles are provided'),
   
   handleValidationErrors
 ];
@@ -155,6 +164,7 @@ export const validateOrder = [
     .withMessage('Unit price must be a positive number'),
   
   body('total')
+    .optional()
     .isFloat({ min: 0 })
     .withMessage('Total must be a positive number'),
   

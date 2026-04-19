@@ -1,11 +1,29 @@
 import Product from '../models/Product.model.js';
+import { CROP_CATALOG, getCropByName } from '../constants/cropCatalog.js';
+
+export const getCropCatalog = async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      data: {
+        crops: CROP_CATALOG,
+        total: CROP_CATALOG.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
 
 export const getAllProducts = async (req, res) => {
   try {
     const { 
       category, 
       ownerId, 
-      status = 'active', 
+      status,
       search,
       minPrice,
       maxPrice,
@@ -18,7 +36,13 @@ export const getAllProducts = async (req, res) => {
     const query = {};
     if (category) query.categoryId = category;
     if (ownerId) query.ownerId = ownerId;
-    if (status) query.status = status;
+    // Keep marketplace/public listings active by default,
+    // but allow owners to fetch all their products when status is not specified.
+    if (status) {
+      query.status = status;
+    } else if (!ownerId) {
+      query.status = 'active';
+    }
     if (minPrice || maxPrice) {
       query.basePrice = {};
       if (minPrice) query.basePrice.$gte = Number(minPrice);
@@ -85,10 +109,33 @@ export const getProductById = async (req, res) => {
 
 export const createProduct = async (req, res) => {
   try {
+    const isFarmer = req.user.roles.includes('farmer') && !req.user.roles.includes('admin');
+
     // Non-admin farmers can only create products for themselves
-    if (!req.user.roles.includes('admin') && req.user.roles.includes('farmer')) {
+    if (isFarmer) {
       if (String(req.body.ownerId) !== String(req.user._id)) {
         return res.status(403).json({ success: false, message: 'Forbidden: You can only create products for yourself' });
+      }
+
+      const crop = getCropByName(req.body.name);
+      if (!crop) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid crop. Please select a crop from the approved India crop list.'
+        });
+      }
+
+      req.body.name = crop.name;
+
+      if (req.body.season) {
+        if (!crop.seasons.includes(req.body.season)) {
+          return res.status(400).json({
+            success: false,
+            message: `Invalid season for ${crop.name}. Allowed seasons: ${crop.seasons.join(', ')}`
+          });
+        }
+      } else {
+        req.body.season = crop.seasons[0];
       }
     }
 
@@ -120,6 +167,29 @@ export const updateProduct = async (req, res) => {
     const isAdmin = req.user.roles.includes('admin');
     if (!isOwner && !isAdmin) {
       return res.status(403).json({ success: false, message: 'Forbidden: Only the owner or admin can update this product' });
+    }
+
+    if (req.user.roles.includes('farmer') && !isAdmin && (req.body.name || req.body.season)) {
+      const targetCropName = req.body.name || product.name;
+      const crop = getCropByName(targetCropName);
+
+      if (!crop) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid crop. Please select a crop from the approved India crop list.'
+        });
+      }
+
+      if (req.body.name) {
+        req.body.name = crop.name;
+      }
+
+      if (req.body.season && !crop.seasons.includes(req.body.season)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid season for ${crop.name}. Allowed seasons: ${crop.seasons.join(', ')}`
+        });
+      }
     }
 
     Object.assign(product, req.body);

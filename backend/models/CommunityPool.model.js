@@ -55,4 +55,7 @@ const communityPoolSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// One pool per community + product pair.
+communityPoolSchema.index({ community: 1, product: 1 }, { unique: true });
+
 export default mongoose.model('CommunityPool', communityPoolSchema);

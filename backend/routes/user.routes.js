@@ -42,6 +42,16 @@ router.get('/', authenticate, authorize('admin'), async (req, res) => {
 // Get user by ID (admin or self)
 router.get('/:id', authenticate, validateObjectId('id'), async (req, res) => {
   try {
+    const isAdmin = req.user.roles?.includes('admin');
+    const isSelf = String(req.user._id) === String(req.params.id);
+
+    if (!isAdmin && !isSelf) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: You can only access your own profile'
+      });
+    }
+
     const user = await User.findById(req.params.id);
     
     if (!user) {
@@ -66,9 +76,33 @@ router.get('/:id', authenticate, validateObjectId('id'), async (req, res) => {
 // Update user (admin or self)
 router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
   try {
+    const isAdmin = req.user.roles?.includes('admin');
+    const isSelf = String(req.user._id) === String(req.params.id);
+
+    if (!isAdmin && !isSelf) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: You can only update your own profile'
+      });
+    }
+
+    const allowedSelfFields = [
+      'name', 'email', 'phone', 'address', 'city',
+      'farmName', 'totalLand', 'experience',
+      'businessType', 'owner', 'gst',
+      'communityName', 'position',
+      'licenseNumber', 'accountType'
+    ];
+
+    const updatePayload = isAdmin
+      ? req.body
+      : Object.fromEntries(
+          Object.entries(req.body || {}).filter(([key]) => allowedSelfFields.includes(key))
+        );
+
     const user = await User.findByIdAndUpdate(
       req.params.id,
-      { $set: req.body },
+      { $set: updatePayload },
       { new: true, runValidators: true }
     );
 

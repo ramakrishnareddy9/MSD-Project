@@ -1,5 +1,7 @@
 import express from 'express';
 import InventoryLot from '../models/InventoryLot.model.js';
+import Product from '../models/Product.model.js';
+import Location from '../models/Location.model.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
 import { validateObjectId } from '../middleware/validation.middleware.js';
@@ -9,11 +11,32 @@ const router = express.Router();
 // Get inventory lots
 router.get('/', async (req, res) => {
   try {
-    const { productId, locationId, page = 1, limit = 50 } = req.query;
+    const { productId, locationId, ownerId, page = 1, limit = 50 } = req.query;
     
     const query = {};
     if (productId) query.productId = productId;
     if (locationId) query.locationId = locationId;
+    if (ownerId) {
+      const ownerProducts = await Product.find({ ownerId }, '_id');
+      const ownerProductIds = ownerProducts.map((p) => p._id.toString());
+
+      if (query.productId) {
+        if (!ownerProductIds.includes(String(query.productId))) {
+          return res.json({
+            success: true,
+            data: {
+              lots: [],
+              inventory: [],
+              totalPages: 0,
+              currentPage: Number(page),
+              total: 0
+            }
+          });
+        }
+      } else {
+        query.productId = { $in: ownerProducts.map((p) => p._id) };
+      }
+    }
 
     const lots = await InventoryLot.find(query)
       .populate('productId', 'name unit images')
@@ -28,6 +51,7 @@ router.get('/', async (req, res) => {
       success: true,
       data: {
         lots,
+        inventory: lots,
         totalPages: Math.ceil(count / limit),
         currentPage: page,
         total: count
@@ -70,13 +94,23 @@ router.get('/:id', validateObjectId('id'), async (req, res) => {
 // Create inventory lot (farmers and admins only)
 router.post('/', authenticate, authorize('farmer', 'admin'), async (req, res) => {
   try {
+    const product = await Product.findById(req.body.productId);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    const location = await Location.findById(req.body.locationId);
+    if (!location) {
+      return res.status(404).json({ success: false, message: 'Location not found' });
+    }
+
     const lot = new InventoryLot(req.body);
     await lot.save();
 
     res.status(201).json({
       success: true,
       message: 'Inventory lot created successfully',
-      data: { lot }
+      data: { lot, inventory: lot }
     });
   } catch (error) {
     res.status(500).json({
@@ -89,6 +123,20 @@ router.post('/', authenticate, authorize('farmer', 'admin'), async (req, res) =>
 // Update inventory lot (farmers and admins only)
 router.put('/:id', authenticate, authorize('farmer', 'admin'), validateObjectId('id'), async (req, res) => {
   try {
+    if (req.body.productId) {
+      const product = await Product.findById(req.body.productId);
+      if (!product) {
+        return res.status(404).json({ success: false, message: 'Product not found' });
+      }
+    }
+
+    if (req.body.locationId) {
+      const location = await Location.findById(req.body.locationId);
+      if (!location) {
+        return res.status(404).json({ success: false, message: 'Location not found' });
+      }
+    }
+
     const lot = await InventoryLot.findByIdAndUpdate(
       req.params.id,
       { $set: req.body },
@@ -105,7 +153,7 @@ router.put('/:id', authenticate, authorize('farmer', 'admin'), validateObjectId(
     res.json({
       success: true,
       message: 'Inventory lot updated successfully',
-      data: { lot }
+      data: { lot, inventory: lot }
     });
   } catch (error) {
     res.status(500).json({

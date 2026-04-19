@@ -22,6 +22,7 @@ import { BellIcon as BellIconSolid } from '@heroicons/react/24/solid';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCart } from '../../contexts/CartContext';
 import clsx from 'clsx';
+import { getDashboardPath, getPrimaryRole } from '../../utils/roleRouting';
 
 const ModernNavbar = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -36,6 +37,8 @@ const ModernNavbar = () => {
   const { user, logout } = useAuth();
   const { getItemCount } = useCart();
   const cartCount = getItemCount();
+  const dashboardPath = getDashboardPath(user);
+  const primaryRole = getPrimaryRole(user);
 
   // Handle scroll effect
   useEffect(() => {
@@ -65,27 +68,12 @@ const ModernNavbar = () => {
   ];
 
   const profileMenuItems = [
-    { name: 'Dashboard', icon: HomeIcon, action: () => navigate(getDashboardPath()) },
+    { name: 'Dashboard', icon: HomeIcon, action: () => navigate(dashboardPath) },
     { name: 'My Orders', icon: ShoppingBagIcon, action: () => navigate('/orders') },
     { name: 'Wishlist', icon: HeartIcon, action: () => navigate('/wishlist') },
     { name: 'Settings', icon: Cog6ToothIcon, action: () => navigate('/settings') },
     { name: 'Logout', icon: ArrowRightOnRectangleIcon, action: handleLogout },
   ];
-
-  function getDashboardPath() {
-    if (!user) return '/';
-    const roleMap = {
-      customer: '/customer',
-      farmer: '/farmer',
-      business: '/business',
-      restaurant: '/restaurant',
-      delivery: '/delivery-large',
-      delivery_large: '/delivery-large',
-      delivery_small: '/delivery-small',
-      admin: '/admin',
-    };
-    return roleMap[user.roles?.[0]] || roleMap[user.role] || '/';
-  }
 
   function handleLogout() {
     logout();
@@ -226,7 +214,7 @@ const ModernNavbar = () => {
                             <p className="text-sm font-semibold text-gray-900">{user.name || 'User'}</p>
                             <p className="text-xs text-gray-500">{user.email}</p>
                             <span className="inline-block mt-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
-                              {user.roles?.[0] || user.role}
+                              {primaryRole}
                             </span>
                           </div>
                           {profileMenuItems.map((item, index) => (

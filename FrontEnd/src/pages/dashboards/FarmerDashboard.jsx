@@ -4,7 +4,7 @@ import {
   MenuItem, Chip, Avatar, Divider, Paper, AppBar, Toolbar, Drawer, List,
   ListItemButton, ListItemIcon, ListItemText, Stack, IconButton, Badge,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Switch, Snackbar, Alert, LinearProgress, CircularProgress
+  Switch, Snackbar, Alert, LinearProgress, CircularProgress, Autocomplete
 } from '@mui/material';
 import {
   Agriculture, Inventory, TrendingUp, AccountCircle,
@@ -15,7 +15,27 @@ import {
   ShoppingCart, Refresh
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { authAPI, productAPI, orderAPI, inventoryAPI, analyticsAPI, deliveryAPI } from '../../services/api';
+import { authAPI, productAPI, orderAPI, inventoryAPI, analyticsAPI, deliveryAPI, categoryAPI, marketplaceRequestAPI, userAPI } from '../../services/api';
+
+const defaultFarmerData = {
+  _id: '',
+  name: 'Farmer',
+  farmName: 'My Farm',
+  phone: '',
+  email: '',
+  address: '',
+  totalLand: '--',
+  experience: '--',
+  organicCertified: false,
+  stats: {
+    totalCrops: 0,
+    activeSales: 0,
+    monthlyEarnings: 0,
+    customerRating: 0,
+    totalOrders: 0,
+    pendingOrders: 0
+  }
+};
 
 const FarmerDashboard = () => {
   // State for form input
@@ -32,7 +52,8 @@ const FarmerDashboard = () => {
   const [farmerData, setFarmerData] = useState(null);
   const [crops, setCrops] = useState([]);
   const [myOrders, setMyOrders] = useState([]);
-  const [availableOrders, setAvailableOrders] = useState([]);
+  const [globalOrders, setGlobalOrders] = useState([]);
+  const [myAcceptedOrders, setMyAcceptedOrders] = useState([]);
   const [metrics, setMetrics] = useState({
     totalCrops: 0,
     activeSales: 0,
@@ -47,6 +68,45 @@ const FarmerDashboard = () => {
   const [activeSection, setActiveSection] = useState('overview');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [defaultCategoryId, setDefaultCategoryId] = useState('');
+  const [cropCatalog, setCropCatalog] = useState([]);
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    farmName: '',
+    phone: '',
+    email: '',
+    address: '',
+    totalLand: '',
+    experience: ''
+  });
+
+  const safeFarmerData = {
+    ...defaultFarmerData,
+    ...(farmerData || {}),
+    stats: {
+      ...defaultFarmerData.stats,
+      ...(metrics || {}),
+      ...(farmerData?.stats || {})
+    }
+  };
+  const orders = myOrders;
+  const selectedCropConfig = cropCatalog.find((crop) => crop.name === cropForm.type);
+  const seasonOptions = selectedCropConfig?.seasons?.length
+    ? selectedCropConfig.seasons
+    : ['Kharif', 'Rabi', 'Summer', 'Winter', 'Year-round'];
+
+  const mapRequestToOrderCard = (request, statusLabel = 'Open') => ({
+    id: request._id || request.id,
+    requestNumber: request.requestNumber,
+    business: request.requesterId?.name || 'Business/Restaurant/Community',
+    crop: request.cropName || 'Crop',
+    quantity: `${request.quantity || 0} ${request.unit || 'kg'}`,
+    priceOffered: Number(request.offeredPrice || request.farmerResponse?.offeredPrice || 0),
+    location: request.location || 'India',
+    deadline: request.requiredBy ? new Date(request.requiredBy).toLocaleDateString() : 'N/A',
+    status: statusLabel,
+    type: request.requesterType || request.requesterRole || 'business'
+  });
 
   // Initialize: Fetch farmer data on component mount
   useEffect(() => {
@@ -57,10 +117,38 @@ const FarmerDashboard = () => {
         // Get current user (farmer profile)
         const userRes = await authAPI.getCurrentUser();
         if (userRes.success) {
-          setFarmerData(userRes.data);
+          const currentUser = userRes.data?.user || userRes.data;
+          if (!currentUser?._id) {
+            throw new Error('Invalid auth user payload');
+          }
+
+          setFarmerData({
+            ...defaultFarmerData,
+            ...currentUser,
+            farmName: currentUser.farmName || defaultFarmerData.farmName,
+            totalLand: currentUser.totalLand || defaultFarmerData.totalLand,
+            experience: currentUser.experience || defaultFarmerData.experience,
+            organicCertified: !!currentUser.organicCertified,
+            stats: { ...defaultFarmerData.stats }
+          });
+
+          setProfileForm({
+            name: currentUser.name || '',
+            farmName: currentUser.farmName || '',
+            phone: currentUser.phone || '',
+            email: currentUser.email || '',
+            address: currentUser.address || currentUser.addresses?.[0]?.line1 || '',
+            totalLand: currentUser.totalLand || '',
+            experience: currentUser.experience || ''
+          });
+
+          const cropCatalogRes = await productAPI.getCropCatalog();
+          if (cropCatalogRes.success && cropCatalogRes.data?.crops) {
+            setCropCatalog(cropCatalogRes.data.crops);
+          }
 
           // Get farmer metrics (orders, earnings, etc.)
-          const metricsRes = await analyticsAPI.getUserMetrics(userRes.data._id);
+          const metricsRes = await analyticsAPI.getUserMetrics(currentUser._id);
           if (metricsRes.success && metricsRes.data.sellerMetrics) {
             const seller = metricsRes.data.sellerMetrics;
             setMetrics({
@@ -74,7 +162,7 @@ const FarmerDashboard = () => {
           }
 
           // Get farmer's products (crops)
-          const productsRes = await productAPI.getAll({ ownerId: userRes.data._id });
+          const productsRes = await productAPI.getAll({ ownerId: currentUser._id });
           if (productsRes.success && productsRes.data?.products) {
             const mappedCrops = productsRes.data.products.map(p => ({
               id: p._id || p.id,
@@ -88,10 +176,32 @@ const FarmerDashboard = () => {
               status: p.status === 'active' ? 'Ready' : 'Growing'
             }));
             setCrops(mappedCrops);
+            setMetrics((prev) => ({ ...prev, totalCrops: mappedCrops.length }));
+          }
+
+          const openRequestsRes = await marketplaceRequestAPI.getOpenForFarmer();
+          if (openRequestsRes.success) {
+            const openRequests = openRequestsRes.data?.requests || [];
+            setGlobalOrders(openRequests.map((request) => mapRequestToOrderCard(request, 'Open')));
+          }
+
+          const acceptedRequestsRes = await marketplaceRequestAPI.getFarmerAccepted();
+          if (acceptedRequestsRes.success) {
+            const acceptedRequests = acceptedRequestsRes.data?.requests || [];
+            setMyAcceptedOrders(acceptedRequests.map((request) => mapRequestToOrderCard(request, 'Accepted')));
+          }
+
+          // Load categories once to support product creation from crop form
+          const categoriesRes = await categoryAPI.getAll();
+          if (categoriesRes.success && categoriesRes.data) {
+            const categories = categoriesRes.data.categories || [];
+            if (categories.length > 0) {
+              setDefaultCategoryId(categories[0]._id || categories[0].id || '');
+            }
           }
 
           // Get farmer's orders (as seller)
-          const ordersRes = await orderAPI.getAll({ sellerId: userRes.data._id });
+          const ordersRes = await orderAPI.getAll({ sellerId: currentUser._id });
           if (ordersRes.success && ordersRes.data?.orders) {
             const mappedOrders = ordersRes.data.orders.map((o, idx) => ({
               id: idx + 1,
@@ -105,28 +215,10 @@ const FarmerDashboard = () => {
             setMyOrders(mappedOrders);
             setMetrics(prev => ({
               ...prev,
-              pendingOrders: mappedOrders.filter(o => o.status === 'pending').length
+              pendingOrders: mappedOrders.filter(o => String(o.status || '').toLowerCase() === 'pending').length
             }));
           }
 
-          // Get all available products from other farmers (marketplace)
-          const allProductsRes = await productAPI.getAll({ status: 'active' });
-          if (allProductsRes.success && allProductsRes.data?.products) {
-            const otherProducts = allProductsRes.data.products.filter(
-              p => p.ownerId?._id !== userRes.data._id
-            ).slice(0, 10);
-            setAvailableOrders(otherProducts.map((p, idx) => ({
-              id: idx + 1,
-              business: p.ownerId?.name || 'Farm',
-              crop: p.name,
-              quantity: `${p.stockQuantity || 0} ${p.unit || 'units'}`,
-              priceOffered: p.basePrice || 0,
-              location: p.location?.state || 'India',
-              deadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString(),
-              status: 'Open',
-              type: p.ownerId?.roles?.[0] || 'Farmer'
-            })));
-          }
         }
       } catch (error) {
         console.error('Error initializing farmer data:', error);
@@ -143,48 +235,160 @@ const FarmerDashboard = () => {
     setSnackbar({ open: true, message, severity });
   };
 
+  useEffect(() => {
+    const totalCrops = crops.length;
+    const totalOrders = myOrders.length;
+    const activeSales = myOrders.filter((order) => {
+      const status = String(order.status || '').toLowerCase();
+      return status !== 'cancelled' && status !== 'delivered';
+    }).length;
+    const pendingOrders = myOrders.filter((order) => String(order.status || '').toLowerCase() === 'pending').length;
+    const monthlyEarnings = myOrders.reduce((sum, order) => sum + Number(order.amount || 0), 0);
+
+    setMetrics((prev) => ({
+      ...prev,
+      totalCrops,
+      totalOrders,
+      activeSales,
+      pendingOrders,
+      monthlyEarnings: prev.monthlyEarnings || monthlyEarnings
+    }));
+  }, [crops, myOrders]);
+
   const onChange = (e) => {
     const { name, value, type, checked } = e.target;
     setCropForm((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
   };
 
-  const addCrop = (e) => {
+  const onProfileChange = (e) => {
+    const { name, value } = e.target;
+    setProfileForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleProfileUpdate = async () => {
+    if (!safeFarmerData._id) {
+      showSnackbar('Unable to update profile. User not found.', 'error');
+      return;
+    }
+
+    try {
+      const payload = {
+        name: profileForm.name,
+        farmName: profileForm.farmName,
+        phone: profileForm.phone,
+        email: profileForm.email,
+        address: profileForm.address,
+        totalLand: profileForm.totalLand,
+        experience: profileForm.experience
+      };
+
+      const res = await userAPI.update(safeFarmerData._id, payload);
+      const updatedUser = res?.data?.user;
+
+      if (updatedUser) {
+        setFarmerData((prev) => ({
+          ...prev,
+          ...updatedUser,
+          stats: prev?.stats || defaultFarmerData.stats
+        }));
+      }
+
+      showSnackbar('Profile updated successfully', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to update profile', 'error');
+    }
+  };
+
+  const addCrop = async (e) => {
     e.preventDefault();
     if (!cropForm.type || !cropForm.landSize || !cropForm.price) {
       showSnackbar('Please fill all required fields', 'error');
       return;
     }
-    setCrops((prev) => [
-      ...prev,
-      { 
-        id: Date.now(), 
-        ...cropForm, 
-        planted: new Date().toISOString().split('T')[0],
-        status: 'Growing'
+
+    if (!cropCatalog.some((crop) => crop.name === cropForm.type)) {
+      showSnackbar('Please select crop from the approved list', 'error');
+      return;
+    }
+
+    try {
+      const payload = {
+        ownerId: safeFarmerData._id,
+        name: cropForm.type,
+        unit: 'kg',
+        basePrice: Number(cropForm.price),
+        stockQuantity: Number(cropForm.quantity || 0),
+        landSize: String(cropForm.landSize),
+        season: cropForm.season || 'Year-round',
+        status: cropForm.available ? 'active' : 'out_of_stock',
+        description: `${cropForm.type} from farmer inventory`
+      };
+
+      if (defaultCategoryId) {
+        payload.categoryId = defaultCategoryId;
       }
-    ]);
-    setCropForm({ type: '', landSize: '', available: true, price: '', season: '', quantity: '' });
-    showSnackbar('Crop added successfully!', 'success');
+
+      const res = await productAPI.create(payload);
+      const p = res?.data?.product;
+      if (!p) {
+        throw new Error('Product creation failed');
+      }
+
+      setCrops((prev) => [
+        ...prev,
+        {
+          id: p._id || p.id,
+          type: p.name,
+          landSize: p.landSize || cropForm.landSize,
+          available: p.status === 'active',
+          price: p.basePrice || cropForm.price,
+          season: p.season || cropForm.season || 'Year-round',
+          quantity: p.stockQuantity || Number(cropForm.quantity || 0),
+          planted: new Date(p.createdAt || Date.now()).toLocaleDateString(),
+          status: p.status === 'active' ? 'Ready' : 'Growing'
+        }
+      ]);
+
+      setMetrics((prev) => ({ ...prev, totalCrops: (prev.totalCrops || 0) + 1 }));
+      setCropForm({ type: '', landSize: '', available: true, price: '', season: '', quantity: '' });
+      showSnackbar('Crop added and saved successfully!', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to save crop', 'error');
+    }
   };
 
-  const toggleAvailability = (id) => {
-    setCrops((prev) => prev.map((c) => {
-      if (c.id === id) {
-        const newAvailable = !c.available;
-        showSnackbar(
-          `${c.type} is now ${newAvailable ? 'available' : 'unavailable'} for sale`,
-          'info'
-        );
-        return { ...c, available: newAvailable };
-      }
-      return c;
-    }));
+  const toggleAvailability = async (id) => {
+    const crop = crops.find((c) => c.id === id);
+    if (!crop) return;
+
+    const newAvailable = !crop.available;
+    try {
+      await productAPI.update(id, { status: newAvailable ? 'active' : 'out_of_stock' });
+      setCrops((prev) => prev.map((c) => {
+        if (c.id === id) {
+          return { ...c, available: newAvailable, status: newAvailable ? 'Ready' : 'Growing' };
+        }
+        return c;
+      }));
+
+      showSnackbar(
+        `${crop.type} is now ${newAvailable ? 'available' : 'unavailable'} for sale`,
+        'info'
+      );
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to update crop availability', 'error');
+    }
   };
 
-  const deleteCrop = (id) => {
+  const deleteCrop = async (id) => {
     const crop = crops.find(c => c.id === id);
-    setCrops((prev) => prev.filter((c) => c.id !== id));
-    showSnackbar(`${crop.type} removed successfully`, 'info');
+    try {
+      await productAPI.delete(id);
+      setCrops((prev) => prev.filter((c) => c.id !== id));
+      showSnackbar(`${crop?.type || 'Crop'} removed successfully`, 'info');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to delete crop', 'error');
+    }
   };
 
 
@@ -192,7 +396,7 @@ const FarmerDashboard = () => {
   const menuItems = [
     { id: 'overview', label: 'Overview', icon: <Home /> },
     { id: 'crops', label: 'My Crops', icon: <Agriculture />, badge: crops.length },
-    { id: 'orders', label: 'Orders', icon: <Store />, badge: farmerData.stats.pendingOrders },
+    { id: 'orders', label: 'Orders', icon: <Store />, badge: safeFarmerData.stats.pendingOrders },
     { id: 'marketplace', label: 'Order Marketplace', icon: <ShoppingCart />, badge: globalOrders.filter(o => o.status === 'Open').length },
     { id: 'inventory', label: 'Inventory', icon: <Inventory /> },
     { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: 3 },
@@ -333,13 +537,13 @@ const FarmerDashboard = () => {
             <Stack spacing={1} sx={{ mt: 1 }}>
               <Stack direction="row" justifyContent="space-between">
                 <Typography variant="body2">Total Land</Typography>
-                <Typography variant="body2" fontWeight="bold">{farmerData.totalLand}</Typography>
+                                <Typography variant="body2" fontWeight="bold">{safeFarmerData.totalLand}</Typography>
               </Stack>
               <Stack direction="row" justifyContent="space-between">
                 <Typography variant="body2">Active Crops</Typography>
                 <Chip label={crops.filter(c => c.available).length} size="small" color="success" />
               </Stack>
-              {farmerData.organicCertified && (
+              {safeFarmerData.organicCertified && (
                 <Chip 
                   icon={<Verified />} 
                   label="Organic Certified" 
@@ -376,7 +580,7 @@ const FarmerDashboard = () => {
                 {menuItems.find(m => m.id === activeSection)?.label || 'Dashboard'}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                {farmerData.farmName}
+                {safeFarmerData.farmName}
               </Typography>
             </Box>
 
@@ -408,7 +612,7 @@ const FarmerDashboard = () => {
                               Total Crops
                             </Typography>
                             <Typography variant="h4" fontWeight="bold" color="success.main">
-                              {farmerData.stats.totalCrops}
+                              {safeFarmerData.stats.totalCrops}
                             </Typography>
                           </Box>
                           <Avatar sx={{ bgcolor: 'success.main', width: 56, height: 56 }}>
@@ -428,7 +632,7 @@ const FarmerDashboard = () => {
                               Active Sales
                             </Typography>
                             <Typography variant="h4" fontWeight="bold" color="info.main">
-                              {farmerData.stats.activeSales}
+                              {safeFarmerData.stats.activeSales}
                             </Typography>
                           </Box>
                           <Avatar sx={{ bgcolor: 'info.main', width: 56, height: 56 }}>
@@ -448,7 +652,7 @@ const FarmerDashboard = () => {
                               Monthly Earnings
                             </Typography>
                             <Typography variant="h4" fontWeight="bold" color="warning.main">
-                              ₹{(farmerData.stats.monthlyEarnings / 1000).toFixed(1)}k
+                              ₹{(safeFarmerData.stats.monthlyEarnings / 1000).toFixed(1)}k
                             </Typography>
                           </Box>
                           <Avatar sx={{ bgcolor: 'warning.main', width: 56, height: 56 }}>
@@ -468,7 +672,7 @@ const FarmerDashboard = () => {
                               Pending Orders
                             </Typography>
                             <Typography variant="h4" fontWeight="bold" color="error.main">
-                              {farmerData.stats.pendingOrders}
+                              {safeFarmerData.stats.pendingOrders}
                             </Typography>
                           </Box>
                           <Avatar sx={{ bgcolor: 'error.main', width: 56, height: 56 }}>
@@ -563,12 +767,12 @@ const FarmerDashboard = () => {
                           <Stack direction="row" justifyContent="space-between" sx={{ mb: 1 }}>
                             <Typography variant="body2">Customer Rating</Typography>
                             <Typography variant="body2" fontWeight="bold">
-                              {farmerData.stats.customerRating}/5.0
+                              {safeFarmerData.stats.customerRating}/5.0
                             </Typography>
                           </Stack>
                           <LinearProgress 
                             variant="determinate" 
-                            value={(farmerData.stats.customerRating / 5) * 100}
+                            value={(safeFarmerData.stats.customerRating / 5) * 100}
                             sx={{ height: 8, borderRadius: 1 }}
                           />
                         </Box>
@@ -602,13 +806,26 @@ const FarmerDashboard = () => {
                   <Box component="form" onSubmit={addCrop}>
                     <Grid container spacing={2} sx={{ mt: 1 }}>
                       <Grid item xs={12} sm={6} md={3}>
-                        <TextField
-                          fullWidth
-                          label="Crop Type"
-                          name="type"
-                          value={cropForm.type}
-                          onChange={onChange}
-                          required
+                        <Autocomplete
+                          options={cropCatalog.map((crop) => crop.name)}
+                          value={cropForm.type || null}
+                          onChange={(_, value) => {
+                            const selectedCrop = cropCatalog.find((crop) => crop.name === value);
+                            setCropForm((prev) => ({
+                              ...prev,
+                              type: value || '',
+                              season: selectedCrop?.seasons?.[0] || prev.season
+                            }));
+                          }}
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              required
+                              label="Crop Type"
+                              placeholder="Search crop"
+                              helperText="Select from approved India crop list"
+                            />
+                          )}
                         />
                       </Grid>
                       <Grid item xs={12} sm={6} md={2}>
@@ -652,10 +869,9 @@ const FarmerDashboard = () => {
                           value={cropForm.season}
                           onChange={onChange}
                         >
-                          <MenuItem value="Rabi">Rabi</MenuItem>
-                          <MenuItem value="Kharif">Kharif</MenuItem>
-                          <MenuItem value="Summer">Summer</MenuItem>
-                          <MenuItem value="Winter">Winter</MenuItem>
+                          {seasonOptions.map((season) => (
+                            <MenuItem key={season} value={season}>{season}</MenuItem>
+                          ))}
                         </TextField>
                       </Grid>
                       <Grid item xs={12} sm={6} md={1}>
@@ -829,7 +1045,7 @@ const FarmerDashboard = () => {
             {activeSection === 'marketplace' && (
               <Box>
                 <Typography variant="h5" fontWeight="bold" gutterBottom sx={{ mb: 3 }}>
-                  Global Order Marketplace
+                  Request Marketplace
                 </Typography>
                 
                 {/* My Accepted Orders */}
@@ -890,11 +1106,12 @@ const FarmerDashboard = () => {
                 {/* Available Global Orders */}
                 <Paper sx={{ p: 3 }}>
                   <Typography variant="h6" fontWeight="bold" gutterBottom>
-                    Available Orders from Businesses
+                    Available Requests (Matching My Crops)
                   </Typography>
                   <Divider sx={{ my: 2 }} />
-                  <Grid container spacing={3}>
-                    {globalOrders.map((order) => (
+                  {globalOrders.length > 0 ? (
+                    <Grid container spacing={3}>
+                      {globalOrders.map((order) => (
                       <Grid item xs={12} md={6} lg={4} key={order.id}>
                         <Card variant="outlined" sx={{ height: '100%', '&:hover': { boxShadow: 3 } }}>
                           <CardContent>
@@ -954,20 +1171,30 @@ const FarmerDashboard = () => {
                                 variant="contained" 
                                 fullWidth
                                 startIcon={<CheckCircle />}
-                                onClick={() => {
-                                  setMyAcceptedOrders([...myAcceptedOrders, { ...order, status: 'Accepted', acceptedDate: new Date().toISOString().split('T')[0] }]);
-                                  setGlobalOrders(globalOrders.filter(o => o.id !== order.id));
-                                  showSnackbar(`Order accepted! You will supply ${order.quantity} of ${order.crop} to ${order.business}`, 'success');
+                                onClick={async () => {
+                                  try {
+                                    await marketplaceRequestAPI.respond(order.id, { action: 'accept' });
+                                    setMyAcceptedOrders((prev) => [...prev, { ...order, status: 'Accepted' }]);
+                                    setGlobalOrders((prev) => prev.filter((o) => o.id !== order.id));
+                                    showSnackbar(`Request accepted! You will supply ${order.quantity} of ${order.crop} to ${order.business}`, 'success');
+                                  } catch (error) {
+                                    showSnackbar(error.message || 'Failed to accept request', 'error');
+                                  }
                                 }}
                               >
-                                Accept Order
+                                Accept Request
                               </Button>
                             </Stack>
                           </CardContent>
                         </Card>
                       </Grid>
-                    ))}
-                  </Grid>
+                      ))}
+                    </Grid>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ py: 3 }}>
+                      No matching requests right now. Requests appear only for crops in My Crops.
+                    </Typography>
+                  )}
                 </Paper>
               </Box>
             )}
@@ -1090,12 +1317,12 @@ const FarmerDashboard = () => {
                       <Agriculture sx={{ fontSize: 60 }} />
                     </Avatar>
                     <Typography variant="h5" fontWeight="bold" gutterBottom>
-                      {farmerData.name}
+                      {safeFarmerData.name}
                     </Typography>
                     <Typography variant="body1" color="text.secondary" gutterBottom>
-                      {farmerData.farmName}
+                      {safeFarmerData.farmName}
                     </Typography>
-                    {farmerData.organicCertified && (
+                    {safeFarmerData.organicCertified && (
                       <Chip 
                         icon={<Verified />} 
                         label="Organic Certified" 
@@ -1109,19 +1336,19 @@ const FarmerDashboard = () => {
                     <Stack spacing={2}>
                       <Stack direction="row" justifyContent="space-between">
                         <Typography variant="body2">Experience</Typography>
-                        <Typography variant="body2" fontWeight="bold">{farmerData.experience}</Typography>
+                        <Typography variant="body2" fontWeight="bold">{safeFarmerData.experience}</Typography>
                       </Stack>
                       <Stack direction="row" justifyContent="space-between">
                         <Typography variant="body2">Total Land</Typography>
-                        <Typography variant="body2" fontWeight="bold">{farmerData.totalLand}</Typography>
+                        <Typography variant="body2" fontWeight="bold">{safeFarmerData.totalLand}</Typography>
                       </Stack>
                       <Stack direction="row" justifyContent="space-between">
                         <Typography variant="body2">Total Orders</Typography>
-                        <Typography variant="body2" fontWeight="bold">{farmerData.stats.totalOrders}</Typography>
+                        <Typography variant="body2" fontWeight="bold">{safeFarmerData.stats.totalOrders}</Typography>
                       </Stack>
                       <Stack direction="row" justifyContent="space-between">
                         <Typography variant="body2">Rating</Typography>
-                        <Chip label={`${farmerData.stats.customerRating}/5.0`} size="small" color="success" />
+                        <Chip label={`${safeFarmerData.stats.customerRating}/5.0`} size="small" color="success" />
                       </Stack>
                     </Stack>
                   </Paper>
@@ -1136,35 +1363,37 @@ const FarmerDashboard = () => {
                     
                     <Grid container spacing={3}>
                       <Grid item xs={12} sm={6}>
-                        <TextField fullWidth label="Farmer Name" defaultValue={farmerData.name} />
+                        <TextField fullWidth label="Farmer Name" name="name" value={profileForm.name} onChange={onProfileChange} />
                       </Grid>
                       <Grid item xs={12} sm={6}>
-                        <TextField fullWidth label="Farm Name" defaultValue={farmerData.farmName} />
+                        <TextField fullWidth label="Farm Name" name="farmName" value={profileForm.farmName} onChange={onProfileChange} />
                       </Grid>
                       <Grid item xs={12} sm={6}>
-                        <TextField fullWidth label="Phone" defaultValue={farmerData.phone} />
+                        <TextField fullWidth label="Phone" name="phone" value={profileForm.phone} onChange={onProfileChange} />
                       </Grid>
                       <Grid item xs={12} sm={6}>
-                        <TextField fullWidth label="Email" type="email" defaultValue={farmerData.email} />
+                        <TextField fullWidth label="Email" name="email" type="email" value={profileForm.email} onChange={onProfileChange} />
                       </Grid>
                       <Grid item xs={12}>
                         <TextField 
                           fullWidth 
+                          name="address"
                           label="Address" 
                           multiline 
                           rows={3} 
-                          defaultValue={farmerData.address} 
+                          value={profileForm.address}
+                          onChange={onProfileChange}
                         />
                       </Grid>
                       <Grid item xs={12} sm={6}>
-                        <TextField fullWidth label="Total Land (acres)" defaultValue={farmerData.totalLand} />
+                        <TextField fullWidth label="Total Land (acres)" name="totalLand" value={profileForm.totalLand} onChange={onProfileChange} />
                       </Grid>
                       <Grid item xs={12} sm={6}>
-                        <TextField fullWidth label="Experience" defaultValue={farmerData.experience} />
+                        <TextField fullWidth label="Experience" name="experience" value={profileForm.experience} onChange={onProfileChange} />
                       </Grid>
                       <Grid item xs={12}>
                         <Stack direction="row" spacing={2}>
-                          <Button variant="contained" size="large" onClick={() => showSnackbar('Profile update feature coming soon', 'info')}>
+                          <Button variant="contained" size="large" onClick={handleProfileUpdate}>
                             Update Profile
                           </Button>
                           <Button variant="outlined" size="large" onClick={() => showSnackbar('Change password feature coming soon', 'info')}>

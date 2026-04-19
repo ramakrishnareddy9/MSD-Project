@@ -98,11 +98,11 @@ router.get('/:id', authenticate, validateObjectId('id'), asyncHandler(async (req
 /**
  * @route   POST /api/recurring-orders
  * @desc    Create recurring schedule (buyer roles only)
- * @access  Private (business, restaurant, customer)
+ * @access  Private (business, travel_agency, restaurant, customer)
  */
 router.post('/', 
   authenticate, 
-  authorize('business', 'restaurant', 'customer'),
+  authorize('business', 'travel_agency', 'restaurant', 'customer'),
   validateRecurringOrder,
   asyncHandler(async (req, res) => {
     const {

@@ -18,13 +18,7 @@ import {
   Refresh, Warning
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { productAPI, orderAPI, inventoryAPI, analyticsAPI, authAPI, vehicleAPI } from '../../services/api';
-
-// ─── localStorage keys ─────────────────────────────────────────────────────────
-const LS_ORDERS    = 'biz_orders';
-const LS_FLEET     = 'biz_fleet';
-const LS_INVENTORY = 'biz_inventory';
-const LS_NOTIFS    = 'biz_notifications';
+import { productAPI, orderAPI, inventoryAPI, analyticsAPI, authAPI, vehicleAPI, userAPI } from '../../services/api';
 
 // ─── fallback seed data (used when backend is offline) ─────────────────────────
 const SEED_ORDERS = [
@@ -57,6 +51,24 @@ const SEED_PRODUCTS = [
   { id: 6, name: 'Sunny Orchards', product: 'Fruits', stock: 100, price: 50, rating: 4.8, location: 'Himachal', category: 'Fruits' }
 ];
 
+const VEHICLE_TYPES = [
+  { type: 'Mini Truck', capacity: 750, label: 'Mini Truck (750 kg)' },
+  { type: 'Pickup', capacity: 1500, label: 'Pickup (1,500 kg)' },
+  { type: 'Truck', capacity: 5000, label: 'Truck (5,000 kg)' },
+  { type: 'Heavy Truck', capacity: 10000, label: 'Heavy Truck (10,000 kg)' }
+];
+
+const DEFAULT_BUSINESS_DATA = {
+  _id: '',
+  name: 'Business User',
+  type: 'Business',
+  owner: 'N/A',
+  gst: 'N/A',
+  phone: '',
+  email: '',
+  address: ''
+};
+
 const BusinessDashboard = () => {
   // ── core state (API-driven) ─────────────────────────────────────────────────
   const [businessData, setBusinessData] = useState(null);
@@ -83,9 +95,23 @@ const BusinessDashboard = () => {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [assignDialog, setAssignDialog] = useState({ open: false, orderId: null });
   const [addVehicleDialog, setAddVehicleDialog] = useState(false);
-  const [newVehicle, setNewVehicle] = useState({ name: '', type: 'Truck', capacity: 0 });
+  const [newVehicle, setNewVehicle] = useState({ name: '', typeIndex: 0, plate: '' });
   const [marketplaceSearch, setMarketplaceSearch] = useState({ product: '', quantity: '' });
   const [apiConnected, setApiConnected] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    businessType: '',
+    owner: '',
+    gst: '',
+    phone: '',
+    email: '',
+    address: ''
+  });
+
+  const safeBusinessData = {
+    ...DEFAULT_BUSINESS_DATA,
+    ...(businessData || {})
+  };
 
   // ── Initialize: Fetch all business data on mount ────────────────────────────
   useEffect(() => {
@@ -96,10 +122,31 @@ const BusinessDashboard = () => {
         // Get current user (business profile)
         const userRes = await authAPI.getCurrentUser();
         if (userRes.success) {
-          setBusinessData(userRes.data);
+          const currentUser = userRes.data?.user || userRes.data;
+          if (!currentUser?._id) {
+            throw new Error('Invalid auth user payload');
+          }
+          setBusinessData({
+            ...DEFAULT_BUSINESS_DATA,
+            ...currentUser,
+            type: currentUser.type || currentUser.roles?.[0] || DEFAULT_BUSINESS_DATA.type,
+            owner: currentUser.owner || currentUser.name || DEFAULT_BUSINESS_DATA.owner,
+            gst: currentUser.gst || currentUser.gstNumber || DEFAULT_BUSINESS_DATA.gst,
+            address: currentUser.address || currentUser.addresses?.[0]?.line1 || DEFAULT_BUSINESS_DATA.address
+          });
+
+          setProfileForm({
+            name: currentUser.name || '',
+            businessType: currentUser.businessType || currentUser.type || currentUser.roles?.[0] || 'Business',
+            owner: currentUser.owner || currentUser.name || '',
+            gst: currentUser.gst || currentUser.gstNumber || '',
+            phone: currentUser.phone || '',
+            email: currentUser.email || '',
+            address: currentUser.address || currentUser.addresses?.[0]?.line1 || ''
+          });
 
           // Get business metrics (orders, earnings, etc.)
-          const metricsRes = await analyticsAPI.getUserMetrics(userRes.data._id);
+          const metricsRes = await analyticsAPI.getUserMetrics(currentUser._id);
           if (metricsRes.success && metricsRes.data.sellerMetrics) {
             const seller = metricsRes.data.sellerMetrics;
             setMetrics({
@@ -114,22 +161,22 @@ const BusinessDashboard = () => {
           }
 
           // Get business orders
-          const ordersRes = await orderAPI.getAll({ sellerId: userRes.data._id });
+          const ordersRes = await orderAPI.getAll({ buyerId: currentUser._id });
           if (ordersRes.success && ordersRes.data?.orders) {
-            const mappedOrders = ordersRes.data.orders.map((o, idx) => ({
-              id: idx + 1,
+            const mappedOrders = ordersRes.data.orders.map((o) => ({
+              id: o._id || o.id,
               product: o.orderItems?.[0]?.productName || 'Product',
               units: `${o.orderItems?.[0]?.quantity || 0} ${o.orderItems?.[0]?.unit || 'units'}`,
-              supplier: o.buyerId?.name || 'Customer',
+              supplier: o.sellerId?.name || o.orderItems?.[0]?.farmerName || 'Supplier',
               amount: o.total || 0,
-              status: o.status || 'pending',
+              status: mapOrderStatus(o.status),
               date: new Date(o.createdAt).toLocaleDateString()
             }));
             setOrders(mappedOrders);
           }
 
           // Get business vehicles
-          const vehiclesRes = await vehicleAPI.getAll({ ownerId: userRes.data._id });
+          const vehiclesRes = await vehicleAPI.getAll({ ownerId: currentUser._id });
           if (vehiclesRes.success && vehiclesRes.data) {
             const mappedFleet = vehiclesRes.data.map((v, idx) => ({
               id: v._id || idx,
@@ -146,11 +193,13 @@ const BusinessDashboard = () => {
           if (productsRes.success && productsRes.data?.products) {
             const mappedProducts = productsRes.data.products.map(p => ({
               id: p._id || p.id,
+              productId: p._id || p.id,
+              ownerId: p.ownerId?._id || p.ownerId,
               name: p.ownerId?.name || 'Farm',
               product: p.name || 'Product',
-              stock: p.stockQuantity || 0,
+              stock: Number(p.stockQuantity || 0),
               price: p.basePrice || 0,
-              rating: p.avgRating || 4.5,
+              rating: p.averageRating || p.avgRating || 4.5,
               location: p.location?.state || 'India',
               category: p.categoryId?.name || 'General'
             })).filter(p => p.stock > 0);
@@ -178,21 +227,21 @@ const BusinessDashboard = () => {
   const fetchProducts = useCallback(async () => {
     setLoading(l => ({ ...l, products: true }));
     try {
-      const res = await productAPI.getAll({ available: true });
-      const mapped = (res.products || res.data || res || []).map(p => ({
+      const res = await productAPI.getAll({ status: 'active' });
+      const products = res?.data?.products || [];
+      const mapped = products.map(p => ({
         id: p._id || p.id,
-        name: p.farmer?.name || p.sellerName || 'Unknown Farm',
-        product: p.name || p.productName,
-        stock: p.stockQuantity || p.quantity || 0,
-        price: p.price || 0,
-        rating: p.avgRating || p.rating || 4.5,
-        location: p.farmer?.address?.state || p.location || 'India',
-        category: p.category?.name || p.category || 'General'
+        name: p.ownerId?.name || p.sellerName || 'Unknown Farm',
+        product: p.name || p.productName || 'Product',
+        stock: Number(p.stockQuantity || p.quantity || 0),
+        price: p.basePrice || p.price || 0,
+        rating: p.averageRating || p.avgRating || p.rating || 4.5,
+        location: p.location?.state || p.ownerId?.addresses?.[0]?.state || 'India',
+        category: p.categoryId?.name || p.category?.name || p.category || 'General'
       })).filter(p => p.stock > 0);
-      if (mapped.length > 0) {
-        setAvailableProducts(mapped);
-        setApiConnected(true);
-      }
+
+      setAvailableProducts(mapped);
+      setApiConnected(true);
     } catch {
       // silently use seed data
     } finally {
@@ -204,17 +253,25 @@ const BusinessDashboard = () => {
   const fetchOrders = useCallback(async () => {
     setLoading(l => ({ ...l, orders: true }));
     try {
-      const res = await orderAPI.getAll({ type: 'business' });
-      const list = res.orders || res.data || res || [];
-      if (list.length > 0) {
+      const userRes = await authAPI.getCurrentUser();
+      const currentUser = userRes?.data?.user || userRes?.data;
+      const userId = currentUser?._id;
+
+      if (!userId) {
+        return;
+      }
+
+      const res = await orderAPI.getAll({ buyerId: userId });
+      const list = res?.data?.orders || [];
+      if (Array.isArray(list) && list.length > 0) {
         const mapped = list.map(o => ({
           id: o._id || o.id,
-          product: o.items?.[0]?.product?.name || o.productName || 'Product',
-          units: `${o.totalWeight || o.quantity || 0} kg`,
-          supplier: o.seller?.name || o.supplierName || 'Supplier',
-          amount: o.totalAmount || o.amount || 0,
+          product: o.orderItems?.[0]?.productName || 'Product',
+          units: `${o.orderItems?.[0]?.quantity || 0} ${o.orderItems?.[0]?.unit || 'units'}`,
+          supplier: o.sellerId?.name || o.orderItems?.[0]?.farmerName || 'Supplier',
+          amount: o.total || 0,
           status: mapOrderStatus(o.status),
-          date: (o.createdAt || o.date || '').slice(0, 10)
+          date: new Date(o.createdAt || Date.now()).toLocaleDateString()
         }));
         setOrders(mapped);
         setApiConnected(true);
@@ -232,7 +289,7 @@ const BusinessDashboard = () => {
         }
       }
     } catch {
-      // silently use localStorage seed
+      // backend unavailable; keep current in-memory state
     } finally {
       setLoading(l => ({ ...l, orders: false }));
     }
@@ -243,8 +300,8 @@ const BusinessDashboard = () => {
     setLoading(l => ({ ...l, inventory: true }));
     try {
       const res = await inventoryAPI.getAll();
-      const list = res.inventory || res.data || res || [];
-      if (list.length > 0) {
+      const list = res?.data?.inventory || res?.data?.lots || [];
+      if (Array.isArray(list) && list.length > 0) {
         const mapped = list.map(inv => ({
           id: inv._id || inv.id,
           product: inv.product?.name || inv.productName || 'Item',
@@ -256,7 +313,7 @@ const BusinessDashboard = () => {
         setApiConnected(true);
       }
     } catch {
-      // use localStorage seed
+      // backend unavailable; keep current in-memory state
     } finally {
       setLoading(l => ({ ...l, inventory: false }));
     }
@@ -277,6 +334,41 @@ const BusinessDashboard = () => {
   // ── snackbar helper ──────────────────────────────────────────────────────────
   const showSnackbar = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
 
+  const onProfileChange = (e) => {
+    const { name, value } = e.target;
+    setProfileForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleProfileUpdate = async () => {
+    if (!safeBusinessData._id) {
+      showSnackbar('Unable to update profile', 'error');
+      return;
+    }
+
+    try {
+      const payload = {
+        name: profileForm.name,
+        businessType: profileForm.businessType,
+        owner: profileForm.owner,
+        gst: profileForm.gst,
+        phone: profileForm.phone,
+        email: profileForm.email,
+        address: profileForm.address
+      };
+
+      const res = await userAPI.update(safeBusinessData._id, payload);
+      const updatedUser = res?.data?.user;
+
+      if (updatedUser) {
+        setBusinessData((prev) => ({ ...prev, ...updatedUser }));
+      }
+
+      showSnackbar('Profile updated successfully', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to update profile', 'error');
+    }
+  };
+
   // ── cart operations ──────────────────────────────────────────────────────────
   const handleAddToCart = (farmer, orderQty) => {
     const qty = Number(orderQty);
@@ -295,42 +387,71 @@ const BusinessDashboard = () => {
 
   const checkoutCart = async () => {
     if (!cart.length) return;
-    const newOrders = cart.map((item, idx) => ({
-      id: Date.now() + idx,
-      product: item.product,
-      units: `${item.orderQty} kg`,
-      supplier: item.name,
-      amount: item.price * item.orderQty,
-      status: 'Pending Transport',
-      date: new Date().toISOString().split('T')[0]
-    }));
+    const createdOrders = [];
+    const failedItems = [];
 
-    // try API create
     for (const item of cart) {
+      const subtotal = item.price * item.orderQty;
+      const payload = {
+        type: 'b2b',
+        sellerId: item.ownerId,
+        orderItems: [{
+          productId: item.productId || item.id,
+          quantity: item.orderQty,
+          unitPrice: item.price,
+          totalPrice: subtotal
+        }],
+        total: subtotal,
+        deliveryAddress: {
+          line1: safeBusinessData.address || 'Business Address',
+          city: 'Hyderabad',
+          state: 'TS',
+          postalCode: '500001',
+          country: 'India'
+        }
+      };
+
       try {
-        await orderAPI.create({
-          sellerId: item.id,
-          items: [{ productName: item.product, quantity: item.orderQty, price: item.price }],
-          totalAmount: item.price * item.orderQty,
-          type: 'business'
-        });
-      } catch { /* fallback to local */ }
+        const result = await orderAPI.create(payload);
+        const created = result?.data?.order;
+        if (created) {
+          createdOrders.push({
+            id: created._id || created.id,
+            product: created.orderItems?.[0]?.productName || item.product,
+            units: `${created.orderItems?.[0]?.quantity || item.orderQty} ${created.orderItems?.[0]?.unit || 'units'}`,
+            supplier: created.sellerId?.name || created.orderItems?.[0]?.farmerName || item.name,
+            amount: created.total || subtotal,
+            status: mapOrderStatus(created.status),
+            date: new Date(created.createdAt || Date.now()).toLocaleDateString()
+          });
+        }
+      } catch {
+        failedItems.push(item.product);
+      }
     }
 
-    setOrders(prev => [...newOrders, ...prev]);
-    // add notification
+    if (createdOrders.length) {
+      setOrders(prev => [...createdOrders, ...prev]);
+    }
+
     setNotifications(prev => [{
       id: Date.now(), title: 'New Order Placed',
-      message: `${cart.length} item(s) added to waiting list for transport`,
+      message: `${createdOrders.length} item(s) created successfully${failedItems.length ? `, ${failedItems.length} failed` : ''}`,
       time: 'just now', type: 'success', read: false
     }, ...prev]);
-    setCart([]);
-    showSnackbar(`${newOrders.length} order(s) placed — awaiting transport assignment`, 'success');
+
+    if (createdOrders.length === cart.length) {
+      setCart([]);
+      showSnackbar(`${createdOrders.length} order(s) placed — awaiting transport assignment`, 'success');
+    } else {
+      showSnackbar(`Some orders failed: ${failedItems.join(', ')}`, 'warning');
+    }
+
     setActiveSection('orders');
   };
 
   // ── vehicle assignment ───────────────────────────────────────────────────────
-  const handleAssignVehicle = (vehicle) => {
+  const handleAssignVehicle = async (vehicle) => {
     const order = orders.find(o => o.id === assignDialog.orderId);
     if (!order) return;
     const required = parseInt(order.units.replace(/\D/g, '')) || 0;
@@ -338,8 +459,15 @@ const BusinessDashboard = () => {
       showSnackbar(`${vehicle.name} capacity (${vehicle.capacity} kg) < order weight (${required} kg)`, 'error');
       return;
     }
-    setOrders(prev => prev.map(o => o.id === assignDialog.orderId ? { ...o, status: 'In Transit', assignedVehicle: vehicle.name } : o));
-    setFleet(prev => prev.map(v => v.id === vehicle.id ? { ...v, status: 'In Transit' } : v));
+    try {
+      await orderAPI.updateStatus(order.id, 'shipped');
+      await vehicleAPI.updateStatus(vehicle.id, 'In Transit');
+      setOrders(prev => prev.map(o => o.id === assignDialog.orderId ? { ...o, status: 'In Transit', assignedVehicle: vehicle.name } : o));
+      setFleet(prev => prev.map(v => v.id === vehicle.id ? { ...v, status: 'In Transit' } : v));
+    } catch {
+      showSnackbar('Unable to assign vehicle from server. Please retry.', 'error');
+      return;
+    }
     setNotifications(prev => [{
       id: Date.now(), title: 'Vehicle Dispatched',
       message: `${vehicle.name} dispatched for "${order.product}" — ${order.units}`,
@@ -350,30 +478,53 @@ const BusinessDashboard = () => {
   };
 
   // ── fleet management ─────────────────────────────────────────────────────────
-  const handleAddVehicle = () => {
+  const handleAddVehicle = async () => {
     const selected = VEHICLE_TYPES[newVehicle.typeIndex];
     if (!newVehicle.name.trim()) { showSnackbar('Enter vehicle registration / name', 'error'); return; }
-    const v = {
-      id: `v${Date.now()}`,
-      name: newVehicle.name.trim(),
-      capacity: selected.capacity,
-      type: selected.type,
-      plate: newVehicle.plate.trim(),
-      status: 'Available'
-    };
-    setFleet(prev => [...prev, v]);
-    setNewVehicle({ name: '', typeIndex: 0, plate: '' });
-    setAddVehicleDialog(false);
-    showSnackbar(`${v.name} added to fleet`, 'success');
+    try {
+      const created = await vehicleAPI.create({
+        name: newVehicle.name.trim(),
+        type: selected.type,
+        capacity: selected.capacity,
+        plate: newVehicle.plate.trim()
+      });
+      const v = created?.data || created;
+      setFleet(prev => [...prev, {
+        id: v._id || v.id,
+        name: v.name,
+        capacity: v.capacity,
+        type: v.type,
+        plate: v.plateNumber || newVehicle.plate.trim(),
+        status: v.status || 'Available'
+      }]);
+      setNewVehicle({ name: '', typeIndex: 0, plate: '' });
+      setAddVehicleDialog(false);
+      showSnackbar(`${v.name} added to fleet`, 'success');
+    } catch {
+      showSnackbar('Unable to add vehicle. Please check server permissions.', 'error');
+    }
   };
 
-  const handleRemoveVehicle = (id) => {
-    setFleet(prev => prev.filter(v => v.id !== id));
-    showSnackbar('Vehicle removed from fleet', 'success');
+  const handleRemoveVehicle = async (id) => {
+    try {
+      await vehicleAPI.delete(id);
+      setFleet(prev => prev.filter(v => v.id !== id));
+      showSnackbar('Vehicle removed from fleet', 'success');
+    } catch {
+      showSnackbar('Unable to remove vehicle.', 'error');
+    }
   };
 
-  const handleToggleVehicleStatus = (id) => {
-    setFleet(prev => prev.map(v => v.id === id ? { ...v, status: v.status === 'Available' ? 'Maintenance' : 'Available' } : v));
+  const handleToggleVehicleStatus = async (id) => {
+    const current = fleet.find(v => v.id === id);
+    if (!current) return;
+    const nextStatus = current.status === 'Available' ? 'Maintenance' : 'Available';
+    try {
+      await vehicleAPI.updateStatus(id, nextStatus);
+      setFleet(prev => prev.map(v => v.id === id ? { ...v, status: nextStatus } : v));
+    } catch {
+      showSnackbar('Unable to update vehicle status.', 'error');
+    }
   };
 
   // ── notifications ────────────────────────────────────────────────────────────
@@ -391,9 +542,30 @@ const BusinessDashboard = () => {
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
+  useEffect(() => {
+    const totalOrders = orders.length;
+    const activeSuppliers = new Set(orders.map((order) => order.supplier).filter(Boolean)).size;
+    const monthlyPurchase = orders.reduce((sum, order) => sum + Number(order.amount || 0), 0);
+    const avgOrderValue = totalOrders ? Math.round(monthlyPurchase / totalOrders) : 0;
+    const pendingTransport = orders.filter((order) => {
+      const status = String(order.status || '').toLowerCase();
+      return status.includes('pending') || status.includes('processing') || status.includes('transit');
+    }).length;
+
+    setMetrics((prev) => ({
+      ...prev,
+      totalOrders,
+      activeSuppliers,
+      monthlyPurchase,
+      avgOrderValue,
+      pendingTransport,
+      unreadNotifs: unreadCount
+    }));
+  }, [orders, unreadCount]);
+
   const menuItems = [
     { id: 'overview', label: 'Overview', icon: <Dashboard /> },
-    { id: 'orders', label: 'Orders', icon: <ShoppingCart />, badge: stats.pendingTransport || null },
+    { id: 'orders', label: 'Orders', icon: <ShoppingCart />, badge: metrics.pendingTransport || null },
     { id: 'suppliers', label: 'Marketplace', icon: <Store />, badge: cart.length || null },
     { id: 'fleet', label: 'My Fleet', icon: <LocalShipping /> },
     { id: 'inventory', label: 'Inventory', icon: <Inventory /> },
@@ -435,11 +607,11 @@ const BusinessDashboard = () => {
         <Stack spacing={1} sx={{ mt: 1 }}>
           <Stack direction="row" justifyContent="space-between">
             <Typography variant="body2">Active Suppliers</Typography>
-            <Chip label={stats.activeSuppliers} size="small" color="primary" />
+            <Chip label={metrics.activeSuppliers} size="small" color="primary" />
           </Stack>
           <Stack direction="row" justifyContent="space-between">
             <Typography variant="body2">Waiting Transport</Typography>
-            <Chip label={stats.pendingTransport} size="small" color="warning" />
+            <Chip label={metrics.pendingTransport} size="small" color="warning" />
           </Stack>
           <Stack direction="row" justifyContent="space-between">
             <Typography variant="body2">Fleet Available</Typography>
@@ -477,7 +649,7 @@ const BusinessDashboard = () => {
               <Typography variant="h6" fontWeight="bold" color="text.primary">
                 {menuItems.find(m => m.id === activeSection)?.label || 'Dashboard'}
               </Typography>
-              <Typography variant="caption" color="text.secondary">{businessData.name}</Typography>
+              <Typography variant="caption" color="text.secondary">{safeBusinessData.name}</Typography>
             </Box>
             <Stack direction="row" spacing={1} alignItems="center">
               <Tooltip title="Refresh data from server">
@@ -568,9 +740,9 @@ const BusinessDashboard = () => {
                         <Box>
                           <Stack direction="row" justifyContent="space-between" sx={{ mb: 1 }}>
                             <Typography variant="body2">On-Time Delivery</Typography>
-                            <Typography variant="body2" fontWeight="bold">{stats.onTimeDelivery}%</Typography>
+                            <Typography variant="body2" fontWeight="bold">{metrics.onTimeDelivery}%</Typography>
                           </Stack>
-                          <LinearProgress variant="determinate" value={stats.onTimeDelivery} sx={{ height: 8, borderRadius: 1 }} />
+                          <LinearProgress variant="determinate" value={metrics.onTimeDelivery} sx={{ height: 8, borderRadius: 1 }} />
                         </Box>
                         <Box>
                           <Stack direction="row" justifyContent="space-between" sx={{ mb: 1 }}>
@@ -997,8 +1169,8 @@ const BusinessDashboard = () => {
                     <Avatar sx={{ width: 120, height: 120, mx: 'auto', mb: 2, bgcolor: 'primary.main', fontSize: '3rem' }}>
                       <Business sx={{ fontSize: 60 }} />
                     </Avatar>
-                    <Typography variant="h5" fontWeight="bold" gutterBottom>{businessData.name}</Typography>
-                    <Typography variant="body2" color="text.secondary" gutterBottom>{businessData.type}</Typography>
+                    <Typography variant="h5" fontWeight="bold" gutterBottom>{safeBusinessData.name}</Typography>
+                    <Typography variant="body2" color="text.secondary" gutterBottom>{safeBusinessData.type}</Typography>
                     <Chip label="Verified Business" color="success" icon={<Verified />} sx={{ mb: 2 }} />
                     <Divider sx={{ my: 3 }} />
                     <Stack spacing={2}>
@@ -1017,23 +1189,23 @@ const BusinessDashboard = () => {
                     <Divider sx={{ my: 2 }} />
                     <Grid container spacing={3}>
                       {[
-                        { label: 'Business Name', value: businessData.name },
-                        { label: 'Business Type', value: businessData.type },
-                        { label: 'Owner Name', value: businessData.owner },
-                        { label: 'GST Number', value: businessData.gst },
-                        { label: 'Phone', value: businessData.phone },
-                        { label: 'Email', value: businessData.email, type: 'email' }
+                        { label: 'Business Name', value: profileForm.name, name: 'name' },
+                        { label: 'Business Type', value: profileForm.businessType, name: 'businessType' },
+                        { label: 'Owner Name', value: profileForm.owner, name: 'owner' },
+                        { label: 'GST Number', value: profileForm.gst, name: 'gst' },
+                        { label: 'Phone', value: profileForm.phone, name: 'phone' },
+                        { label: 'Email', value: profileForm.email, name: 'email', type: 'email' }
                       ].map(field => (
                         <Grid item xs={12} sm={6} key={field.label}>
-                          <TextField fullWidth label={field.label} defaultValue={field.value} type={field.type || 'text'} />
+                          <TextField fullWidth label={field.label} name={field.name} value={field.value} onChange={onProfileChange} type={field.type || 'text'} />
                         </Grid>
                       ))}
                       <Grid item xs={12}>
-                        <TextField fullWidth label="Business Address" multiline rows={3} defaultValue={businessData.address} />
+                        <TextField fullWidth label="Business Address" name="address" value={profileForm.address} onChange={onProfileChange} multiline rows={3} />
                       </Grid>
                       <Grid item xs={12}>
                         <Stack direction="row" spacing={2}>
-                          <Button variant="contained" size="large" onClick={() => showSnackbar('Profile updated successfully', 'success')}>Update Profile</Button>
+                          <Button variant="contained" size="large" onClick={handleProfileUpdate}>Update Profile</Button>
                           <Button variant="outlined" size="large" onClick={() => showSnackbar('Change password feature coming soon', 'info')}>Change Password</Button>
                         </Stack>
                       </Grid>

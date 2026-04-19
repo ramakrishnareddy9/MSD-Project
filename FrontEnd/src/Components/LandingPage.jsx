@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { getDashboardPath, getPrimaryRole } from '../utils/roleRouting';
 import {
   FaLeaf,
   FaStar,
@@ -20,24 +21,12 @@ function FarmKartLanding() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
 
-  const routeForRole = (role) => {
-    switch (role) {
-      case 'customer': return '/customer';
-      case 'farmer': return '/farmer';
-      case 'business': return '/business';
-      case 'restaurant': return '/restaurant';
-      case 'delivery_large': return '/delivery-large';
-      case 'delivery_small': return '/delivery-small';
-      case 'delivery': return '/delivery-large';
-      case 'admin': return '/admin';
-      case 'community': return '/dashboard/community';
-      default: return '/';
-    }
-  };
+  const dashboardPath = getDashboardPath(user);
+  const userRole = getPrimaryRole(user);
 
   const handleGetStarted = () => {
     if (user) {
-      navigate(routeForRole(user.role));
+      navigate(dashboardPath);
     } else {
       navigate('/signup');
     }
@@ -69,8 +58,8 @@ function FarmKartLanding() {
             <div className="flex items-center gap-3">
               {user ? (
                 <>
-                  <span className="hidden sm:inline text-gray-600 font-medium">Welcome, {user.role}!</span>
-                  <button className="px-6 py-2.5 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transform hover:scale-105 transition-all duration-200 shadow-md hover:shadow-lg" onClick={() => navigate(routeForRole(user.role))}>
+                  <span className="hidden sm:inline text-gray-600 font-medium">Welcome, {userRole}!</span>
+                  <button className="px-6 py-2.5 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transform hover:scale-105 transition-all duration-200 shadow-md hover:shadow-lg" onClick={() => navigate(dashboardPath)}>
                     Dashboard
                   </button>
                   <button className="px-6 py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition-all duration-200" onClick={handleLogout}>

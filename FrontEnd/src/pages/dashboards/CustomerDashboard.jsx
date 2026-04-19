@@ -23,15 +23,9 @@ import {
 } from 'recharts';
 import { useAuth } from '../../contexts/AuthContext';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { authAPI, productAPI, cartAPI, wishlistAPI, orderAPI, analyticsAPI } from '../../services/api';
+import { authAPI, productAPI, cartAPI, wishlistAPI, orderAPI, communityAPI, userAPI } from '../../services/api';
 
-// ─── LocalStorage Keys ─────────────────────────────────────────────────────────
-const LS_CART_KEY = 'farmkart_customer_cart';
-const LS_WISHLIST_KEY = 'farmkart_customer_wishlist';
-const LS_COMMUNITY_POOL_KEY = 'farmkart_community_pool';
-const LS_COMMUNITY_CHAT_KEY = 'farmkart_community_chat';
-const LS_MY_CONTRIBUTIONS_KEY = 'farmkart_my_contributions';
-const LS_BULK_ORDERS_KEY = 'farmkart_bulk_orders';
+const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1488459716781-6f03ee1b563b?w=800&h=600&fit=crop&q=80';
 
 const CustomerDashboard = () => {
   const navigate = useNavigate();
@@ -64,13 +58,155 @@ const CustomerDashboard = () => {
   const [availableCommunities, setAvailableCommunities] = useState([]);
   const [createCommunityForm, setCreateCommunityForm] = useState({ name: '', description: '' });
   const [communityPool, setCommunityPool] = useState({});
-  const [bulkOrders, setBulkOrders] = useState([]);
   const [myContributions, setMyContributions] = useState([]);
   const [chatMessages, setChatMessages] = useState({});
   const [chatInput, setChatInput] = useState('');
   const [selectedChatCommunity, setSelectedChatCommunity] = useState('');
-  const [farmerDialog, setFarmerDialog] = useState({ open: false, communityId: null, productId: null });
-  const [selectedFarmer, setSelectedFarmer] = useState('');
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    city: '',
+    address: ''
+  });
+
+  const normalizeProduct = (p) => ({
+    id: p._id || p.id,
+    name: p.name,
+    price: p.basePrice ?? p.price ?? 0,
+    unit: p.unit || '1kg',
+    category: p.categoryId?.name || p.category || 'General',
+    farmer: p.ownerId?.name || p.seller?.name || 'Farm',
+    rating: p.avgRating || 4.5,
+    reviews: p.reviewCount || 0,
+    image: p.image || p.images?.[0] || FALLBACK_IMAGE,
+    inStock: (p.stockQuantity ?? p.stock ?? 0) > 0,
+    discount: 0,
+    description: p.description || 'Premium quality product',
+    minBulkQty: p.minBulkQty || p.minOrderQuantity || 50
+  });
+
+  const normalizeCartItem = (item) => {
+    const product = item.product || item.productId || {};
+    return {
+      id: String(product._id || item.productId || item.id),
+      name: product.name || item.name || 'Product',
+      price: product.basePrice ?? product.price ?? item.price ?? 0,
+      finalPrice: item.finalPrice,
+      qty: Number(item.qty ?? item.quantity ?? 1),
+      unit: product.unit || item.unit || '1kg',
+      farmer: product.ownerId?.name || product.seller?.name || item.farmer || 'Farm',
+      discount: Number(item.discount || 0),
+      image: product.image || product.images?.[0] || item.image || FALLBACK_IMAGE,
+      minBulkQty: product.minBulkQty || product.minOrderQuantity || item.minBulkQty || 50
+    };
+  };
+
+  const normalizeWishlistItem = (p) => ({
+    id: String(p._id || p.id),
+    name: p.name,
+    price: p.basePrice ?? p.price ?? 0,
+    farmer: p.ownerId?.name || p.seller?.name || 'Farm',
+    rating: p.avgRating || 4.5,
+    reviews: p.reviewCount || 0,
+    image: p.image || p.images?.[0] || FALLBACK_IMAGE
+  });
+
+  const syncCartFromResponse = (cartRes) => {
+    const items = cartRes?.data?.items || [];
+    setCart(items.map(normalizeCartItem));
+  };
+
+  const syncWishlistFromResponse = (wishlistRes) => {
+    const productsFromWishlist = wishlistRes?.data?.products || [];
+    setWishlist(productsFromWishlist.map(normalizeWishlistItem));
+  };
+
+  const refreshCommunityPools = async (communities, currentUserId) => {
+    if (!communities.length) {
+      setCommunityPool({});
+      setMyContributions([]);
+      return;
+    }
+
+    const communityNameById = new Map(communities.map((c) => [String(c.id), c.name]));
+
+    const poolResults = await Promise.all(
+      communities.map(async (community) => {
+        try {
+          const poolsRes = await communityAPI.getPools(community.id);
+          return { communityId: String(community.id), pools: poolsRes.success ? (poolsRes.data?.pools || []) : [] };
+        } catch {
+          return { communityId: String(community.id), pools: [] };
+        }
+      })
+    );
+
+    const nextPool = {};
+    const nextContributions = [];
+
+    poolResults.forEach(({ communityId, pools }) => {
+      if (!pools.length) return;
+
+      nextPool[communityId] = {};
+
+      pools.forEach((pool) => {
+        const product = pool.product || {};
+        const productId = String(product._id || pool.product || pool._id);
+        const productUnit = product.unit || 'kg';
+
+        const mappedContributions = (pool.contributions || []).map((c) => {
+          const memberId = String(c.member?._id || c.member || '');
+          const memberName = c.member?.name || 'Member';
+          const qty = Number(c.qty || 0);
+          const amount = Number(c.amount || 0);
+          const date = c.date
+            ? new Date(c.date).toISOString().split('T')[0]
+            : new Date(pool.createdAt || Date.now()).toISOString().split('T')[0];
+
+          if (memberId && String(memberId) === String(currentUserId)) {
+            nextContributions.push({
+              id: `${communityId}-${productId}-${date}-${Math.random()}`,
+              communityId,
+              communityName: communityNameById.get(communityId) || 'Community',
+              productName: product.name || 'Product',
+              qty,
+              amount,
+              date,
+              poolStatus: pool.status || 'collecting'
+            });
+          }
+
+          return {
+            member: memberName,
+            qty,
+            amount,
+            date,
+            memberId
+          };
+        });
+
+        nextPool[communityId][productId] = {
+          poolId: String(pool._id),
+          product: {
+            id: productId,
+            name: product.name || 'Product',
+            unit: productUnit,
+            farmer: product.ownerId?.name || product.seller?.name || 'Farm',
+            image: product.image || product.images?.[0] || FALLBACK_IMAGE
+          },
+          totalQty: Number(pool.totalQty || 0),
+          minBulkQty: Number(pool.minBulkQty || 50),
+          contributions: mappedContributions,
+          status: pool.status || 'collecting',
+          assignedFarmer: pool.assignedFarmer?.name || ''
+        };
+      });
+    });
+
+    setCommunityPool(nextPool);
+    setMyContributions(nextContributions);
+  };
 
   // ─── Initialize: Fetch all customer data on mount ────────────────────────────
   useEffect(() => {
@@ -81,73 +217,58 @@ const CustomerDashboard = () => {
         // Get current user profile
         const userRes = await authAPI.getCurrentUser();
         if (userRes.success) {
+          const currentUser = userRes.data?.user || userRes.data;
+          if (!currentUser?._id) {
+            throw new Error('Invalid auth payload for customer dashboard');
+          }
+
+          setProfileForm({
+            name: currentUser.name || '',
+            email: currentUser.email || '',
+            phone: currentUser.phone || '',
+            city: currentUser.city || currentUser.addresses?.[0]?.city || '',
+            address: currentUser.address || currentUser.addresses?.[0]?.line1 || ''
+          });
+
           // Get all available products (products to browse/buy)
           const productsRes = await productAPI.getAll({ status: 'active', limit: 50 });
           if (productsRes.success && productsRes.data?.products) {
-            const mappedProducts = productsRes.data.products.map(p => ({
-              id: p._id || p.id,
-              name: p.name,
-              price: p.basePrice || 0,
-              unit: p.unit || '1kg',
-              category: p.categoryId?.name || 'General',
-              farmer: p.ownerId?.name || 'Farm',
-              rating: p.avgRating || 4.5,
-              reviews: p.reviewCount || 0,
-              image: p.image || 'https://images.unsplash.com/photo-1488459716781-6f03ee1b563b?w=800&h=600&fit=crop&q=80',
-              inStock: p.stockQuantity > 0,
-              discount: 0,
-              description: p.description || 'Premium quality product',
-              minBulkQty: 20
-            }));
-            setProducts(mappedProducts);
+            setProducts(productsRes.data.products.map(normalizeProduct));
           }
 
           // Get customer's cart
           const cartRes = await cartAPI.getCart();
-          if (cartRes.success && cartRes.data?.items) {
-            const enrichedCart = cartRes.data.items.map(item => ({
-              id: item.productId?._id || item.productId,
-              name: item.productId?.name || 'Product',
-              price: item.productId?.basePrice || 0,
-              quantity: item.quantity || 1,
-              image: item.productId?.image || 'https://images.unsplash.com/photo-1488459716781-6f03ee1b563b?w=800&h=600&fit=crop&q=80'
-            }));
-            setCart(enrichedCart);
+          if (cartRes.success) {
+            syncCartFromResponse(cartRes);
           }
 
           // Get customer's wishlist
           const wishlistRes = await wishlistAPI.getWishlist();
-          if (wishlistRes.success && wishlistRes.data?.products) {
-            const enrichedWishlist = wishlistRes.data.products.map(p => ({
-              id: p._id || p.id,
-              name: p.name,
-              price: p.basePrice || 0,
-              farmer: p.ownerId?.name || 'Farm',
-              rating: p.avgRating || 4.5,
-              reviews: p.reviewCount || 0,
-              image: p.image || 'https://images.unsplash.com/photo-1488459716781-6f03ee1b563b?w=800&h=600&fit=crop&q=80'
-            }));
-            setWishlist(enrichedWishlist);
+          if (wishlistRes.success) {
+            syncWishlistFromResponse(wishlistRes);
           }
 
           // Get customer's orders
-          const ordersRes = await orderAPI.getAll({ buyerId: userRes.data._id });
+          const ordersRes = await orderAPI.getAll({ buyerId: currentUser._id });
           if (ordersRes.success && ordersRes.data?.orders) {
-            const mappedOrders = ordersRes.data.orders.map((o, idx) => ({
-              id: idx + 1,
+            const mappedOrders = ordersRes.data.orders.map((o) => ({
+              id: o._id || o.id,
               product: o.orderItems?.[0]?.productName || 'Product',
               seller: o.sellerId?.name || 'Seller',
               quantity: `${o.orderItems?.[0]?.quantity || 0} ${o.orderItems?.[0]?.unit || 'units'}`,
               amount: o.total || 0,
-              status: o.status || 'pending',
+              status: String(o.status || 'pending').toLowerCase(),
               date: new Date(o.createdAt).toLocaleDateString(),
-              category: o.orderItems?.[0]?.category || 'General'
+              createdAt: o.createdAt,
+              category: o.orderItems?.[0]?.categoryId?.name || 'General'
             }));
             setMyOrders(mappedOrders);
 
             // Calculate analytics
             calculateAnalytics(mappedOrders);
           }
+
+          await refreshCommunities(currentUser._id);
         }
       } catch (error) {
         console.error('Error initializing customer data:', error);
@@ -163,33 +284,40 @@ const CustomerDashboard = () => {
   // ─── Category list (derived from fetched products) ──────────────────────────
   const categories = ['All', ...new Set(products.map(p => p.category))];
 
-  // ─── Load from localStorage ─────────────────────────────────────────────────
   useEffect(() => {
-    const savedCart = localStorage.getItem(LS_CART_KEY);
-    const savedWishlist = localStorage.getItem(LS_WISHLIST_KEY);
-    const savedPool = localStorage.getItem(LS_COMMUNITY_POOL_KEY);
-    const savedChat = localStorage.getItem(LS_COMMUNITY_CHAT_KEY);
-    const savedContributions = localStorage.getItem(LS_MY_CONTRIBUTIONS_KEY);
-    const savedBulkOrders = localStorage.getItem(LS_BULK_ORDERS_KEY);
+    const loadSelectedCommunityChat = async () => {
+      if (!selectedChatCommunity) return;
 
-    if (savedCart) {
-      const parsed = JSON.parse(savedCart);
-      setCart(parsed);
-    }
-    if (savedWishlist) setWishlist(JSON.parse(savedWishlist));
-    if (savedPool) setCommunityPool(JSON.parse(savedPool));
-    if (savedChat) setChatMessages(JSON.parse(savedChat));
-    if (savedContributions) setMyContributions(JSON.parse(savedContributions));
-    if (savedBulkOrders) setBulkOrders(JSON.parse(savedBulkOrders));
-  }, []);
+      try {
+        const chatRes = await communityAPI.getChat(selectedChatCommunity);
+        if (!chatRes.success) return;
 
-  // ─── Persist to localStorage ────────────────────────────────────────────────
-  useEffect(() => { localStorage.setItem(LS_CART_KEY, JSON.stringify(cart)); }, [cart]);
-  useEffect(() => { localStorage.setItem(LS_WISHLIST_KEY, JSON.stringify(wishlist)); }, [wishlist]);
-  useEffect(() => { localStorage.setItem(LS_COMMUNITY_POOL_KEY, JSON.stringify(communityPool)); }, [communityPool]);
-  useEffect(() => { localStorage.setItem(LS_COMMUNITY_CHAT_KEY, JSON.stringify(chatMessages)); }, [chatMessages]);
-  useEffect(() => { localStorage.setItem(LS_MY_CONTRIBUTIONS_KEY, JSON.stringify(myContributions)); }, [myContributions]);
-  useEffect(() => { localStorage.setItem(LS_BULK_ORDERS_KEY, JSON.stringify(bulkOrders)); }, [bulkOrders]);
+        const messages = (chatRes.data?.messages || []).map((msg) => ({
+          id: msg._id || msg.id,
+          sender: msg.sender?.name || 'Member',
+          senderId: String(msg.sender?._id || ''),
+          message: msg.message || '',
+          timestamp: new Date(msg.createdAt || Date.now()).toLocaleString('en-IN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+          }),
+          avatar: (msg.sender?.name || 'M').charAt(0).toUpperCase()
+        }));
+
+        setChatMessages((prev) => ({
+          ...prev,
+          [selectedChatCommunity]: messages
+        }));
+      } catch {
+        showSnackbar('Could not load chat messages', 'error');
+      }
+    };
+
+    loadSelectedCommunityChat();
+  }, [selectedChatCommunity]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -201,113 +329,186 @@ const CustomerDashboard = () => {
     setSnackbar({ open: true, message, severity });
   };
 
-  const userName = user?.name || 'You';
+  const onProfileChange = (e) => {
+    const { name, value } = e.target;
+    setProfileForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleProfileUpdate = async () => {
+    if (!user?._id) {
+      showSnackbar('Unable to update profile', 'error');
+      return;
+    }
+
+    try {
+      const payload = {
+        name: profileForm.name,
+        email: profileForm.email,
+        phone: profileForm.phone,
+        city: profileForm.city,
+        address: profileForm.address
+      };
+
+      const res = await userAPI.update(user._id, payload);
+      const updatedUser = res?.data?.user;
+      if (updatedUser) {
+        updateUser(updatedUser);
+      }
+      showSnackbar('Profile updated successfully!', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to update profile', 'error');
+    }
+  };
+
+  const userName = profileForm.name || user?.name || 'You';
+
+  const mapCommunityFromApi = (community, currentUserId) => {
+    const joinedMember = community.members?.find((member) => String(member.user?._id || member.user) === String(currentUserId));
+
+    return {
+      id: String(community._id),
+      name: community.name,
+      members: community.members?.length || 0,
+      admin: community.admin?.name || 'Community Admin',
+      isAdmin: String(community.admin?._id || community.admin) === String(currentUserId),
+      discount: community.discount || 0,
+      joinedDate: joinedMember?.joinedDate
+        ? new Date(joinedMember.joinedDate).toISOString().split('T')[0]
+        : new Date(community.createdAt).toISOString().split('T')[0],
+      description: community.description || ''
+    };
+  };
+
+  const refreshCommunities = async (currentUserId) => {
+    const [myRes, allRes] = await Promise.all([
+      communityAPI.getMy(),
+      communityAPI.getAll()
+    ]);
+
+    const myList = myRes.success ? (myRes.data?.communities || []) : [];
+    const allList = allRes.success ? (allRes.data?.communities || []) : [];
+
+    const mappedMy = myList.map((community) => mapCommunityFromApi(community, currentUserId));
+    const myIdSet = new Set(mappedMy.map((community) => community.id));
+    const mappedAvailable = allList
+      .filter((community) => !myIdSet.has(String(community._id)))
+      .map((community) => mapCommunityFromApi(community, currentUserId));
+
+    setMyCommunities(mappedMy);
+    setAvailableCommunities(mappedAvailable);
+    await refreshCommunityPools(mappedMy, currentUserId);
+  };
 
   // ─── Cart Functions ─────────────────────────────────────────────────────────
-  const addToCart = (product) => {
-    setCart((prev) => {
-      const existing = prev.find((p) => p.id === product.id);
-      const discountedPrice = product.discount 
-        ? product.price - (product.price * product.discount / 100)
-        : product.price;
-      
-      if (existing) {
-        showSnackbar(`Increased quantity of ${product.name}`, 'info');
-        return prev.map((p) => (p.id === product.id ? { ...p, qty: p.qty + 1 } : p));
+  const addToCart = async (product) => {
+    const exists = cart.some((p) => String(p.id) === String(product.id));
+
+    try {
+      const cartRes = await cartAPI.addItem(product.id, 1);
+      if (!cartRes.success) {
+        showSnackbar('Unable to add item to cart', 'error');
+        return;
       }
-      showSnackbar(`${product.name} added to cart!`, 'success');
-      return [...prev, { ...product, finalPrice: discountedPrice, qty: 1 }];
-    });
+
+      syncCartFromResponse(cartRes);
+      showSnackbar(exists ? `Increased quantity of ${product.name}` : `${product.name} added to cart!`, exists ? 'info' : 'success');
+    } catch {
+      showSnackbar('Unable to add item to cart right now', 'error');
+    }
   };
 
-  const updateCartQuantity = (id, newQty) => {
-    if (newQty <= 0) { removeFromCart(id); return; }
-    setCart((prev) => prev.map((p) => (p.id === id ? { ...p, qty: newQty } : p)));
+  const updateCartQuantity = async (id, newQty) => {
+    if (newQty <= 0) {
+      await removeFromCart(id);
+      return;
+    }
+
+    try {
+      const cartRes = await cartAPI.updateItem(id, newQty);
+      if (!cartRes.success) {
+        showSnackbar('Unable to update cart quantity', 'error');
+        return;
+      }
+
+      syncCartFromResponse(cartRes);
+    } catch {
+      showSnackbar('Unable to update cart quantity right now', 'error');
+    }
   };
 
-  const removeFromCart = (id) => {
-    const item = cart.find(p => p.id === id);
-    setCart((prev) => prev.filter((p) => p.id !== id));
-    showSnackbar(`${item?.name} removed from cart`, 'info');
+  const removeFromCart = async (id) => {
+    const item = cart.find((p) => String(p.id) === String(id));
+
+    try {
+      const cartRes = await cartAPI.removeItem(id);
+      if (!cartRes.success) {
+        showSnackbar('Unable to remove item from cart', 'error');
+        return;
+      }
+
+      syncCartFromResponse(cartRes);
+      showSnackbar(`${item?.name || 'Item'} removed from cart`, 'info');
+    } catch {
+      showSnackbar('Unable to remove item from cart right now', 'error');
+    }
   };
 
   // ─── Submit Cart to Community Pool (replaces direct checkout) ───────────────
-  const handleSubmitToCommunity = () => {
+  const handleSubmitToCommunity = async () => {
     if (cart.length === 0) return;
     if (!selectedCommunityForCheckout) {
       showSnackbar('Please select a community to submit your order to', 'error');
       return;
     }
     
-    const communityId = parseInt(selectedCommunityForCheckout);
+    const communityId = selectedCommunityForCheckout;
     const community = myCommunities.find(c => c.id === communityId);
     if (!community) return;
 
-    const newPool = { ...communityPool };
-    if (!newPool[communityId]) newPool[communityId] = {};
+    try {
+      for (const item of cart) {
+        const product = products.find((p) => String(p.id) === String(item.id)) || item;
+        const qty = Number(item.qty || 1);
+        const amount = (item.finalPrice || item.price) * qty;
 
-    const newContributions = [];
-
-    cart.forEach(item => {
-      const productId = item.id;
-      const product = products.find(p => p.id === productId) || item;
-      const amount = (item.finalPrice || item.price) * item.qty;
-      
-      if (!newPool[communityId][productId]) {
-        newPool[communityId][productId] = {
-          product: product,
-          totalQty: 0,
-          minBulkQty: product.minOrderQuantity || 50,
-          contributions: [],
-          status: 'collecting',
-          assignedFarmer: ''
-        };
+        await communityAPI.contributeToCommunity(communityId, {
+          productId: item.id,
+          qty,
+          amount,
+          minBulkQty: product.minBulkQty || 50
+        });
       }
 
-      newPool[communityId][productId].totalQty += item.qty;
-      newPool[communityId][productId].contributions.push({
-        member: userName,
-        qty: item.qty,
-        date: new Date().toISOString().split('T')[0],
-        amount: amount
-      });
-
-      // Check if we reached minimum bulk
-      if (newPool[communityId][productId].totalQty >= newPool[communityId][productId].minBulkQty) {
-        newPool[communityId][productId].status = 'ready';
-      }
-
-      newContributions.push({
-        id: Date.now() + Math.random(),
-        communityId: communityId,
-        communityName: community.name,
-        productName: item.name,
-        qty: item.qty,
-        amount: amount,
-        date: new Date().toISOString().split('T')[0],
-        poolStatus: newPool[communityId][productId].status
-      });
-    });
-
-    setCommunityPool(newPool);
-    setMyContributions(prev => [...prev, ...newContributions]);
-    setCart([]);
-    setSelectedCommunityForCheckout('');
-    showSnackbar(`Order submitted to ${community.name}! Payment of ₹${total.toFixed(0)} added to community fund.`, 'success');
-    setActiveSection('community-orders');
+      await cartAPI.clear();
+      setCart([]);
+      setSelectedCommunityForCheckout('');
+      await refreshCommunityPools(myCommunities, user?._id || user?.id);
+      showSnackbar(`Order submitted to ${community.name}! Payment of ₹${total.toFixed(0)} added to community fund.`, 'success');
+      setActiveSection('community-orders');
+    } catch {
+      showSnackbar('Could not submit order to community right now', 'error');
+    }
   };
 
   // ─── Wishlist ───────────────────────────────────────────────────────────────
-  const toggleWishlist = (product) => {
-    setWishlist((prev) => {
-      const exists = prev.find((p) => p.id === product.id);
-      if (exists) {
-        showSnackbar(`${product.name} removed from wishlist`, 'info');
-        return prev.filter((p) => p.id !== product.id);
+  const toggleWishlist = async (product) => {
+    const exists = wishlist.some((p) => String(p.id) === String(product.id));
+
+    try {
+      const wishlistRes = exists
+        ? await wishlistAPI.removeItem(product.id)
+        : await wishlistAPI.addItem(product.id);
+
+      if (!wishlistRes.success) {
+        showSnackbar('Unable to update wishlist', 'error');
+        return;
       }
-      showSnackbar(`${product.name} added to wishlist!`, 'success');
-      return [...prev, product];
-    });
+
+      syncWishlistFromResponse(wishlistRes);
+      showSnackbar(exists ? `${product.name} removed from wishlist` : `${product.name} added to wishlist!`, exists ? 'info' : 'success');
+    } catch {
+      showSnackbar('Unable to update wishlist right now', 'error');
+    }
   };
 
   const isInWishlist = (productId) => wishlist.some((p) => p.id === productId);
@@ -325,112 +526,83 @@ const CustomerDashboard = () => {
   const savings = cart.reduce((sum, p) => sum + (p.discount || 0) * p.qty * p.price / 100, 0);
 
   // ─── Community Functions ────────────────────────────────────────────────────
-  const createCommunity = (e) => {
+  const createCommunity = async (e) => {
     e.preventDefault();
-    if (!createCommunityForm.name || !createCommunityForm.description) {
-      showSnackbar('Please fill all fields', 'error');
+    if (!createCommunityForm.name.trim() || !createCommunityForm.description.trim()) {
+      showSnackbar('Please enter both name and description', 'error');
       return;
     }
-    const newCommunity = {
-      id: Date.now(),
-      name: createCommunityForm.name,
-      members: 1,
-      admin: userName,
-      isAdmin: true,
-      discount: 15,
-      joinedDate: new Date().toISOString().split('T')[0],
-      description: createCommunityForm.description
-    };
-    setMyCommunities([...myCommunities, newCommunity]);
-    setCreateCommunityForm({ name: '', description: '' });
-    showSnackbar('Community created successfully! You are the admin.', 'success');
-    updateUser?.({ isCommunityAdmin: true });
-  };
 
-  const joinCommunity = (community) => {
-    const joined = {
-      ...community,
-      isAdmin: false,
-      joinedDate: new Date().toISOString().split('T')[0]
-    };
-    setMyCommunities([...myCommunities, joined]);
-    setAvailableCommunities(availableCommunities.filter(c => c.id !== community.id));
-    showSnackbar(`Joined ${community.name}! Enjoy ${community.discount}% discount on group orders.`, 'success');
-  };
+    try {
+      const createRes = await communityAPI.create({
+        name: createCommunityForm.name.trim(),
+        description: createCommunityForm.description.trim()
+      });
 
-  // ─── Admin: Assign Farmer ──────────────────────────────────────────────────
-  const assignFarmer = () => {
-    if (!selectedFarmer || !farmerDialog.communityId || !farmerDialog.productId) return;
-    const newPool = { ...communityPool };
-    const poolItem = newPool[farmerDialog.communityId]?.[farmerDialog.productId];
-    if (poolItem) {
-      poolItem.assignedFarmer = selectedFarmer;
+      if (!createRes.success) {
+        showSnackbar(createRes.message || 'Could not create community', 'error');
+        return;
+      }
+
+      await refreshCommunities(user?._id);
+      setCreateCommunityForm({ name: '', description: '' });
+      showSnackbar('Community created successfully', 'success');
+    } catch (error) {
+      showSnackbar('Could not create community right now', 'error');
     }
-    setCommunityPool(newPool);
-    setFarmerDialog({ open: false, communityId: null, productId: null });
-    setSelectedFarmer('');
-    showSnackbar(`Farmer "${selectedFarmer}" assigned successfully!`, 'success');
   };
 
-  // ─── Admin: Place Bulk Order to Farmer ─────────────────────────────────────
-  const placeBulkOrder = (communityId, productId) => {
-    const poolItem = communityPool[communityId]?.[productId];
-    if (!poolItem) return;
-    
-    const community = myCommunities.find(c => c.id === parseInt(communityId));
-    const totalAmount = poolItem.contributions.reduce((s, c) => s + c.amount, 0);
+  const joinCommunity = async (community) => {
+    try {
+      const joinRes = await communityAPI.join(community.id);
+      if (!joinRes.success) {
+        showSnackbar(joinRes.message || 'Unable to join community', 'error');
+        return;
+      }
 
-    const newOrder = {
-      id: Date.now(),
-      communityId: parseInt(communityId),
-      communityName: community?.name || 'Unknown',
-      productId: parseInt(productId),
-      productName: poolItem.product.name,
-      farmer: poolItem.assignedFarmer || poolItem.product.farmer,
-      totalQty: poolItem.totalQty,
-      amount: totalAmount,
-      status: 'Ordered',
-      orderedDate: new Date().toISOString().split('T')[0],
-      allocations: poolItem.contributions.map(c => ({ member: c.member, qty: c.qty }))
-    };
-
-    setBulkOrders(prev => [...prev, newOrder]);
-
-    // Update pool status
-    const newPool = { ...communityPool };
-    newPool[communityId][productId].status = 'ordered';
-    setCommunityPool(newPool);
-
-    showSnackbar(`Bulk order placed to farmer "${newOrder.farmer}" for ${poolItem.totalQty} ${poolItem.product.unit} of ${poolItem.product.name}!`, 'success');
-  };
-
-  // ─── Admin: Mark as Delivered & Allocate ───────────────────────────────────
-  const markDelivered = (orderId) => {
-    setBulkOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Delivered' } : o));
-    showSnackbar('Order marked as delivered! You can now allocate to members.', 'success');
-  };
-
-  const markAllocated = (orderId) => {
-    setBulkOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Allocated' } : o));
-    showSnackbar('Products allocated to community members!', 'success');
+      await refreshCommunities(user?._id);
+      showSnackbar(`Joined ${community.name}! Enjoy ${community.discount}% discount on group orders.`, 'success');
+    } catch (error) {
+      showSnackbar('Unable to join community right now', 'error');
+    }
   };
 
   // ─── Chat Functions ─────────────────────────────────────────────────────────
-  const sendChatMessage = () => {
+  const sendChatMessage = async () => {
     if (!chatInput.trim() || !selectedChatCommunity) return;
-    const communityId = parseInt(selectedChatCommunity);
-    const newMessage = {
-      id: Date.now(),
-      sender: userName,
-      message: chatInput.trim(),
-      timestamp: new Date().toLocaleString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
-      avatar: userName.charAt(0).toUpperCase()
-    };
-    setChatMessages(prev => ({
-      ...prev,
-      [communityId]: [...(prev[communityId] || []), newMessage]
-    }));
-    setChatInput('');
+    const communityId = selectedChatCommunity;
+
+    try {
+      const chatRes = await communityAPI.sendChatMessage(communityId, chatInput.trim());
+      if (!chatRes.success) {
+        showSnackbar('Unable to send message', 'error');
+        return;
+      }
+
+      const msg = chatRes.data?.message;
+      const mappedMessage = {
+        id: msg?._id || Date.now(),
+        sender: msg?.sender?.name || userName,
+        senderId: String(msg?.sender?._id || user?._id || user?.id || ''),
+        message: msg?.message || chatInput.trim(),
+        timestamp: new Date(msg?.createdAt || Date.now()).toLocaleString('en-IN', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        }),
+        avatar: (msg?.sender?.name || userName).charAt(0).toUpperCase()
+      };
+
+      setChatMessages((prev) => ({
+        ...prev,
+        [communityId]: [...(prev[communityId] || []), mappedMessage]
+      }));
+      setChatInput('');
+    } catch {
+      showSnackbar('Unable to send message right now', 'error');
+    }
   };
 
   // ─── Get pool stats for a community ────────────────────────────────────────
@@ -468,8 +640,9 @@ const CustomerDashboard = () => {
     }
 
     orders.forEach(order => {
-      const orderDate = new Date(order.date);
-      const dayIndex = last7Days.findIndex(d => 
+      const orderDate = new Date(order.createdAt || order.date);
+      if (Number.isNaN(orderDate.getTime())) return;
+      const dayIndex = last7Days.findIndex(d =>
         d.date === orderDate.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })
       );
       if (dayIndex >= 0) {
@@ -514,6 +687,19 @@ const CustomerDashboard = () => {
     }));
     setOrderStatusData(statusData);
   };
+
+  useEffect(() => {
+    const communityMap = {};
+    myContributions.forEach((contrib) => {
+      const key = contrib.communityName || 'Community';
+      communityMap[key] = (communityMap[key] || 0) + Number(contrib.amount || 0);
+    });
+    const data = Object.entries(communityMap).map(([name, totalAmount]) => ({
+      name,
+      totalAmount: Math.round(totalAmount)
+    }));
+    setCommunityContributions(data);
+  }, [myContributions]);
 
   // ─── Sidebar Menu ──────────────────────────────────────────────────────────
   const menuItems = [
@@ -884,7 +1070,7 @@ const CustomerDashboard = () => {
                             <Stack direction="row" justifyContent="space-between">
                               <Typography variant="body2" color="info.main">Community Bulk Discount</Typography>
                               <Typography variant="body2" color="info.main" fontWeight="600">
-                                Up to {myCommunities.find(c => c.id === parseInt(selectedCommunityForCheckout))?.discount || 0}% extra
+                                Up to {myCommunities.find(c => c.id === selectedCommunityForCheckout)?.discount || 0}% extra
                               </Typography>
                             </Stack>
                           )}
@@ -980,19 +1166,18 @@ const CustomerDashboard = () => {
                                 <Grid item xs={12} md={3}>
                                   {community.isAdmin && (
                                     <Stack spacing={1}>
-                                      {poolItem.status !== 'ordered' && (
-                                        <Button size="small" variant="outlined" startIcon={<Agriculture />}
-                                          onClick={() => { setFarmerDialog({ open: true, communityId: community.id, productId: parseInt(productId) }); }}
-                                        >
-                                          {poolItem.assignedFarmer ? 'Change Farmer' : 'Assign Farmer'}
-                                        </Button>
-                                      )}
+                                      <Button
+                                        size="small"
+                                        variant="contained"
+                                        color="success"
+                                        onClick={() => navigate('/dashboard/community')}
+                                      >
+                                        Manage in Community Dashboard
+                                      </Button>
                                       {isReady && poolItem.status !== 'ordered' && (
-                                        <Button size="small" variant="contained" color="success" startIcon={<LocalGroceryStore />}
-                                          onClick={() => placeBulkOrder(community.id, productId)}
-                                        >
-                                          Place Bulk Order
-                                        </Button>
+                                        <Typography variant="caption" color="success.main">
+                                          Bulk minimum reached. Use community dashboard to place supplier order.
+                                        </Typography>
                                       )}
                                     </Stack>
                                   )}
@@ -1026,82 +1211,11 @@ const CustomerDashboard = () => {
                   </Paper>
                 )}
 
-                {/* Admin Bulk Orders Placed */}
-                {bulkOrders.length > 0 && (
-                  <Paper sx={{ p: 3, mt: 3 }}>
-                    <Typography variant="h6" fontWeight="bold" gutterBottom>
-                      <LocalShipping sx={{ verticalAlign: 'middle', mr: 1 }} /> Bulk Orders Placed by Admin
-                    </Typography>
-                    <Divider sx={{ my: 2 }} />
-                    <TableContainer>
-                      <Table>
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Product</TableCell>
-                            <TableCell>Community</TableCell>
-                            <TableCell>Farmer</TableCell>
-                            <TableCell>Quantity</TableCell>
-                            <TableCell>Amount</TableCell>
-                            <TableCell>Status</TableCell>
-                            <TableCell>Actions</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {bulkOrders.map((order) => (
-                            <TableRow key={order.id}>
-                              <TableCell><Typography fontWeight="600">{order.productName}</Typography></TableCell>
-                              <TableCell>{order.communityName}</TableCell>
-                              <TableCell><Chip avatar={<Avatar><Agriculture /></Avatar>} label={order.farmer} size="small" /></TableCell>
-                              <TableCell>{order.totalQty}</TableCell>
-                              <TableCell><Typography fontWeight="bold" color="success.main">₹{order.amount.toFixed(0)}</Typography></TableCell>
-                              <TableCell>
-                                <Chip label={order.status} size="small"
-                                  color={order.status === 'Ordered' ? 'info' : order.status === 'Delivered' ? 'success' : order.status === 'Allocated' ? 'primary' : 'default'}
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Stack direction="row" spacing={1}>
-                                  {order.status === 'Ordered' && myCommunities.find(c => c.id === order.communityId)?.isAdmin && (
-                                    <Button size="small" variant="outlined" color="success" onClick={() => markDelivered(order.id)}>
-                                      Mark Delivered
-                                    </Button>
-                                  )}
-                                  {order.status === 'Delivered' && myCommunities.find(c => c.id === order.communityId)?.isAdmin && (
-                                    <Button size="small" variant="contained" onClick={() => markAllocated(order.id)}>
-                                      Allocate to Members
-                                    </Button>
-                                  )}
-                                  {order.status === 'Allocated' && (
-                                    <Typography variant="caption" color="success.main">✅ Distributed</Typography>
-                                  )}
-                                </Stack>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-
-                    {/* Allocation Details */}
-                    {bulkOrders.filter(o => o.allocations && o.allocations.length > 0).length > 0 && (
-                      <Box sx={{ mt: 3 }}>
-                        <Typography variant="subtitle2" fontWeight="bold" gutterBottom>Member Allocations:</Typography>
-                        {bulkOrders.map((order) => (
-                          <Box key={order.id} sx={{ mb: 2 }}>
-                            <Typography variant="body2" color="text.secondary">{order.productName} — {order.communityName}:</Typography>
-                            <Stack direction="row" spacing={1} sx={{ mt: 0.5, flexWrap: 'wrap', gap: 0.5 }}>
-                              {order.allocations.map((a, idx) => (
-                                <Chip key={idx} avatar={<Avatar>{a.member.charAt(0)}</Avatar>} label={`${a.member}: ${a.qty} units`} size="small" variant="outlined"
-                                  color={order.status === 'Allocated' ? 'success' : 'default'}
-                                />
-                              ))}
-                            </Stack>
-                          </Box>
-                        ))}
-                      </Box>
-                    )}
-                  </Paper>
-                )}
+                <Paper sx={{ p: 2.5, mt: 2.5 }}>
+                  <Alert severity="info">
+                    Community admin actions (assigning suppliers, placing pooled orders, and allocation) now run only in the dedicated community dashboard for server-consistent state.
+                  </Alert>
+                </Paper>
               </Box>
             )}
 
@@ -1289,10 +1403,10 @@ const CustomerDashboard = () => {
                         {/* Chat Header */}
                         <Box sx={{ p: 2, bgcolor: 'primary.main', color: 'white', borderRadius: '4px 4px 0 0' }}>
                           <Typography variant="h6" fontWeight="bold">
-                            {myCommunities.find(c => c.id === parseInt(selectedChatCommunity))?.name || 'Chat'}
+                            {myCommunities.find(c => c.id === selectedChatCommunity)?.name || 'Chat'}
                           </Typography>
                           <Typography variant="caption">
-                            {myCommunities.find(c => c.id === parseInt(selectedChatCommunity))?.members || 0} members
+                            {myCommunities.find(c => c.id === selectedChatCommunity)?.members || 0} members
                           </Typography>
                         </Box>
 
@@ -1504,24 +1618,24 @@ const CustomerDashboard = () => {
                     <Divider sx={{ my: 2 }} />
                     <Grid container spacing={3}>
                       <Grid item xs={12} sm={6}>
-                        <TextField fullWidth label="Full Name" defaultValue={userName} />
+                        <TextField fullWidth label="Full Name" name="name" value={profileForm.name} onChange={onProfileChange} />
                       </Grid>
                       <Grid item xs={12} sm={6}>
-                        <TextField fullWidth label="Email" type="email" defaultValue={user?.email || 'john.doe@example.com'} />
+                        <TextField fullWidth label="Email" type="email" name="email" value={profileForm.email} onChange={onProfileChange} />
                       </Grid>
                       <Grid item xs={12} sm={6}>
-                        <TextField fullWidth label="Phone" defaultValue="+91 9876543210" />
+                        <TextField fullWidth label="Phone" name="phone" value={profileForm.phone} onChange={onProfileChange} />
                       </Grid>
                       <Grid item xs={12} sm={6}>
-                        <TextField fullWidth label="City" defaultValue="Mumbai" />
+                        <TextField fullWidth label="City" name="city" value={profileForm.city} onChange={onProfileChange} />
                       </Grid>
                       <Grid item xs={12}>
-                        <TextField fullWidth label="Delivery Address" multiline rows={3}
-                          defaultValue="123 Main Street, Apartment 4B, Downtown Area, Mumbai, Maharashtra - 400001" />
+                        <TextField fullWidth label="Delivery Address" name="address" multiline rows={3}
+                          value={profileForm.address} onChange={onProfileChange} />
                       </Grid>
                       <Grid item xs={12}>
                         <Stack direction="row" spacing={2}>
-                          <Button variant="contained" size="large" onClick={() => showSnackbar('Profile updated successfully!', 'success')}>Update Profile</Button>
+                          <Button variant="contained" size="large" onClick={handleProfileUpdate}>Update Profile</Button>
                           <Button variant="outlined" size="large" onClick={() => showSnackbar('Change password feature coming soon', 'info')}>Change Password</Button>
                         </Stack>
                       </Grid>
@@ -1654,6 +1768,34 @@ const CustomerDashboard = () => {
                     </Card>
                   </Grid>
 
+                  {/* Community Contributions Chart */}
+                  <Grid item xs={12} lg={6}>
+                    <Card>
+                      <CardContent>
+                        <Typography variant="h6" fontWeight="bold" gutterBottom>
+                          <BarChartIcon sx={{ verticalAlign: 'middle', mr: 1, fontSize: 20 }} />
+                          Contributions by Community
+                        </Typography>
+                        {communityContributions.length > 0 ? (
+                          <ResponsiveContainer width="100%" height={300}>
+                            <BarChart data={communityContributions}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <XAxis dataKey="name" stroke="#666" />
+                              <YAxis stroke="#666" />
+                              <Tooltip formatter={(value) => `₹${value}`} />
+                              <Legend />
+                              <Bar dataKey="totalAmount" name="Contributed" fill="#26a69a" radius={[8, 8, 0, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        ) : (
+                          <Typography color="text.secondary" sx={{ textAlign: 'center', py: 8 }}>
+                            No contribution data yet.
+                          </Typography>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </Grid>
+
                   {/* Order Statistics */}
                   <Grid item xs={12} lg={6}>
                     <Card>
@@ -1702,34 +1844,6 @@ const CustomerDashboard = () => {
           </Container>
         </Box>
       </Box>
-
-      {/* ─── Farmer Assignment Dialog ──────────────────────────────────────── */}
-      <Dialog open={farmerDialog.open} onClose={() => setFarmerDialog({ open: false, communityId: null, productId: null })} maxWidth="sm" fullWidth>
-        <DialogTitle>Assign Farmer</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Select a farmer to fulfill this bulk order. The admin will place the order on behalf of the community.
-          </Typography>
-          <TextField select fullWidth label="Select Farmer" value={selectedFarmer} onChange={(e) => setSelectedFarmer(e.target.value)} sx={{ mt: 1 }}>
-            {products.length === 0 ? (
-              <MenuItem disabled>No farmers available</MenuItem>
-            ) : (
-              [...new Set(products.map(p => p.farmer))].map((farmer) => (
-                <MenuItem key={farmer} value={farmer}>
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <Avatar sx={{ width: 24, height: 24, bgcolor: 'success.main', fontSize: 12 }}><Agriculture sx={{ fontSize: 14 }} /></Avatar>
-                    <Typography>{farmer}</Typography>
-                  </Stack>
-                </MenuItem>
-              ))
-            )}
-          </TextField>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setFarmerDialog({ open: false, communityId: null, productId: null })}>Cancel</Button>
-          <Button variant="contained" onClick={assignFarmer} disabled={!selectedFarmer}>Assign</Button>
-        </DialogActions>
-      </Dialog>
 
       {/* ─── Snackbar ─────────────────────────────────────────────────────── */}
       <Snackbar open={snackbar.open} autoHideDuration={3000}

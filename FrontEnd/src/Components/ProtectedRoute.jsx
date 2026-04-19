@@ -1,6 +1,7 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Loader from './common/Loader';
+import { hasAnyAllowedRole } from '../utils/roleRouting';
 
 /**
  * Protected Route Component
@@ -26,8 +27,7 @@ const ProtectedRoute = ({ children, allowedRoles = [] }) => {
 
   // Check if user has any of the allowed roles
   if (allowedRoles.length > 0) {
-    // User.roles is an array, check if any role matches
-    const hasAllowedRole = user.roles?.some(role => allowedRoles.includes(role));
+    const hasAllowedRole = hasAnyAllowedRole(user, allowedRoles);
     
     if (!hasAllowedRole) {
       // Redirect to unauthorized page

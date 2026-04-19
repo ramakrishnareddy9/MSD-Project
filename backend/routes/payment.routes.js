@@ -24,7 +24,13 @@ router.get('/', authenticate, async (req, res) => {
       query.orderId = { $in: orderIds };
     }
     
-    if (orderId) query.orderId = orderId;
+    if (orderId) {
+      if (query.orderId && query.orderId.$in) {
+        query.orderId = { $in: query.orderId.$in.filter((id) => String(id) === String(orderId)) };
+      } else {
+        query.orderId = orderId;
+      }
+    }
     if (status) query.status = status;
     if (method) query.method = method;
 
@@ -43,6 +49,55 @@ router.get('/', authenticate, async (req, res) => {
         totalPages: Math.ceil(count / limit),
         currentPage: page,
         total: count
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// Get payment statistics (admin only)
+router.get('/stats/overview', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    const matchStage = {};
+    if (startDate || endDate) {
+      matchStage.createdAt = {};
+      if (startDate) matchStage.createdAt.$gte = new Date(startDate);
+      if (endDate) matchStage.createdAt.$lte = new Date(endDate);
+    }
+
+    const stats = await Payment.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$amount' }
+        }
+      }
+    ]);
+
+    const methodStats = await Payment.aggregate([
+      { $match: { status: 'success', ...matchStage } },
+      {
+        $group: {
+          _id: '$method',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$amount' }
+        }
+      }
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        byStatus: stats,
+        byMethod: methodStats
       }
     });
   } catch (error) {
@@ -241,55 +296,6 @@ router.post('/:id/refund', authenticate, authorize('admin'), validateObjectId('i
       success: true,
       message: 'Refund processed successfully',
       data: { payment }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-});
-
-// Get payment statistics (admin only)
-router.get('/stats/overview', authenticate, authorize('admin'), async (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-    
-    const matchStage = {};
-    if (startDate || endDate) {
-      matchStage.createdAt = {};
-      if (startDate) matchStage.createdAt.$gte = new Date(startDate);
-      if (endDate) matchStage.createdAt.$lte = new Date(endDate);
-    }
-
-    const stats = await Payment.aggregate([
-      { $match: matchStage },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 },
-          totalAmount: { $sum: '$amount' }
-        }
-      }
-    ]);
-
-    const methodStats = await Payment.aggregate([
-      { $match: { status: 'success', ...matchStage } },
-      {
-        $group: {
-          _id: '$method',
-          count: { $sum: 1 },
-          totalAmount: { $sum: '$amount' }
-        }
-      }
-    ]);
-
-    res.json({
-      success: true,
-      data: {
-        byStatus: stats,
-        byMethod: methodStats
-      }
     });
   } catch (error) {
     res.status(500).json({

@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { authAPI } from '../services/api';
+import { getPrimaryRole } from '../utils/roleRouting';
 
 const AuthContext = createContext();
 
@@ -36,10 +37,15 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authAPI.getCurrentUser();
       if (response.success) {
-        setUser(prev => ({ ...prev, ...response.data.user, token }));
+        const nextUser = {
+          ...(response.data.user || {}),
+          token,
+          role: getPrimaryRole(response.data.user)
+        };
+        setUser((prev) => ({ ...(prev || {}), ...nextUser }));
       }
     } catch (error) {
-      if (process.env.NODE_ENV === 'development') {
+      if (process.env.NODE_ENV === 'development' && error?.status !== 401) {
         console.error('Token verification failed:', error);
       }
       logout();
@@ -54,7 +60,7 @@ export const AuthProvider = ({ children }) => {
         const userData = {
           ...response.data.user,
           token: response.data.token,
-          role: response.data.user.roles[0]
+          role: getPrimaryRole(response.data.user)
         };
         
         setUser(userData);
@@ -65,7 +71,13 @@ export const AuthProvider = ({ children }) => {
       return { success: false, error: response.message || 'Login failed' };
     } catch (error) {
       console.error('API Login error', error);
-      return { success: false, error: error.message || 'Invalid email or password. Please check your credentials.' };
+      const validationMessage = Array.isArray(error?.details) && error.details.length > 0
+        ? error.details[0]?.message
+        : null;
+      return {
+        success: false,
+        error: validationMessage || error.message || 'Invalid email or password. Please check your credentials.'
+      };
     }
   };
 
@@ -77,7 +89,7 @@ export const AuthProvider = ({ children }) => {
         const newUser = {
           ...response.data.user,
           token: response.data.token,
-          role: response.data.user.roles[0]
+          role: getPrimaryRole(response.data.user)
         };
         
         setUser(newUser);
@@ -88,7 +100,10 @@ export const AuthProvider = ({ children }) => {
       return { success: false, error: response.message || 'Registration failed' };
     } catch (error) {
       console.error('API Registration error', error);
-      return { success: false, error: error.message || 'Registration failed.' };
+      const validationMessage = Array.isArray(error?.details) && error.details.length > 0
+        ? error.details[0]?.message
+        : null;
+      return { success: false, error: validationMessage || error.message || 'Registration failed.' };
     }
   };
 

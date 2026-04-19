@@ -103,8 +103,8 @@ commissionSchema.index({ 'settlement.cycleId': 1 });
 commissionSchema.index({ createdAt: -1 });
 commissionSchema.index({ status: 1, 'settlement.scheduledDate': 1 });
 
-// Calculate seller payout
-commissionSchema.pre('save', function(next) {
+// Calculate seller payout before validation so required constraint passes.
+commissionSchema.pre('validate', function(next) {
   if (this.isModified('orderAmount') || this.isModified('commissionAmount')) {
     this.sellerPayout = this.orderAmount - this.commissionAmount;
   }

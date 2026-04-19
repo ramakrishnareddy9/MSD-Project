@@ -1,5 +1,4 @@
 import express from 'express';
-import mongoose from 'mongoose';
 import Order from '../models/Order.model.js';
 import Product from '../models/Product.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
@@ -17,8 +16,15 @@ router.get('/', authenticate, async (req, res) => {
     const { buyerId, sellerId, type, status, page = 1, limit = 20 } = req.query;
     
     const query = {};
-    if (buyerId) query.buyerId = buyerId;
-    if (sellerId) query.sellerId = sellerId;
+    const isAdmin = req.user.roles?.includes('admin');
+
+    if (isAdmin) {
+      if (buyerId) query.buyerId = buyerId;
+      if (sellerId) query.sellerId = sellerId;
+    } else {
+      // Non-admin users can only see orders where they are buyer or seller.
+      query.$or = [{ buyerId: req.user._id }, { sellerId: req.user._id }];
+    }
     if (type) query.type = type;
     if (status) query.status = status;
 
@@ -77,34 +83,58 @@ router.get('/:id', authenticate, validateObjectId('id'), async (req, res) => {
 });
 
 // Create order with proper B2B pricing, inventory reservation, and commission tracking
-router.post('/', authenticate, validateOrder, async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+router.post('/', authenticate, (req, res, next) => {
+  req.body.buyerId = req.user._id;
+  next();
+}, validateOrder, async (req, res) => {
+  let session = null;
+  const useTransaction = false;
   
   try {
-    const { type, buyerId, sellerId, orderItems, deliveryAddress } = req.body;
+    const { type, sellerId, orderItems, deliveryAddress } = req.body;
+    const buyerId = req.user._id;
+    let resolvedSellerId = sellerId || null;
+    let resolvedPriceAgreementId = null;
     let subtotal = 0;
     const processedItems = [];
     
     // Process each order item
     for (const item of orderItems) {
-      const product = await Product.findById(item.productId).session(session);
+      const productQuery = Product.findById(item.productId);
+      if (useTransaction) {
+        productQuery.session(session);
+      }
+      const product = await productQuery;
       if (!product || product.status !== 'active') {
         throw new Error(`Product ${item.productId} is not available`);
+      }
+
+      if (!resolvedSellerId) {
+        resolvedSellerId = product.ownerId;
+      }
+
+      // Keep order relations coherent: all items in one order must belong to the same seller.
+      if (String(product.ownerId) !== String(resolvedSellerId)) {
+        throw new Error('All order items must belong to the same seller');
       }
       
       // Check for B2B price agreement
       let unitPrice = product.basePrice;
-      let priceAgreementId = null;
       
       if (type === 'b2b') {
-        const agreement = await PriceAgreement.findOne({
+        const agreementQuery = PriceAgreement.findOne({
           buyerId,
           farmerId: product.ownerId,
           productId: item.productId,
           status: 'active',
           validUntil: { $gt: new Date() }
-        }).session(session);
+        });
+
+        if (useTransaction) {
+          agreementQuery.session(session);
+        }
+
+        const agreement = await agreementQuery;
         
         if (agreement) {
           // Apply tiered pricing based on quantity
@@ -115,16 +145,24 @@ router.post('/', authenticate, validateOrder, async (req, res) => {
           
           if (tier) {
             unitPrice = tier.pricePerUnit;
-            priceAgreementId = agreement._id;
+            if (!resolvedPriceAgreementId) {
+              resolvedPriceAgreementId = agreement._id;
+            }
           }
         }
       }
       
       // Reserve inventory with timeout
-      const inventory = await InventoryLot.findOne({
+      const inventoryQuery = InventoryLot.findOne({
         productId: product._id,
         $expr: { $gte: [{ $subtract: ['$quantity', '$reservedQuantity'] }, item.quantity] }
-      }).session(session);
+      });
+
+      if (useTransaction) {
+        inventoryQuery.session(session);
+      }
+
+      const inventory = await inventoryQuery;
       
       if (!inventory) {
         throw new Error(`Insufficient inventory for ${product.name}`);
@@ -166,7 +204,7 @@ router.post('/', authenticate, validateOrder, async (req, res) => {
     const order = new Order({
       type,
       buyerId,
-      sellerId,
+      sellerId: resolvedSellerId,
       orderItems: processedItems,
       subtotal,
       deliveryFee,
@@ -174,7 +212,7 @@ router.post('/', authenticate, validateOrder, async (req, res) => {
       total,
       currency: 'INR',
       deliveryAddress,
-      priceAgreementId,
+      priceAgreementId: resolvedPriceAgreementId,
       paymentTerms: type === 'b2b' ? 'net_15' : 'prepaid',
       commission: {
         rate: commissionRate,
@@ -190,10 +228,22 @@ router.post('/', authenticate, validateOrder, async (req, res) => {
       }]
     });
     
-    await order.save({ session });
+    if (useTransaction) {
+      await order.save({ session });
+    } else {
+      await order.save();
+    }
     
     // Update inventory reservations with order ID
     for (const item of processedItems) {
+      const updateOptions = {
+        arrayFilters: [{ 'elem.status': 'active', 'elem.orderId': null }]
+      };
+
+      if (useTransaction) {
+        updateOptions.session = session;
+      }
+
       await InventoryLot.findByIdAndUpdate(
         item.lotId,
         {
@@ -201,10 +251,7 @@ router.post('/', authenticate, validateOrder, async (req, res) => {
             'reservations.$[elem].orderId': order._id
           }
         },
-        {
-          arrayFilters: [{ 'elem.status': 'active', 'elem.orderId': null }],
-          session
-        }
+        updateOptions
       );
     }
     
@@ -212,7 +259,7 @@ router.post('/', authenticate, validateOrder, async (req, res) => {
     const commission = new Commission({
       orderId: order._id,
       orderNumber: order.orderNumber,
-      sellerId,
+      sellerId: resolvedSellerId,
       sellerType: 'farmer',
       orderAmount: subtotal,
       commissionRate,
@@ -222,14 +269,20 @@ router.post('/', authenticate, validateOrder, async (req, res) => {
         orderType: type,
         productCount: processedItems.length,
         deliveryFee,
-        region: deliveryAddress.state
+        region: deliveryAddress?.state
       }
     });
     
-    await commission.save({ session });
+    if (useTransaction) {
+      await commission.save({ session });
+    } else {
+      await commission.save();
+    }
     
     // Commit transaction
-    await session.commitTransaction();
+    if (useTransaction) {
+      await session.commitTransaction();
+    }
     
     res.status(201).json({
       success: true,
@@ -243,18 +296,22 @@ router.post('/', authenticate, validateOrder, async (req, res) => {
       }
     });
   } catch (error) {
-    await session.abortTransaction();
+    if (useTransaction) {
+      await session.abortTransaction();
+    }
     res.status(500).json({
       success: false,
       message: error.message
     });
   } finally {
-    session.endSession();
+    if (session) {
+      session.endSession();
+    }
   }
 });
 
 // Update order status (farmer, delivery, admin only)
-router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'admin'), validateObjectId('id'), async (req, res) => {
+router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'delivery_large', 'delivery_small', 'admin'), validateObjectId('id'), async (req, res) => {
   try {
     const { status } = req.body;
     

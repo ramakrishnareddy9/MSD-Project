@@ -66,7 +66,7 @@ function App() {
           <Route
             path="/business"
             element={
-              <ProtectedRoute allowedRoles={["business"]}>
+              <ProtectedRoute allowedRoles={["business", "travel_agency"]}>
                 <BusinessDashboard />
               </ProtectedRoute>
             }
@@ -140,7 +140,7 @@ function App() {
           <Route
             path="/dashboard/business"
             element={
-              <ProtectedRoute allowedRoles={["business"]}>
+              <ProtectedRoute allowedRoles={["business", "travel_agency"]}>
                 <BusinessDashboard />
               </ProtectedRoute>
             }

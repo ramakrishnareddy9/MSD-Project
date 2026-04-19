@@ -37,10 +37,19 @@ const apiCall = async (endpoint, options = {}) => {
 
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
-    const data = await response.json();
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
 
     if (!response.ok) {
-      throw new Error(data.message || 'API request failed');
+      const error = new Error(data?.message || 'API request failed');
+      error.status = response.status;
+      error.endpoint = endpoint;
+      error.details = data?.errors || [];
+      throw error;
     }
 
     return data;
@@ -101,6 +110,10 @@ export const productAPI = {
   getAll: async (params = {}) => {
     const query = new URLSearchParams(params).toString();
     return apiCall(`/products?${query}`);
+  },
+
+  getCropCatalog: async () => {
+    return apiCall('/products/crops/catalog');
   },
 
   getById: async (id) => {
@@ -444,6 +457,37 @@ export const recurringOrderAPI = {
   }
 };
 
+// ===== MARKETPLACE REQUEST API =====
+export const marketplaceRequestAPI = {
+  create: async (requestData) => {
+    return apiCall('/marketplace-requests', {
+      method: 'POST',
+      body: JSON.stringify(requestData)
+    });
+  },
+
+  getMyRequests: async (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/marketplace-requests?${query}`);
+  },
+
+  getOpenForFarmer: async (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/marketplace-requests/open-for-farmer?${query}`);
+  },
+
+  getFarmerAccepted: async () => {
+    return apiCall('/marketplace-requests/farmer/accepted');
+  },
+
+  respond: async (id, responseData) => {
+    return apiCall(`/marketplace-requests/${id}/respond`, {
+      method: 'PATCH',
+      body: JSON.stringify(responseData)
+    });
+  }
+};
+
 // ===== DELIVERY API =====
 export const deliveryAPI = {
   // Shipment methods (long-haul)
@@ -562,6 +606,13 @@ export const commissionAPI = {
 
 // ===== COMMUNITY API =====
 export const communityAPI = {
+  create: async (communityData) => {
+    return apiCall('/communities', {
+      method: 'POST',
+      body: JSON.stringify(communityData)
+    });
+  },
+
   getAll: async () => {
     return apiCall(`/communities`);
   },
@@ -578,6 +629,13 @@ export const communityAPI = {
 
   getPools: async (id) => {
     return apiCall(`/communities/${id}/pools`);
+  },
+
+  contributeToCommunity: async (communityId, contributionData) => {
+    return apiCall(`/communities/${communityId}/pools/contribute`, {
+      method: 'POST',
+      body: JSON.stringify(contributionData)
+    });
   },
 
   contributeToPool: async (poolId, contributionData) => {
@@ -975,6 +1033,7 @@ export default {
   review: reviewAPI,
   payment: paymentAPI,
   priceAgreement: priceAgreementAPI,
+  marketplaceRequest: marketplaceRequestAPI,
   recurringOrder: recurringOrderAPI,
   delivery: deliveryAPI,
   commission: commissionAPI,

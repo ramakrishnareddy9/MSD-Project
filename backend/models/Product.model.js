@@ -51,6 +51,13 @@ const productSchema = new mongoose.Schema({
     default: 1
   },
   maxOrderQuantity: Number,
+  stockQuantity: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  landSize: String,
+  season: String,
   averageRating: {
     type: Number,
     default: 0,
@@ -80,7 +87,9 @@ const productSchema = new mongoose.Schema({
     default: Date.now
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
 // Indexes
@@ -89,6 +98,27 @@ productSchema.index({ categoryId: 1, status: 1 });
 productSchema.index({ status: 1, averageRating: -1 });
 productSchema.index({ tags: 1 });
 productSchema.index({ name: 'text', description: 'text' });
+
+// Compatibility virtuals for older frontend payload expectations.
+productSchema.virtual('price').get(function() {
+  return this.basePrice;
+});
+
+productSchema.virtual('stock').get(function() {
+  return this.stockQuantity;
+});
+
+productSchema.virtual('category').get(function() {
+  return this.categoryId;
+});
+
+productSchema.virtual('seller').get(function() {
+  return this.ownerId;
+});
+
+productSchema.virtual('avgRating').get(function() {
+  return this.averageRating;
+});
 
 const Product = mongoose.model('Product', productSchema);
 

@@ -8,7 +8,7 @@ export const getWishlist = async (req, res) => {
   try {
     let wishlist = await Wishlist.findOne({ user: req.user._id }).populate({
       path: 'products',
-      select: 'name description price images stock category seller'
+      select: 'name description basePrice price images stockQuantity stock categoryId category ownerId seller unit status'
     });
 
     if (!wishlist) {
@@ -39,14 +39,15 @@ export const addItemToWishlist = async (req, res) => {
       wishlist = await Wishlist.create({ user: req.user._id, products: [] });
     }
 
-    if (!wishlist.products.includes(productId)) {
+    const exists = wishlist.products.some((id) => id.toString() === productId.toString());
+    if (!exists) {
       wishlist.products.push(productId);
       await wishlist.save();
     }
     
     await wishlist.populate({
       path: 'products',
-      select: 'name description price images stock category seller'
+      select: 'name description basePrice price images stockQuantity stock categoryId category ownerId seller unit status'
     });
 
     res.status(200).json({ success: true, data: wishlist });
@@ -74,7 +75,7 @@ export const removeItemFromWishlist = async (req, res) => {
     
     await wishlist.populate({
       path: 'products',
-      select: 'name description price images stock category seller'
+      select: 'name description basePrice price images stockQuantity stock categoryId category ownerId seller unit status'
     });
 
     res.status(200).json({ success: true, data: wishlist });

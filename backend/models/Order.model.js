@@ -169,11 +169,11 @@ orderSchema.index({ sellerId: 1, status: 1, createdAt: -1 });
 orderSchema.index({ type: 1, status: 1 });
 orderSchema.index({ scheduledWindowStart: 1 });
 
-// Generate order number before saving
-orderSchema.pre('save', async function(next) {
+// Generate order number before validation so required constraint passes.
+orderSchema.pre('validate', function(next) {
   if (!this.orderNumber) {
-    const count = await mongoose.model('Order').countDocuments();
-    this.orderNumber = `ORD${Date.now()}${String(count + 1).padStart(4, '0')}`;
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    this.orderNumber = `ORD${Date.now()}${randomSuffix}`;
   }
   next();
 });

@@ -4,11 +4,13 @@ import * as communityController from '../controllers/community.controller.js';
 
 const router = express.Router();
 
+router.post('/', authenticate, communityController.createCommunity);
 router.get('/', authenticate, communityController.getAllCommunities);
 router.get('/mine', authenticate, communityController.getMyCommunities);
 router.post('/:id/join', authenticate, communityController.joinCommunity);
 
 router.get('/:id/pools', authenticate, communityController.getCommunityPools);
+router.post('/:id/pools/contribute', authenticate, communityController.contributeToCommunityPool);
 router.post('/pools/:poolId/contribute', authenticate, communityController.contributeToPool);
 
 router.get('/:id/chat', authenticate, communityController.getCommunityChat);

@@ -116,14 +116,14 @@ export const farmerOnly = authorize('farmer');
 /**
  * Business or Restaurant buyers
  */
-export const b2bBuyers = authorize('business', 'restaurant');
+export const b2bBuyers = authorize('business', 'travel_agency', 'restaurant');
 
 /**
  * All buyer roles
  */
-export const buyersOnly = authorize('customer', 'business', 'restaurant');
+export const buyersOnly = authorize('customer', 'business', 'travel_agency', 'restaurant');
 
 /**
  * Delivery partners (both scales)
  */
-export const deliveryOnly = authorize('delivery');
+export const deliveryOnly = authorize('delivery', 'delivery_large', 'delivery_small');

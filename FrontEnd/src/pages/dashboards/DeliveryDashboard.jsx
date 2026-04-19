@@ -17,7 +17,7 @@ import {
   CurrencyRupee, StarRate, Timer, FlashOn, TwoWheeler
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { deliveryAPI, orderAPI, authAPI, analyticsAPI, vehicleAPI } from '../../services/api';
+import { deliveryAPI, orderAPI, authAPI, analyticsAPI, vehicleAPI, userAPI } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -96,27 +96,11 @@ const SEED_WAITING_ORDERS = [
   },
 ];
 
-// ─── Local Storage helpers ────────────────────────────────────────────────────
-const LS = {
-  VEHICLES: 'farmkart_delivery_vehicles',
-  ACCEPTED_JOBS: 'farmkart_delivery_accepted_jobs',
-  WAITING_ORDERS: 'farmkart_delivery_waiting_orders',
-  DELIVERIES: 'farmkart_delivery_history',
-};
-
-const lsGet = (key, fallback) => {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch { return fallback; }
-};
-const lsSet = (key, value) => {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* noop */ }
-};
+// State is sourced from backend APIs; no local persistence fallback.
 
 // ─── Component ────────────────────────────────────────────────────────────────
 const DeliveryDashboard = ({ mode = 'large' }) => {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   const isLarge = mode === 'large';
 
   // ── Section navigation ──
@@ -144,10 +128,29 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
   const [waitingOrders, setWaitingOrders] = useState([]);
   const [acceptedJobs, setAcceptedJobs] = useState([]);
   const [deliveryHistory, setDeliveryHistory] = useState([]);
+  const [shipments, setShipments] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [stats, setStats] = useState({
+    pendingWaiting: 0,
+    activeJobs: 0,
+    vehiclesAvailable: 0,
+    monthlyEarnings: 0,
+    rating: 0,
+    onTimeRate: 0,
+    totalDeliveries: 0
+  });
 
   // ── Action dialogs ──
   const [assignDialog, setAssignDialog] = useState({ open: false, job: null, selectedVehicle: '' });
   const [detailDialog, setDetailDialog] = useState({ open: false, item: null });
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    licenseNumber: '',
+    accountType: '',
+    address: ''
+  });
 
   // ── Initialize: Fetch delivery data on mount ──────────────────────────────────
   useEffect(() => {
@@ -155,13 +158,29 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
       try {
         setLoading(true);
 
-        // Get current user (delivery provider)
         const userRes = await authAPI.getCurrentUser();
         if (userRes.success) {
+          const currentUser = userRes.data?.user || userRes.data;
+          if (!currentUser?._id) {
+            throw new Error('Invalid auth payload for delivery dashboard');
+          }
+
+          setProfileForm({
+            name: currentUser.name || '',
+            email: currentUser.email || '',
+            phone: currentUser.phone || '',
+            licenseNumber: currentUser.licenseNumber || `DL-${String(currentUser._id).slice(-8)}`,
+            accountType: currentUser.accountType || (isLarge ? 'Large-Scale Transporter' : 'Last-Mile Delivery'),
+            address: currentUser.address || currentUser.addresses?.[0]?.line1 || ''
+          });
+
+          const isMockToken = String(currentUser.token || '').startsWith('mock');
+          let mappedVehicles = [];
+
           // Get delivery provider's vehicles
-          const vehiclesRes = await vehicleAPI.getAll({ ownerId: userRes.data._id });
+          const vehiclesRes = await vehicleAPI.getAll({ ownerId: currentUser._id });
           if (vehiclesRes.success && vehiclesRes.data) {
-            const mappedVehicles = vehiclesRes.data.map(v => ({
+            mappedVehicles = vehiclesRes.data.map(v => ({
               id: v._id || v.id,
               number: v.name || 'Vehicle',
               type: v.type || 'Truck',
@@ -178,41 +197,62 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
           }
 
           // Get available shipment/delivery tasks
-          const shipmentsRes = await deliveryAPI.shipments.getAll({ status: 'pending' });
+          const shipmentsRes = await deliveryAPI.shipments.getAll({ status: 'scheduled' });
           if (shipmentsRes.success && shipmentsRes.data) {
-            setWaitingOrders(shipmentsRes.data.map((s, idx) => ({
+            const shipmentList = shipmentsRes.data.shipments || [];
+            setShipments(shipmentList);
+            setWaitingOrders(shipmentList.map((s, idx) => ({
               id: idx + 1,
-              orderNumber: s.orderId || `ORD${Date.now()}`,
-              requester: s.sender?.name || 'Sender',
-              from: s.pickup?.address || 'Origin',
-              to: s.delivery?.address || 'Destination',
+              _id: s._id,
+              orderNumber: s.shipmentNumber || s.orderId?.orderNumber || `SHIP${Date.now()}`,
+              requester: s.deliveryPartnerId?.name || 'Delivery Partner',
+              requesterType: s.type === 'farm_to_hub' ? 'farmer' : 'business',
+              from: s.origin?.address?.city || s.origin?.address?.line1 || 'Origin',
+              to: s.destination?.address?.city || s.destination?.address?.line1 || 'Destination',
               distance: s.distance || '0 km',
-              cargo: s.description || 'Cargo',
-              amount: s.fare || 0,
-              priority: s.priority || 'normal',
-              status: 'pending_transport'
+              cargo: s.orders?.length ? `${s.orders.length} order(s)` : 'Cargo',
+              amount: s.cost?.total || 0,
+              priority: s.status === 'delayed' ? 'urgent' : 'normal',
+              status: s.status || 'scheduled'
             })));
+            setMetrics(prev => ({
+              ...prev,
+              pendingWaiting: shipmentList.length
+            }));
           }
 
           // Get accepted jobs
-          const tasksRes = await deliveryAPI.tasks.getAll({ assignedTo: userRes.data._id });
+          const tasksRes = await deliveryAPI.tasks.getAll({ status: 'assigned' });
           if (tasksRes.success && tasksRes.data) {
-            setAcceptedJobs(tasksRes.data.map((t, idx) => ({
+            const taskList = tasksRes.data.tasks || [];
+            setTasks(taskList);
+            setAcceptedJobs(taskList.map((t, idx) => ({
               id: idx + 1,
-              orderNumber: t.orderId || `ORD${Date.now()}`,
-              requester: t.buyerId?.name || 'Buyer',
-              from: t.pickup?.address || 'Origin',
-              to: t.delivery?.address || 'Destination',
-              distance: t.distance || '0 km',
-              cargo: t.description || 'Cargo',
-              amount: t.fare || 0,
+              _id: t._id,
+              orderNumber: t.orderId?.orderNumber || `TASK${Date.now()}`,
+              requester: t.orderId?.buyerId?.name || 'Buyer',
+              from: t.pickupLocation?.address?.city || t.pickupLocation?.address?.line1 || 'Origin',
+              to: t.deliveryLocation?.address?.city || t.deliveryLocation?.address?.line1 || 'Destination',
+              distance: t.tracking?.distance ? `${t.tracking.distance} km` : '0 km',
+              cargo: t.orderId?.orderItems?.[0]?.productName || 'Cargo',
+              amount: t.payment?.deliveryCharge || 0,
+              assignedVehicle: t.vehicle?.number || 'Unassigned',
               status: t.status || 'assigned'
             })));
 
             setMetrics(prev => ({
               ...prev,
-              totalDeliveries: tasksRes.data.filter(t => t.status === 'completed').length,
-              earnings: tasksRes.data.reduce((sum, t) => sum + (t.fare || 0), 0)
+              activeJobs: taskList.filter(t => ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(t.status)).length,
+              totalDeliveries: taskList.filter(t => t.status === 'delivered').length,
+              earnings: taskList.reduce((sum, t) => sum + (t.payment?.deliveryCharge || 0), 0)
+            }));
+
+            setStats(prev => ({
+              ...prev,
+              activeJobs: taskList.filter(t => ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(t.status)).length,
+              totalDeliveries: taskList.filter(t => t.status === 'delivered').length,
+              vehiclesAvailable: mappedVehicles.filter(v => v.available).length,
+              monthlyEarnings: taskList.reduce((sum, t) => sum + (t.payment?.deliveryCharge || 0), 0)
             }));
           }
         }
@@ -231,8 +271,26 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
     if (!user?.token || user?.token?.startsWith('mock')) return;
     setLoadingShipments(true);
     try {
-      const res = await deliveryAPI.shipments.getAll();
-      if (res.success) setShipments(res.data.shipments || []);
+      const res = await deliveryAPI.shipments.getAll({ status: 'scheduled' });
+      if (res.success) {
+        const shipmentList = res.data.shipments || [];
+        setShipments(shipmentList);
+        setWaitingOrders(shipmentList.map((s, idx) => ({
+          id: idx + 1,
+          _id: s._id,
+          orderNumber: s.shipmentNumber || s.orderId?.orderNumber || `SHIP${Date.now()}`,
+          requester: s.deliveryPartnerId?.name || 'Delivery Partner',
+          requesterType: s.type === 'farm_to_hub' ? 'farmer' : 'business',
+          from: s.origin?.address?.city || s.origin?.address?.line1 || 'Origin',
+          to: s.destination?.address?.city || s.destination?.address?.line1 || 'Destination',
+          distance: s.distance || '0 km',
+          cargo: s.orders?.length ? `${s.orders.length} order(s)` : 'Cargo',
+          amount: s.cost?.total || 0,
+          priority: s.status === 'delayed' ? 'urgent' : 'normal',
+          status: s.status || 'scheduled'
+        })));
+        setStats(prev => ({ ...prev, pendingWaiting: shipmentList.length }));
+      }
     } catch { /* backend unavailable */ }
     finally { setLoadingShipments(false); }
   }, [user]);
@@ -241,8 +299,31 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
     if (!user?.token || user?.token?.startsWith('mock')) return;
     setLoadingTasks(true);
     try {
-      const res = await deliveryAPI.tasks.getAll();
-      if (res.success) setTasks(res.data.tasks || []);
+      const res = await deliveryAPI.tasks.getAll({ status: 'assigned' });
+      if (res.success) {
+        const taskList = res.data.tasks || [];
+        setTasks(taskList);
+        setAcceptedJobs(taskList.map((t, idx) => ({
+          id: idx + 1,
+          _id: t._id,
+          jobId: t.taskNumber || `TASK${Date.now()}`,
+          orderNumber: t.orderId?.orderNumber || `TASK${Date.now()}`,
+          requester: t.orderId?.buyerId?.name || 'Buyer',
+          from: t.pickupLocation?.address?.city || t.pickupLocation?.address?.line1 || 'Origin',
+          to: t.deliveryLocation?.address?.city || t.deliveryLocation?.address?.line1 || 'Destination',
+          distance: t.tracking?.distance ? `${t.tracking.distance} km` : '0 km',
+          cargo: t.orderId?.orderItems?.[0]?.productName || 'Cargo',
+          amount: t.payment?.deliveryCharge || 0,
+          assignedVehicle: t.vehicle?.number || 'Unassigned',
+          status: t.status || 'assigned'
+        })));
+        setStats(prev => ({
+          ...prev,
+          activeJobs: taskList.filter(t => ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(t.status)).length,
+          totalDeliveries: taskList.filter(t => t.status === 'delivered').length,
+          monthlyEarnings: taskList.reduce((sum, t) => sum + (t.payment?.deliveryCharge || 0), 0)
+        }));
+      }
     } catch { /* backend unavailable */ }
     finally { setLoadingTasks(false); }
   }, [user]);
@@ -251,6 +332,55 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
     if (isLarge) fetchShipments();
     else fetchTasks();
   }, [isLarge, fetchShipments, fetchTasks]);
+
+  useEffect(() => {
+    const vehiclesAvailable = vehicles.filter((v) => v.available).length;
+    const pendingWaiting = waitingOrders.length;
+    const activeJobs = acceptedJobs.filter((job) => ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(job.status)).length;
+    const totalDeliveries = acceptedJobs.filter((job) => job.status === 'delivered').length;
+    const monthlyEarnings = acceptedJobs.reduce((sum, job) => sum + Number(job.amount || 0), 0);
+
+    setStats((prev) => ({
+      ...prev,
+      vehiclesAvailable,
+      pendingWaiting,
+      activeJobs,
+      totalDeliveries,
+      monthlyEarnings
+    }));
+  }, [vehicles, waitingOrders, acceptedJobs]);
+
+  const onProfileChange = (e) => {
+    const { name, value } = e.target;
+    setProfileForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleProfileUpdate = async () => {
+    if (!user?._id) {
+      showMsg('Unable to update profile', 'error');
+      return;
+    }
+
+    try {
+      const payload = {
+        name: profileForm.name,
+        email: profileForm.email,
+        phone: profileForm.phone,
+        licenseNumber: profileForm.licenseNumber,
+        accountType: profileForm.accountType,
+        address: profileForm.address
+      };
+
+      const res = await userAPI.update(user._id, payload);
+      const updatedUser = res?.data?.user;
+      if (updatedUser) {
+        updateUser(updatedUser);
+      }
+      showMsg('Profile updated successfully', 'success');
+    } catch (error) {
+      showMsg(error.message || 'Failed to update profile', 'error');
+    }
+  };
 
   // ─────────────────────────────────────────────────────────────────────────
   // Business Logic: Accept a waiting order job
@@ -298,10 +428,10 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
     // Try real API first
     try {
       if (!user?.token?.startsWith('mock')) {
-        if (isLarge && job._id) {
+        if (isLarge && (job._id || job.id)) {
           if (newStatus === 'in_transit') await deliveryAPI.shipments.updateTracking(job._id, [], 'Started transit');
           if (newStatus === 'delivered') await deliveryAPI.shipments.markDelivered(job._id);
-        } else if (!isLarge && job._id) {
+        } else if (!isLarge && (job._id || job.id)) {
           if (newStatus === 'accepted') await deliveryAPI.tasks.accept(job._id);
           if (newStatus === 'out_for_delivery') await deliveryAPI.tasks.start(job._id);
           if (newStatus === 'delivered') await deliveryAPI.tasks.complete(job._id, { receiverName: 'Customer', notes: 'Delivered' });
@@ -338,21 +468,51 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
       showMsg('Please fill all vehicle fields', 'error');
       return;
     }
-    const newV = { ...vehicleForm, id: `v${Date.now()}`, available: true, status: 'Available' };
-    setVehicles(prev => [...prev, newV]);
-    setVehicleForm({ number: '', type: isLarge ? 'Truck' : 'Bike', capacity: '', costPerKm: '' });
-    showMsg('Vehicle added to fleet!', 'success');
+    vehicleAPI.create({
+      name: vehicleForm.number,
+      type: vehicleForm.type,
+      capacity: Number(vehicleForm.capacity),
+      plate: vehicleForm.number,
+      costPerKm: Number(vehicleForm.costPerKm)
+    }).then((res) => {
+      if (!res.success) throw new Error(res.message || 'Failed to add vehicle');
+      const v = res.data;
+      const newV = {
+        id: v._id,
+        number: v.name,
+        type: v.type,
+        capacity: v.capacity || vehicleForm.capacity,
+        costPerKm: v.costPerKm || vehicleForm.costPerKm,
+        available: v.status === 'Available',
+        status: v.status || 'Available'
+      };
+      setVehicles(prev => [...prev, newV]);
+      setStats(prev => ({ ...prev, vehiclesAvailable: prev.vehiclesAvailable + 1 }));
+      setVehicleForm({ number: '', type: isLarge ? 'Truck' : 'Bike', capacity: '', costPerKm: '' });
+      showMsg('Vehicle added to fleet!', 'success');
+    }).catch((error) => {
+      showMsg(error.message || 'Failed to add vehicle', 'error');
+    });
   };
 
   const deleteVehicle = (id) => {
-    setVehicles(prev => prev.filter(v => v.id !== id));
-    showMsg('Vehicle removed from fleet', 'info');
+    vehicleAPI.delete(id).then((res) => {
+      if (!res.success) throw new Error(res.message || 'Failed to remove vehicle');
+      setVehicles(prev => prev.filter(v => v.id !== id));
+      showMsg('Vehicle removed from fleet', 'info');
+    }).catch((error) => showMsg(error.message || 'Failed to remove vehicle', 'error'));
   };
 
   const toggleVehicleAvailability = (id) => {
-    setVehicles(prev => prev.map(v => v.id === id
-      ? { ...v, available: !v.available, status: !v.available ? 'Available' : 'Unavailable' }
-      : v));
+    const vehicle = vehicles.find(v => v.id === id);
+    if (!vehicle) return;
+    const nextStatus = vehicle.available ? 'Maintenance' : 'Available';
+    vehicleAPI.updateStatus(id, nextStatus).then((res) => {
+      if (!res.success) throw new Error(res.message || 'Failed to update vehicle');
+      setVehicles(prev => prev.map(v => v.id === id
+        ? { ...v, available: !v.available, status: nextStatus }
+        : v));
+    }).catch((error) => showMsg(error.message || 'Failed to update vehicle status', 'error'));
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -928,7 +1088,7 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
                       <LocalShipping sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
                       <Typography color="text.secondary">
                         No backend shipments found. <br />
-                        Make sure the backend is connected or use the <strong>Waiting Orders</strong> tab (uses localStorage).
+                        Make sure the backend is connected or refresh the waiting orders list.
                       </Typography>
                     </Box>
                   ) : (
@@ -1214,19 +1374,22 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
                     <Divider sx={{ mb: 3 }} />
                     <Grid container spacing={2}>
                       {[
-                        { label: 'Full Name', value: user?.name || '' },
-                        { label: 'Email', value: user?.email || '' },
-                        { label: 'Phone', value: user?.phone || '' },
-                        { label: 'License Number', value: 'DL-' + (user?._id?.slice(-8) || '14200112') },
-                        { label: 'Account Type', value: isLarge ? 'Large-Scale Transporter' : 'Last-Mile Delivery' },
+                        { label: 'Full Name', value: profileForm.name, name: 'name' },
+                        { label: 'Email', value: profileForm.email, name: 'email' },
+                        { label: 'Phone', value: profileForm.phone, name: 'phone' },
+                        { label: 'License Number', value: profileForm.licenseNumber, name: 'licenseNumber' },
+                        { label: 'Account Type', value: profileForm.accountType, name: 'accountType' },
                         { label: 'Status', value: 'Active & Verified' },
                       ].map(field => (
                         <Grid item xs={12} sm={6} key={field.label}>
-                          <TextField fullWidth label={field.label} defaultValue={field.value} />
+                          <TextField fullWidth label={field.label} name={field.name} value={field.value} onChange={onProfileChange} disabled={field.label === 'Status'} />
                         </Grid>
                       ))}
                       <Grid item xs={12}>
-                        <Button variant="contained" color={sidebarColor} size="large" onClick={() => showMsg('Profile updated!', 'success')}>
+                        <TextField fullWidth label="Address" name="address" value={profileForm.address} onChange={onProfileChange} multiline rows={2} />
+                        </Grid>
+                      <Grid item xs={12}>
+                        <Button variant="contained" color={sidebarColor} size="large" onClick={handleProfileUpdate}>
                           Update Profile
                         </Button>
                       </Grid>

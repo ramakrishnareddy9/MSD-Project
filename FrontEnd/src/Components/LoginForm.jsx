@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { TextField, Button, Alert, Box, CircularProgress } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
+import { getDashboardPath } from '../utils/roleRouting';
 
 const LoginForm = ({ selectedDemo }) => {
   const { login } = useAuth();
@@ -21,22 +22,6 @@ const LoginForm = ({ selectedDemo }) => {
     }
   }, [selectedDemo]);
 
-  const routeForRole = (roles) => {
-    // Use the first role to determine the dashboard
-    const primaryRole = roles && roles.length > 0 ? roles[0] : 'customer';
-    
-    switch (primaryRole) {
-      case 'customer': return '/customer';
-      case 'farmer': return '/farmer';
-      case 'business': return '/business';
-      case 'restaurant': return '/restaurant';
-      case 'delivery_large': return '/delivery-large';
-      case 'delivery_small': return '/delivery-small';
-      case 'admin': return '/admin';
-      default: return '/';
-    }
-  };
-
   const onSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -52,7 +37,7 @@ const LoginForm = ({ selectedDemo }) => {
       
       // Get the user's roles from the response
       const userRoles = res.user?.roles || res.roles || ['customer'];
-      const from = location.state?.from?.pathname || routeForRole(userRoles);
+      const from = location.state?.from?.pathname || getDashboardPath(userRoles);
       navigate(from, { replace: true });
     } catch (err) {
       setError(err.message || 'Login failed. Please check your credentials.');

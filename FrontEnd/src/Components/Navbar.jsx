@@ -2,6 +2,7 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { AppBar, Toolbar, Typography, Button, Box, Container, Chip } from '@mui/material';
 import { FaLeaf, FaUser } from 'react-icons/fa';
 import { useAuth } from '../contexts/AuthContext';
+import { getDashboardPath, getPrimaryRole } from '../utils/roleRouting';
 
 const Navbar = () => {
   const { user, logout } = useAuth();
@@ -15,20 +16,8 @@ const Navbar = () => {
     navigate('/login', { replace: true });
   };
 
-  const routeForRole = (role) => {
-    switch (role) {
-      case 'customer': return '/customer';
-      case 'farmer': return '/farmer';
-      case 'business': return '/business';
-      case 'restaurant': return '/restaurant';
-      case 'delivery_large': return '/delivery-large';
-      case 'delivery_small': return '/delivery-small';
-      case 'delivery': return '/delivery-large';
-      case 'admin': return '/admin';
-      case 'community': return '/dashboard/community';
-      default: return '/';
-    }
-  };
+  const dashboardPath = getDashboardPath(user);
+  const userRole = getPrimaryRole(user);
 
   return (
     <AppBar 
@@ -40,7 +29,7 @@ const Navbar = () => {
         <Toolbar disableGutters className="min-h-[70px] flex justify-between items-center">
           {/* Logo */}
           <Link 
-            to={user ? routeForRole(user.role) : '/'}
+            to={user ? dashboardPath : '/'}
             className="flex items-center gap-2 no-underline group"
           >
             <div className="bg-gradient-to-br from-green-500 to-green-600 p-2 rounded-lg group-hover:scale-110 transition-transform duration-200">
@@ -60,14 +49,14 @@ const Navbar = () => {
               <>
                 <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-200 rounded-full">
                   <FaUser className="text-green-600 text-sm" />
-                  <span className="text-sm font-medium text-green-700 capitalize">{user.role}</span>
+                  <span className="text-sm font-medium text-green-700 capitalize">{userRole}</span>
                 </div>
                 <Button
                   component={NavLink}
-                  to={routeForRole(user.role)}
-                  variant={isActive(routeForRole(user.role)) ? 'contained' : 'outlined'}
+                  to={dashboardPath}
+                  variant={isActive(dashboardPath) ? 'contained' : 'outlined'}
                   className={`${
-                    isActive(routeForRole(user.role))
+                    isActive(dashboardPath)
                       ? 'bg-gradient-to-r from-green-500 to-green-600 text-white hover:from-green-600 hover:to-green-700'
                       : 'border-green-500 text-green-600 hover:bg-green-50'
                   } font-semibold rounded-lg px-6 py-2 transition-all duration-200 transform hover:scale-105`}

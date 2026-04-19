@@ -9,9 +9,8 @@ import {
   Select,
   MenuItem,
   FormControl,
-  InputLabel,
   Alert,
-  CircularProgress
+  Chip
 } from '@mui/material';
 import { 
   Email, 
@@ -21,7 +20,6 @@ import {
   Twitter, 
   Person,
   Phone,
-  CreditCard,
   AccountCircle,
   CheckCircle,
   Business,
@@ -31,11 +29,12 @@ import {
   Agriculture
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import { getDashboardPath } from '../utils/roleRouting';
 
 const AuthPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, register } = useAuth();
   
   const [activeTab, setActiveTab] = useState(
     location.pathname === '/signup' ? 'Register' : 'Login'
@@ -50,30 +49,14 @@ const AuthPage = () => {
   const [registerForm, setRegisterForm] = useState({
     email: '',
     password: '',
-    aadhar: '',
     name: '',
-    mobile: '',
-    type: 'customer'
+    phone: '',
+    address: '',
+    role: 'customer'
   });
   
   // Forget Password Form State
   const [forgetForm, setForgetForm] = useState({ email: '' });
-
-  const routeForRole = (roles) => {
-    const primaryRole = roles && roles.length > 0 ? roles[0] : 'customer';
-    
-    switch (primaryRole) {
-      case 'customer': return '/customer';
-      case 'farmer': return '/farmer';
-      case 'business': return '/business';
-      case 'restaurant': return '/restaurant';
-      case 'delivery': return '/delivery-large';       // generic delivery role → large-scale
-      case 'delivery_large': return '/delivery-large';
-      case 'delivery_small': return '/delivery-small';
-      case 'admin': return '/admin';
-      default: return '/';
-    }
-  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -81,7 +64,7 @@ const AuthPage = () => {
     setLoading(true);
     
     try {
-      const res = await login(loginForm.email, loginForm.password);
+      const res = await login(loginForm.email.trim(), loginForm.password);
       if (!res.success) {
         setError(res.error || 'Login failed');
         setLoading(false);
@@ -89,7 +72,7 @@ const AuthPage = () => {
       }
       
       const userRoles = res.user?.roles || res.roles || ['customer'];
-      const from = location.state?.from?.pathname || routeForRole(userRoles);
+      const from = location.state?.from?.pathname || getDashboardPath(userRoles);
       navigate(from, { replace: true });
     } catch (err) {
       setError(err.message || 'Login failed. Please check your credentials.');
@@ -97,16 +80,51 @@ const AuthPage = () => {
     }
   };
 
-  const handleRegister = (e) => {
+  const handleRegister = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setError('');
-    
-    setTimeout(() => {
+
+    if (registerForm.password.length < 8) {
+      setError('Password must be at least 8 characters');
+      return;
+    }
+
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/.test(registerForm.password)) {
+      setError('Password must include uppercase, lowercase, and a number');
+      return;
+    }
+
+    if (!/^[+]?([\d\s\-()]){10,20}$/.test(registerForm.phone)) {
+      setError('Please enter a valid phone number');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const res = await register({
+        name: registerForm.name.trim(),
+        email: registerForm.email.trim().toLowerCase(),
+        phone: registerForm.phone.trim(),
+        address: registerForm.address.trim(),
+        password: registerForm.password,
+        roles: [registerForm.role]
+      });
+
+      if (!res.success) {
+        setError(res.error || 'Registration failed');
+        setLoading(false);
+        return;
+      }
+
+      const userRoles = res.user?.roles || [registerForm.role];
+      const from = location.state?.from?.pathname || getDashboardPath(userRoles);
+      navigate(from, { replace: true });
+    } catch (err) {
+      setError(err.message || 'Registration failed');
+    } finally {
       setLoading(false);
-      alert('Account created successfully! Please login with your credentials.');
-      setActiveTab('Login');
-    }, 1500);
+    }
   };
 
   const handleForgetPassword = (e) => {
@@ -122,9 +140,9 @@ const AuthPage = () => {
   };
 
   return (
-    <div className="min-h-screen flex bg-gradient-to-br from-blue-400 to-purple-500">
+    <div className="min-h-screen flex bg-gradient-to-br from-emerald-100 via-lime-50 to-amber-100">
       {/* Left Side - Green Section */}
-      <div className="hidden lg:flex lg:w-1/2 bg-green-500 relative">
+      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-emerald-600 to-teal-600 relative">
         <div className="flex flex-col justify-between p-12 text-white w-full">
           {/* Header */}
           <div>
@@ -132,10 +150,12 @@ const AuthPage = () => {
               <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center mr-3">
                 <span className="text-green-500 font-bold text-lg">🌿</span>
               </div>
-              <Typography variant="h4" className="font-bold text-white">
+              <Typography variant="h4" className="font-bold text-white tracking-tight">
                 FarmKart
               </Typography>
             </div>
+
+            <Chip label="Production Auth" size="small" sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: '#fff', width: 'fit-content', mb: 3 }} />
             
             <Typography variant="h6" className="text-white mb-8 leading-relaxed">
               Connecting farmers directly with consumers.<br />
@@ -174,7 +194,7 @@ const AuthPage = () => {
       </div>
 
       {/* Right Side - Form Section */}
-      <div className="w-full lg:w-1/2 bg-white flex items-center justify-center p-8">
+      <div className="w-full lg:w-1/2 bg-white/90 backdrop-blur-sm flex items-center justify-center p-8">
         <div className="w-full max-w-md">
           {/* Tab Header */}
           <div className="flex mb-8 bg-gray-50 rounded-lg p-1">
@@ -218,7 +238,7 @@ const AuthPage = () => {
               <div className="space-y-4 mb-6">
                 <TextField
                   fullWidth
-                  placeholder="Username"
+                  placeholder="Email address"
                   value={loginForm.email}
                   onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
                   InputProps={{
@@ -299,12 +319,11 @@ const AuthPage = () => {
                 <div className="space-y-2 text-sm">
                   {[
                     { icon: <AdminPanelSettings className="text-red-600" />, label: 'Admin:', email: 'admin@farmkart.com', password: 'admin123' },
-                    { icon: <AccountCircle className="text-blue-600" />, label: 'Customer:', email: 'customer@farmkart.com', password: 'customer123' },
-                    { icon: <Agriculture className="text-green-600" />, label: 'Farmer:', email: 'farmer1@farmkart.com', password: 'farmer123' },
-                    { icon: <Business className="text-indigo-600" />, label: 'Business:', email: 'business@farmkart.com', password: 'business123' },
-                    { icon: <Restaurant className="text-purple-600" />, label: 'Restaurant:', email: 'restaurant@farmkart.com', password: 'restaurant123' },
-                    { icon: <LocalShipping className="text-orange-600" />, label: 'Delivery:', email: 'delivery@farmkart.com', password: 'delivery123' },
-                    { icon: <AccountCircle className="text-gray-600" />, label: 'Test Customer:', email: 'customer@test.com', password: 'password' }
+                    { icon: <AccountCircle className="text-blue-600" />, label: 'Customer:', email: 'customer1@farmkart.local', password: 'password123' },
+                    { icon: <Agriculture className="text-green-600" />, label: 'Farmer:', email: 'farmer1@farmkart.local', password: 'password123' },
+                    { icon: <Business className="text-indigo-600" />, label: 'Business:', email: 'business1@farmkart.local', password: 'password123' },
+                    { icon: <Restaurant className="text-purple-600" />, label: 'Restaurant:', email: 'restaurant1@farmkart.local', password: 'password123' },
+                    { icon: <LocalShipping className="text-orange-600" />, label: 'Travel Agency:', email: 'travelagency@farmkart.local', password: 'password123' }
                   ].map((item, index) => (
                     <div 
                       key={index}
@@ -405,6 +424,31 @@ const AuthPage = () => {
 
                 <TextField
                   fullWidth
+                  type="tel"
+                  placeholder="Phone Number"
+                  value={registerForm.phone}
+                  onChange={(e) => setRegisterForm({ ...registerForm, phone: e.target.value })}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <Phone className="text-gray-400" />
+                      </InputAdornment>
+                    ),
+                  }}
+                  variant="outlined"
+                  required
+                  disabled={loading}
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      backgroundColor: '#f5f5f5',
+                      borderRadius: '8px',
+                      '& fieldset': { border: 'none' },
+                    },
+                  }}
+                />
+
+                <TextField
+                  fullWidth
                   type="password"
                   placeholder="Password"
                   value={registerForm.password}
@@ -426,12 +470,36 @@ const AuthPage = () => {
                       '& fieldset': { border: 'none' },
                     },
                   }}
+                  helperText="Use 8+ characters with uppercase, lowercase and number"
+                />
+
+                <TextField
+                  fullWidth
+                  placeholder="Address"
+                  value={registerForm.address}
+                  onChange={(e) => setRegisterForm({ ...registerForm, address: e.target.value })}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <AccountCircle className="text-gray-400" />
+                      </InputAdornment>
+                    ),
+                  }}
+                  variant="outlined"
+                  disabled={loading}
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      backgroundColor: '#f5f5f5',
+                      borderRadius: '8px',
+                      '& fieldset': { border: 'none' },
+                    },
+                  }}
                 />
 
                 <FormControl fullWidth variant="outlined">
                   <Select
-                    value={registerForm.type}
-                    onChange={(e) => setRegisterForm({ ...registerForm, type: e.target.value })}
+                    value={registerForm.role}
+                    onChange={(e) => setRegisterForm({ ...registerForm, role: e.target.value })}
                     displayEmpty
                     required
                     disabled={loading}
@@ -445,7 +513,10 @@ const AuthPage = () => {
                     <MenuItem value="customer">Customer</MenuItem>
                     <MenuItem value="farmer">Farmer</MenuItem>
                     <MenuItem value="business">Business</MenuItem>
+                    <MenuItem value="travel_agency">Travel Agency</MenuItem>
                     <MenuItem value="restaurant">Restaurant</MenuItem>
+                    <MenuItem value="delivery_large">Delivery Large</MenuItem>
+                    <MenuItem value="delivery_small">Delivery Small</MenuItem>
                   </Select>
                 </FormControl>
               </div>

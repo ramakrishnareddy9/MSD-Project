@@ -1,16 +1,19 @@
 import { useState } from 'react';
 import { Container, Card, CardContent, Typography, TextField, Button, MenuItem, Box, Alert, CircularProgress } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { getDashboardPath } from '../utils/roleRouting';
 
 const Signup = () => {
   const navigate = useNavigate();
-  const [form, setForm] = useState({ name: '', email: '', role: 'customer', password: '', confirmPassword: '' });
+  const { register } = useAuth();
+  const [form, setForm] = useState({ name: '', email: '', phone: '', address: '', role: 'customer', password: '', confirmPassword: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const onChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
   
-  const onSubmit = (e) => {
+  const onSubmit = async (e) => {
     e.preventDefault();
     setError('');
     
@@ -19,31 +22,58 @@ const Signup = () => {
       return;
     }
     
-    if (form.password.length < 6) {
-      setError('Password must be at least 6 characters');
+    if (form.password.length < 8) {
+      setError('Password must be at least 8 characters');
+      return;
+    }
+
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/.test(form.password)) {
+      setError('Password must contain one uppercase letter, one lowercase letter, and one number');
+      return;
+    }
+
+    if (!/^[+]?([\d\s\-()]){10,20}$/.test(form.phone)) {
+      setError('Please enter a valid phone number');
       return;
     }
     
     setLoading(true);
-    
-    // Simulate API call
-    setTimeout(() => {
+
+    try {
+      const res = await register({
+        name: form.name.trim(),
+        email: form.email.trim().toLowerCase(),
+        phone: form.phone.trim(),
+        address: form.address.trim(),
+        password: form.password,
+        roles: [form.role]
+      });
+
+      if (!res.success) {
+        setError(res.error || 'Registration failed');
+        setLoading(false);
+        return;
+      }
+
+      const target = getDashboardPath(res.user || [form.role]);
+      navigate(target, { replace: true });
+    } catch (err) {
+      setError(err.message || 'Registration failed');
+    } finally {
       setLoading(false);
-      alert('Account created successfully! Please login with your credentials.');
-      navigate('/login');
-    }, 1500);
+    }
   };
 
   return (
-    <Container maxWidth="sm">
-      <Box sx={{ minHeight: '80vh', display: 'flex', alignItems: 'center', justifyContent: 'center', py: 4 }}>
-        <Card sx={{ width: '100%', maxWidth: 450, boxShadow: 3 }}>
+    <Container maxWidth="sm" sx={{ py: 4 }}>
+      <Box sx={{ minHeight: '80vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Card sx={{ width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(4, 120, 87, 0.18)', borderRadius: 4 }}>
           <CardContent sx={{ p: 4 }}>
-            <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom color="text.primary" textAlign="center">
-              Create Account
+            <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom color="text.primary" textAlign="center" sx={{ letterSpacing: '-0.02em' }}>
+              Start Fresh
             </Typography>
             <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ mb: 3 }}>
-              Join FarmKart today
+              Create your FarmKart account and access your role dashboard instantly
             </Typography>
             
             <Box component="form" onSubmit={onSubmit} sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
@@ -73,6 +103,29 @@ const Signup = () => {
                 required
                 disabled={loading}
               />
+
+              <TextField
+                label="Phone"
+                name="phone"
+                value={form.phone}
+                onChange={onChange}
+                placeholder="Enter your phone number"
+                fullWidth
+                variant="outlined"
+                required
+                disabled={loading}
+              />
+
+              <TextField
+                label="Address"
+                name="address"
+                value={form.address}
+                onChange={onChange}
+                placeholder="Enter your address"
+                fullWidth
+                variant="outlined"
+                disabled={loading}
+              />
               
               <TextField
                 label="Role"
@@ -88,6 +141,7 @@ const Signup = () => {
                 <MenuItem value="customer">Customer</MenuItem>
                 <MenuItem value="farmer">Farmer</MenuItem>
                 <MenuItem value="business">Business</MenuItem>
+                <MenuItem value="travel_agency">Travel Agency</MenuItem>
                 <MenuItem value="restaurant">Restaurant</MenuItem>
                 <MenuItem value="delivery_large">Large Scale Delivery</MenuItem>
                 <MenuItem value="delivery_small">Small Scale Delivery</MenuItem>
@@ -104,6 +158,7 @@ const Signup = () => {
                 variant="outlined"
                 required
                 disabled={loading}
+                helperText="Minimum 8 chars with uppercase, lowercase, and number"
               />
               
               <TextField

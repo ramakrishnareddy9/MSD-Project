@@ -39,6 +39,22 @@ const CommunityDashboard = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [currentUser, setCurrentUser] = useState(null);
+  const [profileForm, setProfileForm] = useState({
+    communityName: '',
+    address: '',
+    name: '',
+    position: '',
+    phone: '',
+    email: ''
+  });
+  const safeCommunityData = {
+    ...(communityData || {}),
+    stats: {
+      ...(communityData?.stats || {}),
+      ...(stats || {})
+    }
+  };
 
   // ── Initialize: Fetch community data on mount ──────────────────────────────
   useEffect(() => {
@@ -49,16 +65,22 @@ const CommunityDashboard = () => {
         // Get current user (community admin/member)
         const userRes = await authAPI.getCurrentUser();
         if (userRes.success) {
+          const currentUserData = userRes.data?.user || userRes.data;
+          setCurrentUser(currentUserData);
           // Get community data
           const communityRes = await communityAPI.getMy();
           if (communityRes.success && communityRes.data) {
             // Assuming API returns array or single community
-            const community = Array.isArray(communityRes.data) ? communityRes.data[0] : communityRes.data;
+            const communityPayload = communityRes.data?.communities || communityRes.data;
+            const community = Array.isArray(communityPayload) ? communityPayload[0] : communityPayload;
+            if (!community) {
+              return;
+            }
             setCommunityData({
               name: community.name || 'Community',
               address: community.address || 'Location',
               manager: {
-                name: community.adminId?.name || userRes.data.name,
+                name: community.adminId?.name || currentUserData?.name,
                 phone: community.adminId?.phone || '+91 XXXXXXXXXX',
                 email: community.adminId?.email || 'contact@community.com',
                 position: 'Community Manager',
@@ -75,8 +97,17 @@ const CommunityDashboard = () => {
               poolData: community.pools || []
             });
 
+            setProfileForm({
+              communityName: currentUserData?.communityName || community.name || '',
+              address: currentUserData?.address || community.address || '',
+              name: currentUserData?.name || community.adminId?.name || '',
+              position: currentUserData?.position || 'Community Manager',
+              phone: currentUserData?.phone || community.adminId?.phone || '',
+              email: currentUserData?.email || community.adminId?.email || ''
+            });
+
             // Get community orders (bulk orders)
-            const ordersRes = await orderAPI.getAll({ communityId: community._id });
+            const ordersRes = await orderAPI.getAll({ buyerId: currentUser?._id });
             if (ordersRes.success && ordersRes.data?.orders) {
               const mappedOrders = ordersRes.data.orders.map((o, idx) => ({
                 id: idx + 1,
@@ -131,13 +162,6 @@ const CommunityDashboard = () => {
 
     initializeCommunityData();
   }, []);
-      { id: 1, name: 'Amit Sharma', apartment: 'A-101', phone: '+91 9876543211', joinDate: '2023-01-15', status: 'Active' },
-      { id: 2, name: 'Priya Patel', apartment: 'B-205', phone: '+91 9876543212', joinDate: '2023-02-20', status: 'Active' },
-      { id: 3, name: 'Suresh Reddy', apartment: 'C-304', phone: '+91 9876543213', joinDate: '2023-03-10', status: 'Active' },
-      { id: 4, name: 'Rahul Singh', apartment: 'D-405', phone: '+91 9876543214', joinDate: '2023-04-15', status: 'Active' },
-      { id: 5, name: 'Anjali Desai', apartment: 'E-502', phone: '+91 9876543215', joinDate: '2023-05-20', status: 'Inactive' }
-    ]
-  });
 
   const [announcements, setAnnouncements] = useState([]);
 
@@ -165,6 +189,51 @@ const CommunityDashboard = () => {
     setSnackbar({ open: true, message, severity });
   };
 
+  const onProfileChange = (e) => {
+    const { name, value } = e.target;
+    setProfileForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleProfileUpdate = async () => {
+    if (!currentUser?._id) {
+      showSnackbar('Unable to update profile', 'error');
+      return;
+    }
+
+    try {
+      const payload = {
+        name: profileForm.name,
+        communityName: profileForm.communityName,
+        address: profileForm.address,
+        position: profileForm.position,
+        phone: profileForm.phone,
+        email: profileForm.email
+      };
+
+      const res = await userAPI.update(currentUser._id, payload);
+      const updatedUser = res?.data?.user;
+      if (updatedUser) {
+        setCurrentUser(updatedUser);
+        setCommunityData((prev) => ({
+          ...prev,
+          name: profileForm.communityName || prev?.name,
+          address: profileForm.address || prev?.address,
+          manager: {
+            ...(prev?.manager || {}),
+            name: updatedUser.name,
+            phone: updatedUser.phone,
+            email: updatedUser.email,
+            position: updatedUser.position || profileForm.position
+          }
+        }));
+      }
+
+      showSnackbar('Profile updated successfully', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to update profile', 'error');
+    }
+  };
+
   const onChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
   
   const placeOrder = (e) => {
@@ -187,8 +256,8 @@ const CommunityDashboard = () => {
 
   const menuItems = [
     { id: 'overview', label: 'Overview', icon: <Dashboard /> },
-    { id: 'orders', label: 'Bulk Orders', icon: <ShoppingCart />, badge: communityData.stats.activeOrders },
-    { id: 'members', label: 'Members', icon: <People />, badge: communityData.stats.totalMembers },
+    { id: 'orders', label: 'Bulk Orders', icon: <ShoppingCart />, badge: safeCommunityData.stats?.activeOrders || 0 },
+    { id: 'members', label: 'Members', icon: <People />, badge: safeCommunityData.stats?.totalMembers || 0 },
     { id: 'announcements', label: 'Announcements', icon: <Message /> },
     { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: 6 },
     { id: 'profile', label: 'Profile', icon: <AccountCircle /> },
@@ -322,11 +391,11 @@ const CommunityDashboard = () => {
             <Stack spacing={1} sx={{ mt: 1 }}>
               <Stack direction="row" justifyContent="space-between">
                 <Typography variant="body2">Members</Typography>
-                <Chip label={communityData.stats.totalMembers} size="small" color="info" />
+                <Chip label={safeCommunityData.stats.totalMembers || 0} size="small" color="info" />
               </Stack>
               <Stack direction="row" justifyContent="space-between">
                 <Typography variant="body2">Active Orders</Typography>
-                <Chip label={communityData.stats.activeOrders} size="small" color="warning" />
+                <Chip label={safeCommunityData.stats.activeOrders || 0} size="small" color="warning" />
               </Stack>
             </Stack>
           </Paper>
@@ -388,7 +457,7 @@ const CommunityDashboard = () => {
                               Total Members
                             </Typography>
                             <Typography variant="h4" fontWeight="bold" color="info.main">
-                              {communityData.stats.totalMembers}
+                              {safeCommunityData.stats.totalMembers || 0}
                             </Typography>
                           </Box>
                           <Avatar sx={{ bgcolor: 'info.main', width: 56, height: 56 }}>
@@ -408,7 +477,7 @@ const CommunityDashboard = () => {
                               Active Orders
                             </Typography>
                             <Typography variant="h4" fontWeight="bold" color="warning.main">
-                              {communityData.stats.activeOrders}
+                              {safeCommunityData.stats.activeOrders || 0}
                             </Typography>
                           </Box>
                           <Avatar sx={{ bgcolor: 'warning.main', width: 56, height: 56 }}>
@@ -428,7 +497,7 @@ const CommunityDashboard = () => {
                               Monthly Savings
                             </Typography>
                             <Typography variant="h4" fontWeight="bold" color="success.main">
-                              ₹{(communityData.stats.monthlySavings / 1000).toFixed(1)}k
+                              ₹{((safeCommunityData.stats.monthlySavings || 0) / 1000).toFixed(1)}k
                             </Typography>
                           </Box>
                           <Avatar sx={{ bgcolor: 'success.main', width: 56, height: 56 }}>
@@ -448,7 +517,7 @@ const CommunityDashboard = () => {
                               Total Spent
                             </Typography>
                             <Typography variant="h4" fontWeight="bold" color="error.main">
-                              ₹{(communityData.stats.totalSpent / 1000).toFixed(0)}k
+                              ₹{((safeCommunityData.stats.totalSpent || 0) / 1000).toFixed(0)}k
                             </Typography>
                           </Box>
                           <Avatar sx={{ bgcolor: 'error.main', width: 56, height: 56 }}>
@@ -532,12 +601,12 @@ const CommunityDashboard = () => {
                           <Stack direction="row" justifyContent="space-between" sx={{ mb: 1 }}>
                             <Typography variant="body2">Overall Satisfaction</Typography>
                             <Typography variant="body2" fontWeight="bold">
-                              {communityData.stats.satisfaction}%
+                              {safeCommunityData.stats.satisfaction || 0}%
                             </Typography>
                           </Stack>
                           <LinearProgress 
                             variant="determinate" 
-                            value={communityData.stats.satisfaction}
+                            value={safeCommunityData.stats.satisfaction || 0}
                             sx={{ height: 8, borderRadius: 1 }}
                           />
                         </Box>
@@ -603,19 +672,19 @@ const CommunityDashboard = () => {
                         <Stack direction="row" justifyContent="space-between">
                           <Typography variant="body2">Bulk Orders</Typography>
                           <Typography variant="body2" fontWeight="bold">
-                            {communityData.stats.bulkOrders}
+                            {safeCommunityData.stats.bulkOrders || 0}
                           </Typography>
                         </Stack>
                         <Stack direction="row" justifyContent="space-between">
                           <Typography variant="body2">Avg Order Value</Typography>
                           <Typography variant="body2" fontWeight="bold">
-                            ₹{Math.floor(communityData.stats.totalSpent / communityData.stats.bulkOrders)}
+                            ₹{Math.floor((safeCommunityData.stats.totalSpent || 0) / Math.max(safeCommunityData.stats.bulkOrders || 1, 1))}
                           </Typography>
                         </Stack>
                         <Stack direction="row" justifyContent="space-between">
                           <Typography variant="body2">Savings per Member</Typography>
                           <Typography variant="body2" fontWeight="bold" color="success.main">
-                            ₹{Math.floor(communityData.stats.monthlySavings / communityData.stats.totalMembers)}
+                            ₹{Math.floor((safeCommunityData.stats.monthlySavings || 0) / Math.max(safeCommunityData.stats.totalMembers || 1, 1))}
                           </Typography>
                         </Stack>
                       </Stack>
@@ -888,19 +957,19 @@ const CommunityDashboard = () => {
                       <Stack direction="row" justifyContent="space-between">
                         <Typography variant="body2">Total Members</Typography>
                         <Typography variant="body2" fontWeight="bold">
-                          {communityData.stats.totalMembers}
+                          {safeCommunityData.stats.totalMembers || 0}
                         </Typography>
                       </Stack>
                       <Stack direction="row" justifyContent="space-between">
                         <Typography variant="body2">Bulk Orders</Typography>
                         <Typography variant="body2" fontWeight="bold">
-                          {communityData.stats.bulkOrders}
+                          {safeCommunityData.stats.bulkOrders || 0}
                         </Typography>
                       </Stack>
                       <Stack direction="row" justifyContent="space-between">
                         <Typography variant="body2">Total Savings</Typography>
                         <Chip 
-                          label={`₹${(communityData.stats.monthlySavings / 1000).toFixed(1)}k`}
+                          label={`₹${((safeCommunityData.stats.monthlySavings || 0) / 1000).toFixed(1)}k`}
                           size="small" 
                           color="success" 
                         />
@@ -920,17 +989,21 @@ const CommunityDashboard = () => {
                       <Grid item xs={12}>
                         <TextField 
                           fullWidth 
+                          name="communityName"
                           label="Community Name" 
-                          defaultValue={communityData.name} 
+                          value={profileForm.communityName}
+                          onChange={onProfileChange}
                         />
                       </Grid>
                       <Grid item xs={12}>
                         <TextField 
                           fullWidth 
+                          name="address"
                           label="Address" 
                           multiline 
                           rows={2} 
-                          defaultValue={communityData.address} 
+                          value={profileForm.address}
+                          onChange={onProfileChange}
                         />
                       </Grid>
                     </Grid>
@@ -946,35 +1019,43 @@ const CommunityDashboard = () => {
                       <Grid item xs={12} sm={6}>
                         <TextField 
                           fullWidth 
+                          name="name"
                           label="Manager Name" 
-                          defaultValue={communityData.manager.name} 
+                          value={profileForm.name}
+                          onChange={onProfileChange}
                         />
                       </Grid>
                       <Grid item xs={12} sm={6}>
                         <TextField 
                           fullWidth 
+                          name="position"
                           label="Position" 
-                          defaultValue={communityData.manager.position} 
+                          value={profileForm.position}
+                          onChange={onProfileChange}
                         />
                       </Grid>
                       <Grid item xs={12} sm={6}>
                         <TextField 
                           fullWidth 
+                          name="phone"
                           label="Phone" 
-                          defaultValue={communityData.manager.phone} 
+                          value={profileForm.phone}
+                          onChange={onProfileChange}
                         />
                       </Grid>
                       <Grid item xs={12} sm={6}>
                         <TextField 
                           fullWidth 
+                          name="email"
                           label="Email" 
                           type="email" 
-                          defaultValue={communityData.manager.email} 
+                          value={profileForm.email}
+                          onChange={onProfileChange}
                         />
                       </Grid>
                       <Grid item xs={12}>
                         <Stack direction="row" spacing={2}>
-                          <Button variant="contained" size="large" onClick={() => showSnackbar('Profile update feature coming soon', 'info')}>
+                          <Button variant="contained" size="large" onClick={handleProfileUpdate}>
                             Update Profile
                           </Button>
                           <Button variant="outlined" size="large" onClick={() => showSnackbar('Change password feature coming soon', 'info')}>

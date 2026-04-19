@@ -26,6 +26,7 @@ import wishlistRoutes from './routes/wishlist.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
 import vehicleRoutes from './routes/vehicle.routes.js';
 import analyticsRoutes from './routes/analytics.routes.js';
+import marketplaceRequestRoutes from './routes/marketplaceRequest.routes.js';
 
 // Import middleware
 import { errorHandler, notFoundHandler } from './middleware/error.middleware.js';
@@ -125,6 +126,7 @@ app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/marketplace-requests', marketplaceRequestRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -132,6 +134,16 @@ app.get('/api/health', (req, res) => {
     status: 'OK', 
     message: 'FarmKart API is running',
     timestamp: new Date().toISOString()
+  });
+});
+
+// Root route for direct backend URL hits
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'FarmKart backend is running',
+    apiBase: '/api',
+    health: '/api/health'
   });
 });
 

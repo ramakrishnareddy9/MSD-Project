@@ -16,15 +16,21 @@ const vehicleSchema = new mongoose.Schema({
     default: 'Truck'
   },
   capacity: {
-    type: String,
-    default: 'Standard'
+    type: Number,
+    default: 0,
+    min: 0,
+    set: (value) => {
+      if (value === null || value === undefined || value === '') return 0;
+      const parsed = Number(value);
+      return Number.isNaN(parsed) ? 0 : parsed;
+    }
   },
   plateNumber: {
     type: String
   },
   status: {
     type: String,
-    enum: ['Available', 'On Delivery', 'Maintenance', 'Inactive'],
+    enum: ['Available', 'In Transit', 'On Delivery', 'Maintenance', 'Inactive'],
     default: 'Available'
   },
   currentLocation: {

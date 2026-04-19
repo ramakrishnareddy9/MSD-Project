@@ -38,9 +38,21 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  farmName: String,
+  totalLand: String,
+  experience: String,
+  address: String,
+  businessType: String,
+  owner: String,
+  gst: String,
+  communityName: String,
+  position: String,
+  city: String,
+  licenseNumber: String,
+  accountType: String,
   roles: [{
     type: String,
-    enum: ['customer', 'farmer', 'business', 'restaurant', 'delivery', 'delivery_large', 'delivery_small', 'admin'],
+    enum: ['customer', 'farmer', 'business', 'travel_agency', 'restaurant', 'delivery', 'delivery_large', 'delivery_small', 'admin'],
     default: ['customer']
   }],
   status: {

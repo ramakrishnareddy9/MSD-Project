@@ -14,14 +14,16 @@ import {
   Store, DeliveryDining, Refresh, DoneAll
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { productAPI, orderAPI, authAPI, cartAPI, analyticsAPI, inventoryAPI } from '../../services/api';
+import { productAPI, orderAPI, authAPI, cartAPI, analyticsAPI, inventoryAPI, vehicleAPI, userAPI } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 
-const FLEET_KEY = 'restaurant_fleet';
-const INVENTORY_KEY = 'restaurant_inventory';
+const DEFAULT_PERFORMANCE = {
+  onTimeDelivery: 0,
+  qualityRating: 0
+};
 
 const RestaurantDashboard = () => {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
 
   // ── API-driven State ────────────────────────────────────────────────────────
   const [restaurantData, setRestaurantData] = useState(null);
@@ -48,6 +50,13 @@ const RestaurantDashboard = () => {
   const [cartLoading, setCartLoading] = useState(false);
   const [autoLoading, setAutoLoading] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    businessType: '',
+    address: ''
+  });
 
   // ── Initialize: Fetch restaurant data on mount ──────────────────────────────
   useEffect(() => {
@@ -55,77 +64,115 @@ const RestaurantDashboard = () => {
       try {
         setLoading(true);
 
-        // Get current user (restaurant profile)
         const userRes = await authAPI.getCurrentUser();
-        if (userRes.success) {
-          setRestaurantData(userRes.data);
+        if (!userRes.success) {
+          throw new Error('Unable to load authenticated user');
+        }
 
-          // Get restaurant's cart (ongoing bulk orders)
-          const cartRes = await cartAPI.getCart();
-          if (cartRes.success && cartRes.data?.items) {
-            const mappedCart = cartRes.data.items.map(item => ({
-              id: item.productId?._id || item.productId,
-              product: item.productId?.name || 'Product',
-              quantity: item.quantity || 0,
-              price: item.productId?.basePrice || 0,
-              supplier: item.productId?.ownerId?.name || 'Supplier'
-            }));
-            setCart(mappedCart);
-          }
+        const currentUser = userRes.data?.user || userRes.data;
+        if (!currentUser?._id) {
+          throw new Error('Invalid auth payload for restaurant dashboard');
+        }
 
-          // Get available products for bulk ordering
-          const productsRes = await productAPI.getAll({ status: 'active', limit: 50 });
-          if (productsRes.success && productsRes.data?.products) {
-            const mappedProducts = productsRes.data.products.map(p => ({
-              id: p._id || p.id,
-              product: p.name,
-              supplier: p.ownerId?.name || 'Farm',
-              price: p.basePrice || 0,
-              minOrder: p.minBulkQuantity || 20,
-              inStock: p.stockQuantity > 0,
-              unit: p.unit || 'kg'
-            }));
-            setProducts(mappedProducts);
-          }
+        setRestaurantData(currentUser);
+        setProfileForm({
+          name: currentUser.name || '',
+          email: currentUser.email || '',
+          phone: currentUser.phone || '',
+          businessType: currentUser.businessType || 'Restaurant',
+          address: currentUser.address || currentUser.addresses?.[0]?.line1 || ''
+        });
 
-          // Get restaurant's orders (bulk order history)
-          const ordersRes = await orderAPI.getAll({ buyerId: userRes.data._id });
-          if (ordersRes.success && ordersRes.data?.orders) {
-            const mappedOrders = ordersRes.data.orders.map((o, idx) => ({
-              id: idx + 1,
-              product: o.orderItems?.[0]?.productName || 'Product',
-              supplier: o.sellerId?.name || 'Supplier',
-              quantity: o.orderItems?.[0]?.quantity || 0,
-              amount: o.total || 0,
-              status: o.status || 'pending',
-              date: new Date(o.createdAt).toLocaleDateString()
-            }));
-            setOrders(mappedOrders);
+        const [cartRes, productsRes, ordersRes, inventoryRes, vehiclesRes, metricsRes] = await Promise.all([
+          cartAPI.getCart(),
+          productAPI.getAll({ status: 'active', limit: 50 }),
+          orderAPI.getAll({ buyerId: currentUser._id }),
+          inventoryAPI.getAll({ ownerId: currentUser._id }),
+          vehicleAPI.getAll({ ownerId: currentUser._id }),
+          analyticsAPI.getUserMetrics(currentUser._id)
+        ]);
 
-            setStats({
-              activeOrders: mappedOrders.filter(o => ['pending', 'confirmed', 'processing', 'shipped'].includes(o.status)).length,
-              monthlySpent: mappedOrders.reduce((sum, o) => sum + o.amount, 0),
-              totalOrders: mappedOrders.length,
-              pendingDelivery: mappedOrders.filter(o => o.status === 'shipped').length
-            });
-          }
+        if (cartRes.success && Array.isArray(cartRes.data?.items)) {
+          const mappedCart = cartRes.data.items
+            .map((item) => {
+              const product = item.product || item.productId;
+              if (!product?._id) return null;
+              return {
+                ...product,
+                quantity: Number(item.qty || item.quantity || 0),
+                minOrder: Number(product.minOrderQuantity || 1),
+                price: Number(product.basePrice || 0),
+                image: product.images?.[0] || '',
+                farmer: product.ownerId?.name || 'Farmer'
+              };
+            })
+            .filter(Boolean);
+          setCart(mappedCart);
+        }
 
-          // Get restaurant's inventory
-          const inventoryRes = await inventoryAPI.getAll({ ownerId: userRes.data._id });
-          if (inventoryRes.success && inventoryRes.data) {
-            const mappedInventory = inventoryRes.data.map((inv, idx) => ({
-              id: idx + 1,
+        if (productsRes.success) {
+          setProducts(productsRes.data?.products || []);
+        }
+
+        if (ordersRes.success) {
+          const fetchedOrders = ordersRes.data?.orders || [];
+          setOrders(fetchedOrders);
+          computeStats(fetchedOrders);
+
+          const scheduled = fetchedOrders
+            .filter(o => ['confirmed', 'shipped', 'in-transit'].includes(o.status) && o.deliveryDate)
+            .sort((a, b) => new Date(a.deliveryDate) - new Date(b.deliveryDate));
+          setDeliverySchedule(scheduled);
+
+          const notifs = fetchedOrders.slice(0, 5).map(o => ({
+            id: o._id,
+            type: o.status === 'delivered' ? 'success' : o.status === 'confirmed' ? 'info' : 'warning',
+            message: `Order ${o.orderNumber} — ${o.status}`,
+            timestamp: o.updatedAt || o.createdAt,
+            read: false
+          }));
+          setNotifications(notifs);
+        }
+
+        if (inventoryRes.success) {
+          const inventoryLots = inventoryRes.data?.inventory || inventoryRes.data?.lots || [];
+          const mappedInventory = inventoryLots.map((inv) => {
+            const available = Number(inv.quantity || 0) - Number(inv.reservedQuantity || 0);
+            const reorderLevel = Math.max(10, Math.ceil(Number(inv.quantity || 0) * 0.2));
+            return {
+              id: inv._id,
               product: inv.productId?.name || 'Product',
-              stock: inv.quantity || 0,
-              reorderLevel: inv.minStock || 10,
-              unit: inv.unit || 'kg',
-              status: inv.quantity > inv.minStock ? 'Good' : 'Low'
-            }));
-            setInventory(mappedInventory);
-          }
+              stock: Math.max(0, available),
+              reorderLevel,
+              unit: inv.productId?.unit || 'kg',
+              status: available > reorderLevel ? 'Good' : 'Low'
+            };
+          });
+          setInventory(mappedInventory);
+        }
+
+        if (vehiclesRes.success && Array.isArray(vehiclesRes.data)) {
+          const mappedFleet = vehiclesRes.data.map(v => ({
+            id: v._id,
+            name: v.name,
+            capacity: v.capacity || 0,
+            type: v.type || 'Other',
+            status: v.status || 'Available',
+            plateNumber: v.plateNumber || ''
+          }));
+          setFleet(mappedFleet);
+        }
+
+        const buyerMetrics = metricsRes?.data?.buyerMetrics;
+        if (buyerMetrics) {
+          setStats((prev) => ({
+            ...prev,
+            monthlySpent: buyerMetrics.totalSpent || prev.monthlySpent || 0
+          }));
         }
       } catch (error) {
         console.error('Error initializing restaurant data:', error);
+        setSnackbar({ open: true, message: 'Unable to load restaurant data from server', severity: 'error' });
       } finally {
         setLoading(false);
       }
@@ -134,47 +181,48 @@ const RestaurantDashboard = () => {
     initializeRestaurantData();
   }, []);
 
-  // Mutable fleet & inventory fetched from API or database
   const [fleet, setFleet] = useState([]);
-  const [inventory, setInventory] = useState([]);
 
-  // ─── Fetch Fleet & Inventory from API ─────────────────────────────────────
-  useEffect(() => {
-    const fetchFleetAndInventory = async () => {
-      try {
-        // TODO: Replace with actual API calls when available
-        // const fleetResponse = await deliveryAPI.getFleet();
-        // const inventoryResponse = await inventoryAPI.getInventory();
-        // setFleet(fleetResponse);
-        // setInventory(inventoryResponse);
-        
-        // For now, initialize with empty arrays
-        setFleet([]);
-        setInventory([]);
-      } catch (error) {
-        console.error('Error fetching fleet/inventory:', error);
-        setFleet([]);
-        setInventory([]);
+  const onProfileChange = (e) => {
+    const { name, value } = e.target;
+    setProfileForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleProfileUpdate = async () => {
+    if (!restaurantData?._id) {
+      setSnackbar({ open: true, message: 'Unable to update profile', severity: 'error' });
+      return;
+    }
+
+    try {
+      const payload = {
+        name: profileForm.name,
+        email: profileForm.email,
+        phone: profileForm.phone,
+        businessType: profileForm.businessType,
+        address: profileForm.address
+      };
+
+      const res = await userAPI.update(restaurantData._id, payload);
+      const updatedUser = res?.data?.user;
+      if (updatedUser) {
+        setRestaurantData(updatedUser);
+        updateUser(updatedUser);
       }
-    };
 
-    fetchFleetAndInventory();
-  }, []);
+      setSnackbar({ open: true, message: 'Profile updated successfully', severity: 'success' });
+    } catch (error) {
+      setSnackbar({ open: true, message: error.message || 'Failed to update profile', severity: 'error' });
+    }
+  };
 
   const [suppliers] = useState([
     { id: 1, name: 'Rohan Farmer', category: 'Vegetables', rating: 4.8, orders: 45 },
     { id: 2, name: 'Suman Farmer', category: 'Fruits',     rating: 4.7, orders: 38 }
   ]);
-  const [restaurantData] = useState({ stats: { onTimeDelivery: 96, qualityRating: 4.8 } });
   const [assignDialog, setAssignDialog] = useState({ open: false, riderId: null });
   const [addRiderDialog, setAddRiderDialog] = useState(false);
-  const [newRider, setNewRider] = useState({ name: '', capacity: 'Delivery Bag' });
-
-  const { user } = useAuth();
-
-  // ─── Persist fleet & inventory ───────────────────────────────────────────
-  useEffect(() => { localStorage.setItem(FLEET_KEY, JSON.stringify(fleet)); }, [fleet]);
-  useEffect(() => { localStorage.setItem(INVENTORY_KEY, JSON.stringify(inventory)); }, [inventory]);
+  const [newRider, setNewRider] = useState({ name: '', type: 'Bike', plate: '' });
 
   // ─── Data fetching ────────────────────────────────────────────────────────
   const fetchProducts = useCallback(async () => {
@@ -187,17 +235,10 @@ const RestaurantDashboard = () => {
       }
     } catch (error) {
       console.error('Error fetching products:', error);
+      setSnackbar({ open: true, message: 'Failed to load marketplace products', severity: 'error' });
     } finally {
       setCartLoading(false);
     }
-    // Fallback seed data
-    setProducts([
-      { _id: '1', name: 'Organic Tomatoes', basePrice: 30, unit: 'kg', images: ['https://images.unsplash.com/photo-1567306226416-28f0efdc88ce?w=300'], ownerId: { name: 'Rohan Farmer' }, categoryId: { name: 'Vegetables' }, minOrderQuantity: 5 },
-      { _id: '2', name: 'Fresh Carrots',    basePrice: 40, unit: 'kg', images: ['https://images.unsplash.com/photo-1447175008436-054170c2e979?w=300'], ownerId: { name: 'Rohan Farmer' }, categoryId: { name: 'Vegetables' }, minOrderQuantity: 5 },
-      { _id: '3', name: 'Bananas',          basePrice: 50, unit: 'kg', images: ['https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e?w=300'], ownerId: { name: 'Suman Farmer' }, categoryId: { name: 'Fruits' },     minOrderQuantity: 10 },
-      { _id: '4', name: 'Onions',           basePrice: 25, unit: 'kg', images: ['https://images.unsplash.com/photo-1518977676601-b53f82aba655?w=300'], ownerId: { name: 'Rohan Farmer' }, categoryId: { name: 'Vegetables' }, minOrderQuantity: 5 },
-      { _id: '5', name: 'Spinach',          basePrice: 35, unit: 'kg', images: ['https://images.unsplash.com/photo-1576045057995-568f588f82fb?w=300'], ownerId: { name: 'Suman Farmer' }, categoryId: { name: 'Greens' },     minOrderQuantity: 2 },
-    ]);
   }, []);
 
   const fetchOrders = useCallback(async () => {
@@ -226,20 +267,8 @@ const RestaurantDashboard = () => {
       }
     } catch (error) {
       console.error('Error fetching orders:', error);
+      setSnackbar({ open: true, message: 'Failed to load orders', severity: 'error' });
     }
-    // Fallback seeds
-    const seed = [
-      { _id: 'O001', orderNumber: 'RO001', createdAt: new Date().toISOString(), orderItems: [{productName:'Tomatoes',quantity:10,unit:'kg'},{productName:'Carrots',quantity:5,unit:'kg'}], total: 550,  status: 'delivered',  deliveryDate: new Date().toISOString() },
-      { _id: 'O002', orderNumber: 'RO002', createdAt: new Date().toISOString(), orderItems: [{productName:'Bananas',quantity:20,unit:'kg'}],                                                  total: 1000, status: 'in-transit', deliveryDate: new Date(Date.now()+86400000).toISOString() },
-    ];
-    setOrders(seed);
-    computeStats(seed);
-    const scheduled = seed.filter(o => ['confirmed','shipped','in-transit'].includes(o.status) && o.deliveryDate);
-    setDeliverySchedule(scheduled);
-    setNotifications([
-      { id: 1, type: 'info',    message: 'Your order RO002 is on the way!',     timestamp: new Date().toISOString(), read: false },
-      { id: 2, type: 'success', message: 'Order RO001 was delivered.',           timestamp: new Date().toISOString(), read: false },
-    ]);
   }, [user]);
 
   const computeStats = (list) => {
@@ -251,6 +280,10 @@ const RestaurantDashboard = () => {
       .reduce((s, o) => s + (o.total || o.subtotal || 0), 0);
     setStats({ activeOrders, monthlySpent, totalOrders: list.length, pendingDelivery });
   };
+
+  useEffect(() => {
+    computeStats(orders || []);
+  }, [orders]);
 
   const refreshAll = useCallback(async () => {
     await Promise.all([fetchProducts(), fetchOrders()]);
@@ -302,21 +335,36 @@ const RestaurantDashboard = () => {
     if (cart.length === 0) return;
     try {
       setCartLoading(true);
+      if (!user?._id) {
+        throw new Error('User session unavailable');
+      }
+
+      const resolvedSellerId = cart[0]?.ownerId?._id || cart[0]?.ownerId;
+      if (!resolvedSellerId) {
+        throw new Error('Unable to determine seller for this cart');
+      }
+
+      const hasMixedSellers = cart.some((item) => {
+        const itemSeller = item.ownerId?._id || item.ownerId;
+        return String(itemSeller) !== String(resolvedSellerId);
+      });
+
+      if (hasMixedSellers) {
+        throw new Error('All items in one order must belong to the same supplier');
+      }
+
+      const subtotal = getTotalAmount();
       const orderData = {
         type: 'b2b',
         buyerId: user._id,
-        sellerId: cart[0]?.ownerId?._id || cart[0]?.ownerId,
+        sellerId: resolvedSellerId,
         orderItems: cart.map(item => ({
-          productId: item._id, productName: item.name,
-          productImage: item.image || item.images?.[0],
-          farmerId: item.ownerId?._id || item.ownerId,
-          farmerName: item.farmer || item.ownerId?.name,
-          categoryId: item.categoryId?._id || item.categoryId,
-          quantity: item.quantity, unit: item.unit,
+          productId: item._id,
+          quantity: item.quantity,
           unitPrice: item.price || item.basePrice,
-          totalPrice: (item.price || item.basePrice) * item.quantity,
-          discountApplied: 0
+          totalPrice: (item.price || item.basePrice) * item.quantity
         })),
+        total: subtotal,
         deliveryAddress: user.addresses?.[0] || { line1: 'Restaurant Address', city: 'City', state: 'State', postalCode: '000000', country: 'India' },
         paymentMethod: 'prepaid'
       };
@@ -331,19 +379,7 @@ const RestaurantDashboard = () => {
       throw new Error(response.message || 'Failed to place order');
     } catch (error) {
       console.error('Order error:', error);
-      // Optimistic local update
-      const localOrder = {
-        _id: 'LOCAL_' + Date.now(),
-        orderNumber: 'RO' + Math.floor(Math.random() * 100000),
-        createdAt: new Date().toISOString(),
-        orderItems: cart.map(i => ({ productName: i.name, quantity: i.quantity, unit: i.unit })),
-        total: getTotalAmount(), status: 'pending',
-        deliveryDate: new Date(Date.now() + 86400000).toISOString()
-      };
-      setOrders(prev => [localOrder, ...prev]);
-      setCart([]);
-      setActiveSection('orders');
-      setSnackbar({ open: true, message: 'Order saved locally (backend unavailable)', severity: 'warning' });
+      setSnackbar({ open: true, message: error.message || 'Unable to place order', severity: 'error' });
     } finally {
       setCartLoading(false);
     }
@@ -376,40 +412,108 @@ const RestaurantDashboard = () => {
     }));
   };
 
-  const placeDailyOrder = () => {
+  const placeDailyOrder = async () => {
     const valid = dailyDraft.filter(i => i.quantity > 0);
     if (!valid.length) { setSnackbar({ open: true, message: 'Draft is empty!', severity: 'warning' }); return; }
-    setAutoLoading(true);
-    const tempOrder = {
-      _id: 'AUTO_' + Math.random().toString(36).substr(2, 9),
-      orderNumber: 'AO' + Math.floor(Math.random() * 100000),
-      createdAt: new Date().toISOString(),
-      orderItems: valid.map(i => ({ productName: i.name, quantity: i.quantity, unit: i.unit })),
-      total: valid.reduce((s, i) => s + i.price * i.quantity, 0),
-      status: 'confirmed',
-      deliveryDate: new Date(Date.now() + 86400000).toISOString()
-    };
-    setTimeout(() => {
-      setOrders(prev => [tempOrder, ...prev]);
+    try {
+      setAutoLoading(true);
+      const sellerId = valid[0]?.ownerId?._id || valid[0]?.ownerId;
+      const hasMixedSellers = valid.some((item) => {
+        const itemSeller = item.ownerId?._id || item.ownerId;
+        return String(itemSeller) !== String(sellerId);
+      });
+
+      if (!sellerId || hasMixedSellers) {
+        throw new Error('Auto-order draft must contain items from a single supplier');
+      }
+
+      const subtotal = valid.reduce((sum, item) => sum + (item.price || item.basePrice) * item.quantity, 0);
+      const payload = {
+        type: 'b2b',
+        buyerId: user._id,
+        sellerId,
+        orderItems: valid.map(item => ({
+          productId: item._id,
+          quantity: item.quantity,
+          unitPrice: item.price || item.basePrice,
+          totalPrice: (item.price || item.basePrice) * item.quantity
+        })),
+        total: subtotal,
+        deliveryAddress: user.addresses?.[0] || { line1: 'Restaurant Address', city: 'City', state: 'State', postalCode: '000000', country: 'India' },
+        paymentMethod: 'prepaid'
+      };
+
+      const response = await orderAPI.create(payload);
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to create auto-order');
+      }
+
       setDailyDraft([]);
       setActiveSection('orders');
-      setAutoLoading(false);
+      await fetchOrders();
       setSnackbar({ open: true, message: 'Auto-order confirmed and scheduled!', severity: 'success' });
-    }, 600);
+    } catch (error) {
+      setSnackbar({ open: true, message: error.message || 'Unable to place auto-order', severity: 'error' });
+    } finally {
+      setAutoLoading(false);
+    }
   };
 
   // ─── Fleet management ─────────────────────────────────────────────────────
-  const addRider = () => {
+  const addRider = async () => {
     if (!newRider.name.trim()) return;
-    const rider = { id: 'R' + Date.now(), name: newRider.name.trim(), capacity: newRider.capacity, status: 'Available' };
-    setFleet(prev => [...prev, rider]);
-    setNewRider({ name: '', capacity: 'Delivery Bag' });
-    setAddRiderDialog(false);
-    setSnackbar({ open: true, message: `Rider ${rider.name} added`, severity: 'success' });
+    try {
+      const created = await vehicleAPI.create({
+        name: newRider.name.trim(),
+        type: newRider.type,
+        plate: newRider.plate.trim(),
+        capacity: 0
+      });
+
+      if (created?.success) {
+        const vehicle = created.data;
+        setFleet(prev => [...prev, {
+          id: vehicle._id,
+          name: vehicle.name,
+          capacity: vehicle.capacity || 0,
+          type: vehicle.type || 'Other',
+          status: vehicle.status || 'Available',
+          plateNumber: vehicle.plateNumber || ''
+        }]);
+        setNewRider({ name: '', type: 'Bike', plate: '' });
+        setAddRiderDialog(false);
+        setSnackbar({ open: true, message: `Rider ${vehicle.name} added`, severity: 'success' });
+      }
+    } catch (error) {
+      setSnackbar({ open: true, message: error.message || 'Failed to add rider', severity: 'error' });
+    }
   };
-  const removeRider = (id) => setFleet(prev => prev.filter(r => r.id !== id));
-  const toggleRiderStatus = (id) => setFleet(prev => prev.map(r => r.id === id
-    ? { ...r, status: r.status === 'Available' ? 'Off-duty' : 'Available' } : r));
+
+  const removeRider = async (id) => {
+    try {
+      const response = await vehicleAPI.delete(id);
+      if (response?.success) {
+        setFleet(prev => prev.filter(r => r.id !== id));
+        setSnackbar({ open: true, message: 'Rider removed', severity: 'info' });
+      }
+    } catch (error) {
+      setSnackbar({ open: true, message: error.message || 'Failed to remove rider', severity: 'error' });
+    }
+  };
+
+  const toggleRiderStatus = async (id) => {
+    const rider = fleet.find(r => r.id === id);
+    if (!rider) return;
+    const nextStatus = rider.status === 'Available' ? 'Inactive' : 'Available';
+    try {
+      const response = await vehicleAPI.updateStatus(id, nextStatus);
+      if (response?.success) {
+        setFleet(prev => prev.map(r => r.id === id ? { ...r, status: nextStatus } : r));
+      }
+    } catch (error) {
+      setSnackbar({ open: true, message: error.message || 'Failed to update rider status', severity: 'error' });
+    }
+  };
 
   // ─── Inventory ────────────────────────────────────────────────────────────
   const recomputeInventoryStatus = (items) =>
@@ -440,6 +544,10 @@ const RestaurantDashboard = () => {
   ];
 
   const allSectionIds = menuItems.map(m => m.id);
+  const performance = {
+    onTimeDelivery: Number(restaurantData?.stats?.onTimeDelivery || DEFAULT_PERFORMANCE.onTimeDelivery),
+    qualityRating: Number(restaurantData?.stats?.qualityRating || DEFAULT_PERFORMANCE.qualityRating)
+  };
 
   const SidebarList = () => (
     <List>
@@ -577,16 +685,16 @@ const RestaurantDashboard = () => {
                         <Box>
                           <Stack direction="row" justifyContent="space-between" sx={{ mb: 1 }}>
                             <Typography variant="body2">On-Time Supply Delivery</Typography>
-                            <Typography variant="body2" fontWeight="bold">{restaurantData.stats.onTimeDelivery}%</Typography>
+                            <Typography variant="body2" fontWeight="bold">{performance.onTimeDelivery}%</Typography>
                           </Stack>
-                          <LinearProgress variant="determinate" value={restaurantData.stats.onTimeDelivery} sx={{ height: 8, borderRadius: 1 }} />
+                          <LinearProgress variant="determinate" value={performance.onTimeDelivery} sx={{ height: 8, borderRadius: 1 }} />
                         </Box>
                         <Box>
                           <Stack direction="row" justifyContent="space-between" sx={{ mb: 1 }}>
                             <Typography variant="body2">Ingredients Quality Rating</Typography>
-                            <Typography variant="body2" fontWeight="bold">{restaurantData.stats.qualityRating}/5.0</Typography>
+                            <Typography variant="body2" fontWeight="bold">{performance.qualityRating}/5.0</Typography>
                           </Stack>
-                          <LinearProgress variant="determinate" value={(restaurantData.stats.qualityRating / 5) * 100} color="success" sx={{ height: 8, borderRadius: 1 }} />
+                          <LinearProgress variant="determinate" value={(performance.qualityRating / 5) * 100} color="success" sx={{ height: 8, borderRadius: 1 }} />
                         </Box>
                       </Stack>
                     </Paper>
@@ -1058,9 +1166,10 @@ const RestaurantDashboard = () => {
                   <DialogContent>
                     <Stack spacing={2} sx={{ mt: 1 }}>
                       <TextField label="Rider Name" fullWidth value={newRider.name} onChange={(e) => setNewRider({ ...newRider, name: e.target.value })} />
-                      <TextField label="Type" fullWidth select value={newRider.capacity} onChange={(e) => setNewRider({ ...newRider, capacity: e.target.value })}>
-                        {['Delivery Bag', 'Delivery Box', 'Two-Wheeler', 'Three-Wheeler'].map(t => <MenuItem key={t} value={t}>{t}</MenuItem>)}
+                      <TextField label="Vehicle Type" fullWidth select value={newRider.type} onChange={(e) => setNewRider({ ...newRider, type: e.target.value })}>
+                        {['Bike', 'Car', 'Van', 'Truck', 'Other'].map(t => <MenuItem key={t} value={t}>{t}</MenuItem>)}
                       </TextField>
+                      <TextField label="Plate Number (optional)" fullWidth value={newRider.plate} onChange={(e) => setNewRider({ ...newRider, plate: e.target.value })} />
                     </Stack>
                   </DialogContent>
                   <DialogActions>
@@ -1201,34 +1310,52 @@ const RestaurantDashboard = () => {
                       <CardContent>
                         <Stack direction="row" spacing={3} alignItems="center" sx={{ mb: 3 }}>
                           <Avatar sx={{ width: 80, height: 80, bgcolor: 'primary.main', fontSize: 32 }}>
-                            {user?.name?.charAt(0) || 'R'}
+                            {(profileForm.name || restaurantData?.name || 'R').charAt(0)}
                           </Avatar>
                           <Box>
-                            <Typography variant="h5" fontWeight="bold">{user?.name || 'Restaurant Name'}</Typography>
-                            <Typography variant="body2" color="text.secondary">{user?.email || 'email@example.com'}</Typography>
-                            <Chip label={user?.role || 'restaurant'} size="small" color="primary" sx={{ mt: 1 }} />
+                            <Typography variant="h5" fontWeight="bold">{profileForm.name || restaurantData?.name || 'Restaurant Name'}</Typography>
+                            <Typography variant="body2" color="text.secondary">{profileForm.email || 'email@example.com'}</Typography>
+                            <Chip label={restaurantData?.roles?.[0] || 'restaurant'} size="small" color="primary" sx={{ mt: 1 }} />
                           </Box>
                         </Stack>
                         <Divider sx={{ my: 3 }} />
                         <Grid container spacing={2}>
                           <Grid item xs={12} sm={6}>
                             <Typography variant="caption" color="text.secondary">Phone</Typography>
-                            <Typography variant="body1">{user?.phone || 'Not provided'}</Typography>
+                            <Typography variant="body1">{profileForm.phone || 'Not provided'}</Typography>
                           </Grid>
                           <Grid item xs={12} sm={6}>
                             <Typography variant="caption" color="text.secondary">Member Since</Typography>
                             <Typography variant="body1">
-                              {user?.createdAt ? new Date(user.createdAt).toLocaleDateString('en-US', { month:'long', year:'numeric' }) : 'N/A'}
+                              {restaurantData?.createdAt ? new Date(restaurantData.createdAt).toLocaleDateString('en-US', { month:'long', year:'numeric' }) : 'N/A'}
                             </Typography>
                           </Grid>
-                          {user?.addresses?.length > 0 && (
+                          {(profileForm.address || restaurantData?.addresses?.length > 0) && (
                             <Grid item xs={12}>
                               <Typography variant="caption" color="text.secondary">Address</Typography>
                               <Typography variant="body1">
-                                {user.addresses[0].line1}, {user.addresses[0].city}, {user.addresses[0].state} — {user.addresses[0].postalCode}
+                                {profileForm.address || `${restaurantData?.addresses?.[0]?.line1 || ''}, ${restaurantData?.addresses?.[0]?.city || ''}, ${restaurantData?.addresses?.[0]?.state || ''} — ${restaurantData?.addresses?.[0]?.postalCode || ''}`}
                               </Typography>
                             </Grid>
                           )}
+                          <Grid item xs={12} sm={6}>
+                            <TextField fullWidth label="Restaurant Name" name="name" value={profileForm.name} onChange={onProfileChange} />
+                          </Grid>
+                          <Grid item xs={12} sm={6}>
+                            <TextField fullWidth label="Business Type" name="businessType" value={profileForm.businessType} onChange={onProfileChange} />
+                          </Grid>
+                          <Grid item xs={12} sm={6}>
+                            <TextField fullWidth label="Phone" name="phone" value={profileForm.phone} onChange={onProfileChange} />
+                          </Grid>
+                          <Grid item xs={12} sm={6}>
+                            <TextField fullWidth label="Email" name="email" type="email" value={profileForm.email} onChange={onProfileChange} />
+                          </Grid>
+                          <Grid item xs={12}>
+                            <TextField fullWidth label="Address" name="address" multiline rows={2} value={profileForm.address} onChange={onProfileChange} />
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Button variant="contained" onClick={handleProfileUpdate}>Update Profile</Button>
+                          </Grid>
                         </Grid>
                       </CardContent>
                     </Card>

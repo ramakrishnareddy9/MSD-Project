@@ -8,7 +8,20 @@ export const getAllVehicles = async (req, res) => {
     const { ownerId, status } = req.query;
     
     const query = {};
-    if (ownerId) query.owner = ownerId;
+    const isAdmin = req.user.roles?.includes('admin');
+
+    if (ownerId) {
+      if (!isAdmin && ownerId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to access vehicles for this owner'
+        });
+      }
+      query.owner = ownerId;
+    } else if (!isAdmin) {
+      query.owner = req.user._id;
+    }
+
     if (status) query.status = status;
     
     const vehicles = await Vehicle.find(query)
@@ -42,6 +55,16 @@ export const getVehicleById = async (req, res) => {
         message: 'Vehicle not found'
       });
     }
+
+    const isAdmin = req.user.roles?.includes('admin');
+    const isOwner = vehicle.owner && vehicle.owner._id.toString() === req.user._id.toString();
+    const isDriver = vehicle.driver && vehicle.driver._id.toString() === req.user._id.toString();
+    if (!isAdmin && !isOwner && !isDriver) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to view this vehicle'
+      });
+    }
     
     res.status(200).json({
       success: true,
@@ -60,7 +83,7 @@ export const getVehicleById = async (req, res) => {
 // @access  Private (Business, Delivery, Restaurant)
 export const createVehicle = async (req, res) => {
   try {
-    const { name, type, capacity, plateNumber } = req.body;
+    const { name, type, capacity, plateNumber, plate } = req.body;
     
     if (!name || !type) {
       return res.status(400).json({
@@ -74,7 +97,7 @@ export const createVehicle = async (req, res) => {
       name,
       type,
       capacity,
-      plateNumber,
+      plateNumber: plateNumber || plate,
       status: 'Available'
     });
     
@@ -112,9 +135,15 @@ export const updateVehicle = async (req, res) => {
       });
     }
     
+    const updatePayload = { ...req.body };
+    if (updatePayload.plate && !updatePayload.plateNumber) {
+      updatePayload.plateNumber = updatePayload.plate;
+      delete updatePayload.plate;
+    }
+
     const updatedVehicle = await Vehicle.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updatePayload,
       { new: true, runValidators: true }
     );
     
@@ -178,6 +207,14 @@ export const updateVehicleStatus = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Vehicle not found'
+      });
+    }
+
+    const isAdmin = req.user.roles?.includes('admin');
+    if (!isAdmin && vehicle.owner.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update this vehicle status'
       });
     }
     
@@ -248,6 +285,16 @@ export const updateVehicleLocation = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Vehicle not found'
+      });
+    }
+
+    const isAdmin = req.user.roles?.includes('admin');
+    const isOwner = vehicle.owner?.toString() === req.user._id.toString();
+    const isDriver = vehicle.driver?.toString() === req.user._id.toString();
+    if (!isAdmin && !isOwner && !isDriver) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update this vehicle location'
       });
     }
     
