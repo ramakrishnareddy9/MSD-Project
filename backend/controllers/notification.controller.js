@@ -5,10 +5,32 @@ import Notification from '../models/Notification.model.js';
 // @access  Private
 export const getNotifications = async (req, res) => {
   try {
-    const notifications = await Notification.find({ user: req.user._id })
-      .sort({ createdAt: -1 });
+    const { page = 1, limit = 10, type, unread } = req.query;
+    const parsedPage = Math.max(Number(page) || 1, 1);
+    const parsedLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
 
-    res.status(200).json({ success: true, data: notifications });
+    const query = { user: req.user._id };
+    if (type) query.type = type;
+    if (String(unread).toLowerCase() === 'true') query.isRead = false;
+
+    const [notifications, total] = await Promise.all([
+      Notification.find(query)
+        .sort({ createdAt: -1 })
+        .skip((parsedPage - 1) * parsedLimit)
+        .limit(parsedLimit),
+      Notification.countDocuments(query)
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: notifications,
+      pagination: {
+        page: parsedPage,
+        limit: parsedLimit,
+        total,
+        totalPages: Math.max(Math.ceil(total / parsedLimit), 1)
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

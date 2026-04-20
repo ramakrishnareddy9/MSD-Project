@@ -22,8 +22,8 @@ router.get('/', getAllVehicles);
 // Get vehicle by ID
 router.get('/:id', getVehicleById);
 
-// Create vehicle (Business, Delivery, Restaurant)
-router.post('/', authorize('business', 'delivery_large', 'delivery_small', 'restaurant'), createVehicle);
+// Create vehicle (Delivery partners and admin only)
+router.post('/', authorize('delivery', 'delivery_large', 'delivery_small', 'admin'), createVehicle);
 
 // Update vehicle
 router.put('/:id', updateVehicle);

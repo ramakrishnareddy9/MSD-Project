@@ -15,7 +15,7 @@ import {
   ShoppingCart, Refresh
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { authAPI, productAPI, orderAPI, inventoryAPI, analyticsAPI, deliveryAPI, categoryAPI, marketplaceRequestAPI, userAPI } from '../../services/api';
+import { authAPI, productAPI, orderAPI, inventoryAPI, analyticsAPI, deliveryAPI, categoryAPI, marketplaceRequestAPI, userAPI, notificationAPI } from '../../services/api';
 
 const defaultFarmerData = {
   _id: '',
@@ -70,6 +70,10 @@ const FarmerDashboard = () => {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [defaultCategoryId, setDefaultCategoryId] = useState('');
   const [cropCatalog, setCropCatalog] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationFilter, setNotificationFilter] = useState('all');
+  const [notificationPage, setNotificationPage] = useState(1);
+  const [notificationTotalPages, setNotificationTotalPages] = useState(1);
   const [profileForm, setProfileForm] = useState({
     name: '',
     farmName: '',
@@ -90,6 +94,15 @@ const FarmerDashboard = () => {
     }
   };
   const orders = myOrders;
+  const unreadCount = notifications.filter((n) => !n.read).length;
+  const mapNotification = (n) => ({
+    id: n._id || n.id,
+    title: n.title || 'Notification',
+    message: n.message || '',
+    time: new Date(n.createdAt || Date.now()).toLocaleString('en-IN'),
+    type: n.type === 'alert' ? 'warning' : n.type === 'order' ? 'success' : 'info',
+    read: !!n.isRead
+  });
   const selectedCropConfig = cropCatalog.find((crop) => crop.name === cropForm.type);
   const seasonOptions = selectedCropConfig?.seasons?.length
     ? selectedCropConfig.seasons
@@ -101,10 +114,12 @@ const FarmerDashboard = () => {
     business: request.requesterId?.name || 'Business/Restaurant/Community',
     crop: request.cropName || 'Crop',
     quantity: `${request.quantity || 0} ${request.unit || 'kg'}`,
-    priceOffered: Number(request.offeredPrice || request.farmerResponse?.offeredPrice || 0),
+    priceOffered: Number(request.currentOfferPrice ?? request.farmerResponse?.offeredPrice ?? request.offeredPrice ?? 0),
     location: request.location || 'India',
     deadline: request.requiredBy ? new Date(request.requiredBy).toLocaleDateString() : 'N/A',
     status: statusLabel,
+    rawStatus: request.status,
+    lastOfferedBy: request.lastOfferedBy,
     type: request.requesterType || request.requesterRole || 'business'
   });
 
@@ -182,7 +197,7 @@ const FarmerDashboard = () => {
           const openRequestsRes = await marketplaceRequestAPI.getOpenForFarmer();
           if (openRequestsRes.success) {
             const openRequests = openRequestsRes.data?.requests || [];
-            setGlobalOrders(openRequests.map((request) => mapRequestToOrderCard(request, 'Open')));
+            setGlobalOrders(openRequests.map((request) => mapRequestToOrderCard(request, request.status || 'Open')));
           }
 
           const acceptedRequestsRes = await marketplaceRequestAPI.getFarmerAccepted();
@@ -219,6 +234,8 @@ const FarmerDashboard = () => {
             }));
           }
 
+          await fetchNotifications(1, 'all');
+
         }
       } catch (error) {
         console.error('Error initializing farmer data:', error);
@@ -233,6 +250,18 @@ const FarmerDashboard = () => {
 
   const showSnackbar = (message, severity = 'success') => {
     setSnackbar({ open: true, message, severity });
+  };
+
+  const fetchNotifications = async (page = notificationPage, filter = notificationFilter) => {
+    const params = { page, limit: 8 };
+    if (filter === 'unread') params.unread = true;
+    if (filter !== 'all' && filter !== 'unread') params.type = filter;
+
+    const notificationsRes = await notificationAPI.getAll(params);
+    if (notificationsRes.success) {
+      setNotifications((notificationsRes.data || []).map(mapNotification));
+      setNotificationTotalPages(notificationsRes.pagination?.totalPages || 1);
+    }
   };
 
   useEffect(() => {
@@ -298,6 +327,31 @@ const FarmerDashboard = () => {
       showSnackbar(error.message || 'Failed to update profile', 'error');
     }
   };
+
+  const markAllNotificationsRead = async () => {
+    try {
+      await notificationAPI.markAllAsRead();
+      await fetchNotifications(notificationPage, notificationFilter);
+      showSnackbar('All notifications marked as read', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to update notifications', 'error');
+    }
+  };
+
+  const markNotificationRead = async (id) => {
+    try {
+      await notificationAPI.markAsRead(id);
+      await fetchNotifications(notificationPage, notificationFilter);
+    } catch {
+      setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, read: true } : n));
+    }
+  };
+
+  useEffect(() => {
+    if (activeSection === 'notifications') {
+      fetchNotifications(notificationPage, notificationFilter);
+    }
+  }, [activeSection, notificationPage, notificationFilter]);
 
   const addCrop = async (e) => {
     e.preventDefault();
@@ -399,7 +453,7 @@ const FarmerDashboard = () => {
     { id: 'orders', label: 'Orders', icon: <Store />, badge: safeFarmerData.stats.pendingOrders },
     { id: 'marketplace', label: 'Order Marketplace', icon: <ShoppingCart />, badge: globalOrders.filter(o => o.status === 'Open').length },
     { id: 'inventory', label: 'Inventory', icon: <Inventory /> },
-    { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: 3 },
+    { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: unreadCount || null },
     { id: 'profile', label: 'Profile', icon: <AccountCircle /> },
   ];
 
@@ -1167,23 +1221,60 @@ const FarmerDashboard = () => {
                                 </Stack>
                               </Stack>
                               
-                              <Button 
-                                variant="contained" 
-                                fullWidth
-                                startIcon={<CheckCircle />}
-                                onClick={async () => {
-                                  try {
-                                    await marketplaceRequestAPI.respond(order.id, { action: 'accept' });
-                                    setMyAcceptedOrders((prev) => [...prev, { ...order, status: 'Accepted' }]);
-                                    setGlobalOrders((prev) => prev.filter((o) => o.id !== order.id));
-                                    showSnackbar(`Request accepted! You will supply ${order.quantity} of ${order.crop} to ${order.business}`, 'success');
-                                  } catch (error) {
-                                    showSnackbar(error.message || 'Failed to accept request', 'error');
-                                  }
-                                }}
-                              >
-                                Accept Request
-                              </Button>
+                              <Stack direction="row" spacing={1}>
+                                <Button
+                                  variant="contained"
+                                  fullWidth
+                                  startIcon={<CheckCircle />}
+                                  onClick={async () => {
+                                    try {
+                                      await marketplaceRequestAPI.respond(order.id, { action: 'accept' });
+                                      setMyAcceptedOrders((prev) => [...prev, { ...order, status: 'Accepted' }]);
+                                      setGlobalOrders((prev) => prev.filter((o) => o.id !== order.id));
+                                      showSnackbar(`Request accepted! You will supply ${order.quantity} of ${order.crop} to ${order.business}`, 'success');
+                                    } catch (error) {
+                                      showSnackbar(error.message || 'Failed to accept request', 'error');
+                                    }
+                                  }}
+                                >
+                                  Accept
+                                </Button>
+                                <Button
+                                  variant="outlined"
+                                  color="warning"
+                                  onClick={async () => {
+                                    const counter = Number(window.prompt('Enter your counter offer price per kg', String(order.priceOffered || 0)));
+                                    if (!counter || Number.isNaN(counter) || counter <= 0) {
+                                      showSnackbar('Valid counter offer is required', 'error');
+                                      return;
+                                    }
+                                    try {
+                                      await marketplaceRequestAPI.respond(order.id, { action: 'counter', offeredPrice: counter });
+                                      setGlobalOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, priceOffered: counter, status: 'countered' } : o)));
+                                      showSnackbar('Counter offer sent to buyer', 'success');
+                                    } catch (error) {
+                                      showSnackbar(error.message || 'Failed to send counter offer', 'error');
+                                    }
+                                  }}
+                                >
+                                  Counter
+                                </Button>
+                                <Button
+                                  variant="text"
+                                  color="error"
+                                  onClick={async () => {
+                                    try {
+                                      await marketplaceRequestAPI.respond(order.id, { action: 'decline' });
+                                      setGlobalOrders((prev) => prev.filter((o) => o.id !== order.id));
+                                      showSnackbar('Request declined', 'info');
+                                    } catch (error) {
+                                      showSnackbar(error.message || 'Failed to decline request', 'error');
+                                    }
+                                  }}
+                                >
+                                  Decline
+                                </Button>
+                              </Stack>
                             </Stack>
                           </CardContent>
                         </Card>
@@ -1246,13 +1337,28 @@ const FarmerDashboard = () => {
                 <Grid container spacing={3}>
                   <Grid item xs={12}>
                     <Paper sx={{ p: 3 }}>
+                      <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap' }}>
+                        {['all', 'unread', 'order', 'payment', 'delivery'].map((filter) => (
+                          <Button
+                            key={filter}
+                            size="small"
+                            variant={notificationFilter === filter ? 'contained' : 'outlined'}
+                            onClick={() => {
+                              setNotificationFilter(filter);
+                              setNotificationPage(1);
+                            }}
+                          >
+                            {filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
+                          </Button>
+                        ))}
+                      </Stack>
                       <Stack spacing={2}>
-                        {[
-                          { id: 1, title: 'New Order Received', message: 'You have a new order for 50kg of wheat', time: '10 minutes ago', type: 'success', read: false },
-                          { id: 2, title: 'Payment Received', message: 'Payment of ₹2,500 has been credited', time: '2 hours ago', type: 'success', read: false },
-                          { id: 3, title: 'Crop Update Reminder', message: 'Update your crop inventory for better visibility', time: '1 day ago', type: 'warning', read: true },
-                        ].map((notification) => (
-                          <Card key={notification.id} sx={{ bgcolor: notification.read ? 'background.paper' : 'action.hover' }}>
+                        {notifications.map((notification) => (
+                          <Card
+                            key={notification.id}
+                            sx={{ bgcolor: notification.read ? 'background.paper' : 'action.hover', cursor: notification.read ? 'default' : 'pointer' }}
+                            onClick={() => !notification.read && markNotificationRead(notification.id)}
+                          >
                             <CardContent>
                               <Stack direction="row" spacing={2} alignItems="flex-start">
                                 <Avatar sx={{ 
@@ -1290,9 +1396,16 @@ const FarmerDashboard = () => {
                           </Card>
                         ))}
                       </Stack>
-                      <Button fullWidth variant="outlined" sx={{ mt: 3 }} onClick={() => showSnackbar('All notifications marked as read', 'success')}>
+                      <Button fullWidth variant="outlined" sx={{ mt: 3 }} onClick={markAllNotificationsRead}>
                         Mark All as Read
                       </Button>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 2 }}>
+                        <Typography variant="caption" color="text.secondary">Page {notificationPage} of {notificationTotalPages}</Typography>
+                        <Stack direction="row" spacing={1}>
+                          <Button size="small" variant="outlined" disabled={notificationPage <= 1} onClick={() => setNotificationPage((p) => Math.max(1, p - 1))}>Prev</Button>
+                          <Button size="small" variant="outlined" disabled={notificationPage >= notificationTotalPages} onClick={() => setNotificationPage((p) => Math.min(notificationTotalPages, p + 1))}>Next</Button>
+                        </Stack>
+                      </Stack>
                     </Paper>
                   </Grid>
                 </Grid>

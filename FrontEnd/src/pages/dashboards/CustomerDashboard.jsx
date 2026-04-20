@@ -23,7 +23,7 @@ import {
 } from 'recharts';
 import { useAuth } from '../../contexts/AuthContext';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { authAPI, productAPI, cartAPI, wishlistAPI, orderAPI, communityAPI, userAPI } from '../../services/api';
+import { authAPI, productAPI, cartAPI, wishlistAPI, orderAPI, communityAPI, userAPI, notificationAPI, marketplaceRequestAPI } from '../../services/api';
 
 const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1488459716781-6f03ee1b563b?w=800&h=600&fit=crop&q=80';
 
@@ -62,6 +62,11 @@ const CustomerDashboard = () => {
   const [chatMessages, setChatMessages] = useState({});
   const [chatInput, setChatInput] = useState('');
   const [selectedChatCommunity, setSelectedChatCommunity] = useState('');
+  const [notifications, setNotifications] = useState([]);
+  const [notificationFilter, setNotificationFilter] = useState('all');
+  const [notificationPage, setNotificationPage] = useState(1);
+  const [notificationTotalPages, setNotificationTotalPages] = useState(1);
+  const [negotiations, setNegotiations] = useState([]);
   const [profileForm, setProfileForm] = useState({
     name: '',
     email: '',
@@ -268,7 +273,14 @@ const CustomerDashboard = () => {
             calculateAnalytics(mappedOrders);
           }
 
+          const requestsRes = await marketplaceRequestAPI.getMyRequests({ limit: 25 });
+          if (requestsRes.success) {
+            setNegotiations(requestsRes.data?.requests || []);
+          }
+
           await refreshCommunities(currentUser._id);
+
+          await fetchNotifications(1, 'all');
         }
       } catch (error) {
         console.error('Error initializing customer data:', error);
@@ -328,6 +340,52 @@ const CustomerDashboard = () => {
   const showSnackbar = (message, severity = 'success') => {
     setSnackbar({ open: true, message, severity });
   };
+
+  const fetchNotifications = async (page = notificationPage, filter = notificationFilter) => {
+    const params = { page, limit: 8 };
+    if (filter === 'unread') params.unread = true;
+    if (filter !== 'all' && filter !== 'unread') params.type = filter;
+
+    const notificationsRes = await notificationAPI.getAll(params);
+    if (notificationsRes.success) {
+      setNotifications((notificationsRes.data || []).map((n) => ({
+        id: n._id || n.id,
+        title: n.title || 'Notification',
+        message: n.message || '',
+        time: new Date(n.createdAt || Date.now()).toLocaleString('en-IN'),
+        type: n.type === 'alert' ? 'warning' : n.type === 'order' ? 'success' : 'info',
+        read: !!n.isRead
+      })));
+      setNotificationTotalPages(notificationsRes.pagination?.totalPages || 1);
+    }
+  };
+
+  const unreadNotifications = notifications.filter((n) => !n.read).length;
+
+  const markNotificationRead = async (id) => {
+    try {
+      await notificationAPI.markAsRead(id);
+      await fetchNotifications(notificationPage, notificationFilter);
+    } catch {
+      setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, read: true } : n));
+    }
+  };
+
+  const markAllNotificationsRead = async () => {
+    try {
+      await notificationAPI.markAllAsRead();
+      await fetchNotifications(notificationPage, notificationFilter);
+      showSnackbar('All notifications marked as read', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to update notifications', 'error');
+    }
+  };
+
+  useEffect(() => {
+    if (activeSection === 'notifications') {
+      fetchNotifications(notificationPage, notificationFilter);
+    }
+  }, [activeSection, notificationPage, notificationFilter]);
 
   const onProfileChange = (e) => {
     const { name, value } = e.target;
@@ -414,6 +472,65 @@ const CustomerDashboard = () => {
       showSnackbar(exists ? `Increased quantity of ${product.name}` : `${product.name} added to cart!`, exists ? 'info' : 'success');
     } catch {
       showSnackbar('Unable to add item to cart right now', 'error');
+    }
+  };
+
+  const refreshNegotiations = async () => {
+    try {
+      const res = await marketplaceRequestAPI.getMyRequests({ limit: 25 });
+      if (res.success) {
+        setNegotiations(res.data?.requests || []);
+      }
+    } catch {
+      // Keep shopping flow available when negotiation fetch fails.
+    }
+  };
+
+  const createNegotiation = async (product) => {
+    const qty = Number(product.minBulkQty || 1);
+    const basePrice = Number(product.price || 0);
+    const offeredPrice = Number(window.prompt(`Enter your offer price per ${product.unit || 'kg'} (₹${basePrice} suggested)`, String(basePrice)));
+
+    if (!offeredPrice || Number.isNaN(offeredPrice) || offeredPrice <= 0) {
+      showSnackbar('Valid offered price is required', 'error');
+      return;
+    }
+
+    try {
+      await marketplaceRequestAPI.create({
+        productId: product.id,
+        cropName: product.name,
+        quantity: qty,
+        unit: product.unit || 'kg',
+        offeredPrice,
+        requesterType: 'customer',
+        location: profileForm.city || 'India',
+        notes: `Customer negotiation request for ${qty} ${product.unit || 'kg'}`
+      });
+      await refreshNegotiations();
+      showSnackbar('Negotiation request sent to farmer', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to create negotiation', 'error');
+    }
+  };
+
+  const handleNegotiationAction = async (request, action) => {
+    try {
+      if (action === 'counter') {
+        const current = Number(request.currentOfferPrice ?? request.offeredPrice ?? 0);
+        const counter = Number(window.prompt('Enter your counter offer price', String(current)));
+        if (!counter || Number.isNaN(counter) || counter <= 0) {
+          showSnackbar('Valid counter offer is required', 'error');
+          return;
+        }
+        await marketplaceRequestAPI.buyerRespond(request._id, { action: 'counter', offeredPrice: counter });
+      } else {
+        await marketplaceRequestAPI.buyerRespond(request._id, { action });
+      }
+      await refreshNegotiations();
+      showSnackbar(`Negotiation ${action} completed`, 'success');
+    } catch (error) {
+      showSnackbar(error.message || `Failed to ${action} negotiation`, 'error');
     }
   };
 
@@ -704,6 +821,7 @@ const CustomerDashboard = () => {
   // ─── Sidebar Menu ──────────────────────────────────────────────────────────
   const menuItems = [
     { id: 'browse', label: 'Browse Products', icon: <Store /> },
+    { id: 'negotiations', label: 'Negotiations', icon: <LocalOffer />, badge: negotiations.filter((r) => ['open', 'countered'].includes(r.status)).length || 0 },
     { id: 'cart', label: 'My Cart', icon: <ShoppingCart />, badge: cart.length },
     { id: 'community-orders', label: 'Community Orders', icon: <Inventory />, badge: Object.keys(communityPool).length > 0 ? '!' : 0 },
     { id: 'communities', label: 'My Communities', icon: <Groups />, badge: myCommunities.length },
@@ -712,7 +830,7 @@ const CustomerDashboard = () => {
     { id: 'contributions', label: 'My Contributions', icon: <Assignment /> },
     { id: 'analytics', label: 'Analytics', icon: <BarChartIcon /> },
     { id: 'wishlist', label: 'Wishlist', icon: <Favorite />, badge: wishlist.length },
-    { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: 2 },
+    { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: unreadNotifications },
     { id: 'profile', label: 'Profile', icon: <AccountCircle /> },
   ];
 
@@ -806,6 +924,16 @@ const CustomerDashboard = () => {
                 Add
               </Button>
             </Stack>
+            <Button
+              variant="outlined"
+              color="warning"
+              size="small"
+              fullWidth
+              sx={{ textTransform: 'none' }}
+              onClick={() => createNegotiation(product)}
+            >
+              Negotiate Price
+            </Button>
           </Box>
         </CardActions>
       </Card>
@@ -974,6 +1102,51 @@ const CustomerDashboard = () => {
                     <Typography variant="body2" color="text.secondary">Try adjusting your search or filter criteria</Typography>
                   </Paper>
                 )}
+              </Box>
+            )}
+
+            {activeSection === 'negotiations' && (
+              <Box>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
+                  <Typography variant="h5" fontWeight="bold">Price Negotiations</Typography>
+                  <Button variant="outlined" startIcon={<Refresh />} onClick={refreshNegotiations}>Refresh</Button>
+                </Stack>
+                <Paper sx={{ p: 3 }}>
+                  <Stack spacing={2}>
+                    {negotiations.map((request) => {
+                      const currentPrice = Number(request.currentOfferPrice ?? request.offeredPrice ?? 0);
+                      const buyerTurn = request.status === 'countered' && request.lastOfferedBy === 'farmer';
+
+                      return (
+                        <Card key={request._id} variant="outlined">
+                          <CardContent>
+                            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }}>
+                              <Box>
+                                <Typography variant="subtitle1" fontWeight="bold">{request.cropName} • {request.quantity} {request.unit || 'kg'}</Typography>
+                                <Typography variant="body2" color="text.secondary">Current negotiated price: ₹{currentPrice}/kg</Typography>
+                                <Chip size="small" sx={{ mt: 1 }} label={request.status} color={request.status === 'accepted' ? 'success' : request.status === 'declined' || request.status === 'cancelled' ? 'error' : 'warning'} />
+                              </Box>
+                              <Stack direction="row" spacing={1}>
+                                {buyerTurn && (
+                                  <>
+                                    <Button size="small" variant="contained" color="success" onClick={() => handleNegotiationAction(request, 'accept')}>Accept</Button>
+                                    <Button size="small" variant="outlined" color="warning" onClick={() => handleNegotiationAction(request, 'counter')}>Counter</Button>
+                                  </>
+                                )}
+                                {['open', 'countered'].includes(request.status) && (
+                                  <Button size="small" variant="text" color="error" onClick={() => handleNegotiationAction(request, 'cancel')}>Cancel</Button>
+                                )}
+                              </Stack>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                    {negotiations.length === 0 && (
+                      <Typography color="text.secondary" textAlign="center" py={3}>No negotiations yet. Start from Browse Products.</Typography>
+                    )}
+                  </Stack>
+                </Paper>
               </Box>
             )}
 
@@ -1552,14 +1725,27 @@ const CustomerDashboard = () => {
               <Box>
                 <Typography variant="h5" fontWeight="bold" gutterBottom sx={{ mb: 3 }}>Notifications</Typography>
                 <Paper sx={{ p: 3 }}>
+                  {unreadNotifications > 0 && (
+                    <Button variant="outlined" sx={{ mb: 2 }} onClick={markAllNotificationsRead}>Mark All as Read</Button>
+                  )}
+                  <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap' }}>
+                    {['all', 'unread', 'order', 'payment', 'delivery'].map((filter) => (
+                      <Button
+                        key={filter}
+                        size="small"
+                        variant={notificationFilter === filter ? 'contained' : 'outlined'}
+                        onClick={() => {
+                          setNotificationFilter(filter);
+                          setNotificationPage(1);
+                        }}
+                      >
+                        {filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
+                      </Button>
+                    ))}
+                  </Stack>
                   <Stack spacing={2}>
-                    {[
-                      { id: 1, title: 'Community Pool Update', message: 'Organic Wheat has reached 70% of bulk minimum in Green Valley Residents', time: '20 min ago', type: 'info', read: false },
-                      { id: 2, title: 'Bulk Order Placed', message: 'Your community admin has placed a bulk order for Fresh Tomatoes', time: '2 hours ago', type: 'success', read: false },
-                      { id: 3, title: 'New Community Member', message: 'Diana Prince joined Green Valley Residents', time: '5 hours ago', type: 'info', read: true },
-                      { id: 4, title: 'Product Allocated', message: 'Your share of Basmati Rice (10kg) is ready for pickup', time: '1 day ago', type: 'success', read: true },
-                    ].map((n) => (
-                      <Card key={n.id} sx={{ bgcolor: n.read ? 'background.paper' : 'action.hover' }}>
+                    {notifications.map((n) => (
+                      <Card key={n.id} sx={{ bgcolor: n.read ? 'background.paper' : 'action.hover', cursor: n.read ? 'default' : 'pointer' }} onClick={() => !n.read && markNotificationRead(n.id)}>
                         <CardContent>
                           <Stack direction="row" spacing={2} alignItems="flex-start">
                             <Avatar sx={{ bgcolor: n.type === 'success' ? 'success.main' : 'info.main', width: 40, height: 40 }}>
@@ -1579,6 +1765,13 @@ const CustomerDashboard = () => {
                         </CardContent>
                       </Card>
                     ))}
+                  </Stack>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 2 }}>
+                    <Typography variant="caption" color="text.secondary">Page {notificationPage} of {notificationTotalPages}</Typography>
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" variant="outlined" disabled={notificationPage <= 1} onClick={() => setNotificationPage((p) => Math.max(1, p - 1))}>Prev</Button>
+                      <Button size="small" variant="outlined" disabled={notificationPage >= notificationTotalPages} onClick={() => setNotificationPage((p) => Math.min(notificationTotalPages, p + 1))}>Next</Button>
+                    </Stack>
                   </Stack>
                 </Paper>
               </Box>

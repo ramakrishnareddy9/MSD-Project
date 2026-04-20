@@ -1,5 +1,84 @@
 import Product from '../models/Product.model.js';
+import User from '../models/User.model.js';
+import InventoryLot from '../models/InventoryLot.model.js';
+import Location from '../models/Location.model.js';
 import { CROP_CATALOG, getCropByName } from '../constants/cropCatalog.js';
+
+const DEFAULT_COORDINATES = [78.4867, 17.3850];
+
+const resolveAddress = (owner) => {
+  const primaryAddress = owner?.addresses?.[0];
+  if (primaryAddress) {
+    return {
+      line1: primaryAddress.line1,
+      line2: primaryAddress.line2 || '',
+      city: primaryAddress.city,
+      state: primaryAddress.state,
+      postalCode: primaryAddress.postalCode,
+      country: primaryAddress.country || 'India'
+    };
+  }
+
+  return {
+    line1: owner?.address || 'Auto-generated farm location',
+    line2: '',
+    city: owner?.city || 'Hyderabad',
+    state: 'TS',
+    postalCode: '500001',
+    country: 'India'
+  };
+};
+
+const ensureOwnerLocation = async (ownerId) => {
+  let location = await Location.findOne({ ownerId, status: 'active' }).sort({ createdAt: 1 });
+  if (location) {
+    return location;
+  }
+
+  const owner = await User.findById(ownerId).select('name address city addresses');
+  const address = resolveAddress(owner);
+
+  location = await Location.create({
+    type: 'farm',
+    name: `${owner?.name || 'Farmer'} Farm`,
+    ownerId,
+    address,
+    coordinates: {
+      type: 'Point',
+      coordinates: DEFAULT_COORDINATES
+    },
+    status: 'active'
+  });
+
+  return location;
+};
+
+const syncPrimaryInventoryLot = async (product, forceQuantity = null) => {
+  let lot = await InventoryLot.findOne({ productId: product._id }).sort({ createdAt: 1 });
+  const hasForcedQuantity = forceQuantity != null;
+
+  if (!lot) {
+    const location = await ensureOwnerLocation(product.ownerId);
+    lot = await InventoryLot.create({
+      productId: product._id,
+      locationId: location._id,
+      quantity: Math.max(0, Number(hasForcedQuantity ? forceQuantity : product.stockQuantity || 0)),
+      reservedQuantity: 0,
+      qualityGrade: 'A'
+    });
+    return lot;
+  }
+
+  if (hasForcedQuantity) {
+    const targetQuantity = Math.max(Number(forceQuantity || 0), Number(lot.reservedQuantity || 0));
+    if (lot.quantity !== targetQuantity) {
+      lot.quantity = targetQuantity;
+      await lot.save();
+    }
+  }
+
+  return lot;
+};
 
 export const getCropCatalog = async (req, res) => {
   try {
@@ -35,7 +114,12 @@ export const getAllProducts = async (req, res) => {
     
     const query = {};
     if (category) query.categoryId = category;
-    if (ownerId) query.ownerId = ownerId;
+    if (ownerId) {
+      query.ownerId = ownerId;
+    } else {
+      const farmerUsers = await User.find({ roles: 'farmer', status: 'active' }).select('_id');
+      query.ownerId = { $in: farmerUsers.map((u) => u._id) };
+    }
     // Keep marketplace/public listings active by default,
     // but allow owners to fetch all their products when status is not specified.
     if (status) {
@@ -142,6 +226,13 @@ export const createProduct = async (req, res) => {
     const product = new Product(req.body);
     await product.save();
 
+    try {
+      await syncPrimaryInventoryLot(product, Number(product.stockQuantity || 0));
+    } catch (syncError) {
+      await Product.findByIdAndDelete(product._id);
+      throw syncError;
+    }
+
     res.status(201).json({
       success: true,
       message: 'Product created successfully',
@@ -157,6 +248,7 @@ export const createProduct = async (req, res) => {
 
 export const updateProduct = async (req, res) => {
   try {
+    const stockQuantityProvided = Object.prototype.hasOwnProperty.call(req.body, 'stockQuantity');
     const product = await Product.findById(req.params.id);
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
@@ -195,6 +287,12 @@ export const updateProduct = async (req, res) => {
     Object.assign(product, req.body);
     await product.save();
 
+    if (stockQuantityProvided) {
+      await syncPrimaryInventoryLot(product, Number(product.stockQuantity || 0));
+    } else {
+      await syncPrimaryInventoryLot(product);
+    }
+
     res.json({ success: true, message: 'Product updated successfully', data: { product } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -214,6 +312,7 @@ export const deleteProduct = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Forbidden: Only the owner or admin can delete this product' });
     }
 
+    await InventoryLot.deleteMany({ productId: product._id });
     await product.deleteOne();
     res.json({ success: true, message: 'Product deleted successfully' });
   } catch (error) {

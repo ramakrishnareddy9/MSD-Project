@@ -112,6 +112,10 @@ const orderSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'PriceAgreement'
   },
+  marketplaceRequestId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'MarketplaceRequest'
+  },
   // Delivery Tracking
   delivery: {
     shipmentId: {
@@ -121,6 +125,20 @@ const orderSchema = new mongoose.Schema({
     deliveryTaskId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'DeliveryTask'
+    },
+    requestedVehicleId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Vehicle'
+    },
+    requestedPartnerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    requestedAt: Date,
+    requestStatus: {
+      type: String,
+      enum: ['none', 'requested', 'accepted', 'rejected'],
+      default: 'none'
     },
     trackingNumber: String,
     estimatedDelivery: Date,

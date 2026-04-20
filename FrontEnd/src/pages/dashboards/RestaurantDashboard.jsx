@@ -14,7 +14,7 @@ import {
   Store, DeliveryDining, Refresh, DoneAll
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { productAPI, orderAPI, authAPI, cartAPI, analyticsAPI, inventoryAPI, vehicleAPI, userAPI } from '../../services/api';
+import { productAPI, orderAPI, authAPI, cartAPI, analyticsAPI, inventoryAPI, vehicleAPI, userAPI, notificationAPI, marketplaceRequestAPI } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 
 const DEFAULT_PERFORMANCE = {
@@ -47,6 +47,10 @@ const RestaurantDashboard = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [deliverySchedule, setDeliverySchedule] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [notificationFilter, setNotificationFilter] = useState('all');
+  const [notificationPage, setNotificationPage] = useState(1);
+  const [notificationTotalPages, setNotificationTotalPages] = useState(1);
+  const [negotiations, setNegotiations] = useState([]);
   const [cartLoading, setCartLoading] = useState(false);
   const [autoLoading, setAutoLoading] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
@@ -85,10 +89,10 @@ const RestaurantDashboard = () => {
 
         const [cartRes, productsRes, ordersRes, inventoryRes, vehiclesRes, metricsRes] = await Promise.all([
           cartAPI.getCart(),
-          productAPI.getAll({ status: 'active', limit: 50 }),
+          productAPI.getAll({ status: 'active', limit: 200 }),
           orderAPI.getAll({ buyerId: currentUser._id }),
           inventoryAPI.getAll({ ownerId: currentUser._id }),
-          vehicleAPI.getAll({ ownerId: currentUser._id }),
+          vehicleAPI.getMarketplaceVehicles({ status: 'Available' }),
           analyticsAPI.getUserMetrics(currentUser._id)
         ]);
 
@@ -124,14 +128,7 @@ const RestaurantDashboard = () => {
             .sort((a, b) => new Date(a.deliveryDate) - new Date(b.deliveryDate));
           setDeliverySchedule(scheduled);
 
-          const notifs = fetchedOrders.slice(0, 5).map(o => ({
-            id: o._id,
-            type: o.status === 'delivered' ? 'success' : o.status === 'confirmed' ? 'info' : 'warning',
-            message: `Order ${o.orderNumber} — ${o.status}`,
-            timestamp: o.updatedAt || o.createdAt,
-            read: false
-          }));
-          setNotifications(notifs);
+          await fetchNotifications(1, 'all');
         }
 
         if (inventoryRes.success) {
@@ -157,6 +154,7 @@ const RestaurantDashboard = () => {
             name: v.name,
             capacity: v.capacity || 0,
             type: v.type || 'Other',
+            ownerName: v.owner?.name || 'Delivery Partner',
             status: v.status || 'Available',
             plateNumber: v.plateNumber || ''
           }));
@@ -220,15 +218,21 @@ const RestaurantDashboard = () => {
     { id: 1, name: 'Rohan Farmer', category: 'Vegetables', rating: 4.8, orders: 45 },
     { id: 2, name: 'Suman Farmer', category: 'Fruits',     rating: 4.7, orders: 38 }
   ]);
-  const [assignDialog, setAssignDialog] = useState({ open: false, riderId: null });
+  const [assignDialog, setAssignDialog] = useState({ open: false, orderId: null });
   const [addRiderDialog, setAddRiderDialog] = useState(false);
   const [newRider, setNewRider] = useState({ name: '', type: 'Bike', plate: '' });
 
   // ─── Data fetching ────────────────────────────────────────────────────────
-  const fetchProducts = useCallback(async () => {
+  const fetchProducts = useCallback(async (searchText = '') => {
     try {
       setCartLoading(true);
-      const response = await productAPI.getAll({ status: 'active' });
+      const params = { status: 'active', limit: 200 };
+      const normalizedSearch = String(searchText || '').trim();
+      if (normalizedSearch) {
+        params.search = normalizedSearch;
+      }
+
+      const response = await productAPI.getAll(params);
       if (response.success) {
         setProducts(response.data.products || []);
         return;
@@ -255,14 +259,7 @@ const RestaurantDashboard = () => {
           .sort((a, b) => new Date(a.deliveryDate) - new Date(b.deliveryDate));
         setDeliverySchedule(scheduled);
         // Build notifications from 5 most recent
-        const notifs = fetched.slice(0, 5).map(o => ({
-          id: o._id,
-          type: o.status === 'delivered' ? 'success' : o.status === 'confirmed' ? 'info' : 'warning',
-          message: `Order ${o.orderNumber} — ${o.status}`,
-          timestamp: o.updatedAt || o.createdAt,
-          read: false
-        }));
-        setNotifications(notifs);
+        await fetchNotifications(1, 'all');
         return;
       }
     } catch (error) {
@@ -285,24 +282,151 @@ const RestaurantDashboard = () => {
     computeStats(orders || []);
   }, [orders]);
 
+  const fetchDeliveryVehicles = useCallback(async () => {
+    try {
+      const vehiclesRes = await vehicleAPI.getMarketplaceVehicles({ status: 'Available' });
+      if (vehiclesRes.success && Array.isArray(vehiclesRes.data)) {
+        const mappedFleet = vehiclesRes.data.map(v => ({
+          id: v._id,
+          name: v.name,
+          capacity: v.capacity || 0,
+          type: v.type || 'Other',
+          ownerName: v.owner?.name || 'Delivery Partner',
+          status: v.status || 'Available',
+          plateNumber: v.plateNumber || ''
+        }));
+        setFleet(mappedFleet);
+      }
+    } catch {
+      // Ignore partner vehicle fetch failure to keep ordering flow active.
+    }
+  }, []);
+
   const refreshAll = useCallback(async () => {
-    await Promise.all([fetchProducts(), fetchOrders()]);
+    await Promise.all([fetchProducts(searchQuery), fetchOrders(), fetchDeliveryVehicles()]);
     setSnackbar({ open: true, message: 'Data refreshed!', severity: 'info' });
-  }, [fetchProducts, fetchOrders]);
+  }, [fetchProducts, fetchOrders, searchQuery, fetchDeliveryVehicles]);
 
   useEffect(() => {
     if (user?._id) refreshAll();
   }, [user, refreshAll]);
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchProducts(searchQuery);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, fetchProducts]);
+
   // ─── Notifications ────────────────────────────────────────────────────────
-  const markAllRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    setSnackbar({ open: true, message: 'All notifications marked as read', severity: 'info' });
+  const markAllRead = async () => {
+    try {
+      await notificationAPI.markAllAsRead();
+      await fetchNotifications(notificationPage, notificationFilter);
+      setSnackbar({ open: true, message: 'All notifications marked as read', severity: 'info' });
+    } catch (error) {
+      setSnackbar({ open: true, message: error.message || 'Failed to update notifications', severity: 'error' });
+    }
   };
-  const markOneRead = (id) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  const markOneRead = async (id) => {
+    try {
+      await notificationAPI.markAsRead(id);
+      await fetchNotifications(notificationPage, notificationFilter);
+    } catch {
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    }
   };
   const unreadCount = notifications.filter(n => !n.read).length;
+
+  const fetchNotifications = useCallback(async (page = notificationPage, filter = notificationFilter) => {
+    const params = { page, limit: 8 };
+    if (filter === 'unread') params.unread = true;
+    if (filter !== 'all' && filter !== 'unread') params.type = filter;
+
+    const notificationsRes = await notificationAPI.getAll(params);
+    if (notificationsRes.success) {
+      setNotifications((notificationsRes.data || []).map((n) => ({
+        id: n._id || n.id,
+        title: n.title || 'Notification',
+        message: n.message || '',
+        timestamp: n.createdAt || Date.now(),
+        type: n.type === 'alert' ? 'warning' : n.type === 'delivery' ? 'info' : 'success',
+        read: !!n.isRead
+      })));
+      setNotificationTotalPages(notificationsRes.pagination?.totalPages || 1);
+    }
+  }, [notificationPage, notificationFilter]);
+
+  const fetchNegotiations = useCallback(async () => {
+    try {
+      const res = await marketplaceRequestAPI.getMyRequests({ limit: 25 });
+      if (res.success) {
+        setNegotiations(res.data?.requests || []);
+      }
+    } catch {
+      // Ignore fetch failures here to keep ordering flow available.
+    }
+  }, []);
+
+  const createNegotiation = async (product) => {
+    const qty = Number(product.minOrderQuantity || 5);
+    const basePrice = Number(product.basePrice || product.price || 0);
+    const offeredPrice = Number(window.prompt(`Enter your offered price per ${product.unit || 'kg'} (₹${basePrice} suggested)`, String(basePrice)));
+
+    if (!offeredPrice || Number.isNaN(offeredPrice) || offeredPrice <= 0) {
+      setSnackbar({ open: true, message: 'Valid offered price is required', severity: 'error' });
+      return;
+    }
+
+    try {
+      await marketplaceRequestAPI.create({
+        productId: product._id,
+        cropName: product.name,
+        quantity: qty,
+        unit: product.unit || 'kg',
+        offeredPrice,
+        requesterType: 'restaurant',
+        location: restaurantData?.address || 'India',
+        notes: `Restaurant negotiation request for ${qty} ${product.unit || 'kg'}`
+      });
+      await fetchNegotiations();
+      setSnackbar({ open: true, message: 'Negotiation request sent to farmer', severity: 'success' });
+    } catch (error) {
+      setSnackbar({ open: true, message: error.message || 'Failed to create negotiation', severity: 'error' });
+    }
+  };
+
+  const handleNegotiationAction = async (request, action) => {
+    try {
+      if (action === 'counter') {
+        const current = Number(request.currentOfferPrice ?? request.offeredPrice ?? 0);
+        const counter = Number(window.prompt('Enter your counter offer price', String(current)));
+        if (!counter || Number.isNaN(counter) || counter <= 0) {
+          setSnackbar({ open: true, message: 'Valid counter price is required', severity: 'error' });
+          return;
+        }
+        await marketplaceRequestAPI.buyerRespond(request._id, { action: 'counter', offeredPrice: counter });
+      } else {
+        await marketplaceRequestAPI.buyerRespond(request._id, { action });
+      }
+
+      await fetchNegotiations();
+      setSnackbar({ open: true, message: `Negotiation ${action} completed`, severity: 'success' });
+    } catch (error) {
+      setSnackbar({ open: true, message: error.message || `Failed to ${action} negotiation`, severity: 'error' });
+    }
+  };
+
+  useEffect(() => {
+    if (activeSection === 'notifications') {
+      fetchNotifications(notificationPage, notificationFilter);
+    }
+  }, [activeSection, notificationPage, notificationFilter, fetchNotifications]);
+
+  useEffect(() => {
+    fetchNegotiations();
+  }, [fetchNegotiations]);
 
   // ─── Cart ─────────────────────────────────────────────────────────────────
   const addToCart = (product) => {
@@ -382,6 +506,20 @@ const RestaurantDashboard = () => {
       setSnackbar({ open: true, message: error.message || 'Unable to place order', severity: 'error' });
     } finally {
       setCartLoading(false);
+    }
+  };
+
+  const requestDeliveryVehicle = async (vehicle) => {
+    const order = orders.find((o) => String(o._id) === String(assignDialog.orderId));
+    if (!order) return;
+
+    try {
+      await orderAPI.requestDelivery(order._id, vehicle.id);
+      setAssignDialog({ open: false, orderId: null });
+      await Promise.all([fetchOrders(), fetchDeliveryVehicles()]);
+      setSnackbar({ open: true, message: `Requested ${vehicle.name} (${vehicle.ownerName || 'Delivery Partner'}) for order ${order.orderNumber}`, severity: 'success' });
+    } catch (error) {
+      setSnackbar({ open: true, message: error.message || 'Failed to request delivery vehicle', severity: 'error' });
     }
   };
 
@@ -524,20 +662,18 @@ const RestaurantDashboard = () => {
   };
 
   // ─── Filtering ────────────────────────────────────────────────────────────
-  const filteredProducts = products.filter(p =>
-    p.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    p.categoryId?.name?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredProducts = products;
 
   // ─── Sidebar menu ─────────────────────────────────────────────────────────
   const menuItems = [
     { id: 'overview',       label: 'Overview',         icon: <Home /> },
     { id: 'marketplace',    label: 'Marketplace',      icon: <Store /> },
+    { id: 'negotiations',   label: 'Negotiations',     icon: <AttachMoney />, badge: negotiations.filter((r) => ['open', 'countered'].includes(r.status)).length || 0 },
     { id: 'cart',           label: 'My Cart',          icon: <ShoppingCart />, badge: cart.length },
     { id: 'orders',         label: 'My Orders',        icon: <LocalShipping />, badge: stats.activeOrders || 0 },
     { id: 'subscriptions',  label: 'Auto Orders',      icon: <Autorenew /> },
     { id: 'inventory',      label: 'Pantry Inventory', icon: <Inventory /> },
-    { id: 'logistics',      label: 'Fleet & Logistics',icon: <DeliveryDining /> },
+    { id: 'logistics',      label: 'Delivery Partners',icon: <DeliveryDining /> },
     { id: 'schedule',       label: 'Delivery Schedule',icon: <Schedule /> },
     { id: 'notifications',  label: 'Notifications',    icon: <Notifications />, badge: unreadCount },
     { id: 'profile',        label: 'Profile',          icon: <AccountCircle /> },
@@ -781,6 +917,9 @@ const RestaurantDashboard = () => {
                                 <Button variant="outlined" size="small" color="secondary" onClick={() => subscribeToProduct(product)}>
                                   Autoship
                                 </Button>
+                                <Button variant="outlined" size="small" color="warning" onClick={() => createNegotiation(product)}>
+                                  Negotiate
+                                </Button>
                                 <Button variant="contained" size="small" startIcon={<Add />} onClick={() => addToCart(product)}>
                                   Add
                                 </Button>
@@ -792,6 +931,53 @@ const RestaurantDashboard = () => {
                     </Grid>
                   ))}
                 </Grid>
+              </Box>
+            )}
+
+            {activeSection === 'negotiations' && (
+              <Box>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
+                  <Typography variant="h5" fontWeight="bold">Price Negotiations</Typography>
+                  <Button variant="outlined" startIcon={<Refresh />} onClick={fetchNegotiations}>Refresh</Button>
+                </Stack>
+
+                <Paper sx={{ p: 3 }}>
+                  <Stack spacing={2}>
+                    {negotiations.map((request) => {
+                      const currentPrice = Number(request.currentOfferPrice ?? request.offeredPrice ?? 0);
+                      const buyerTurn = request.status === 'countered' && request.lastOfferedBy === 'farmer';
+
+                      return (
+                        <Card key={request._id} variant="outlined">
+                          <CardContent>
+                            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }}>
+                              <Box>
+                                <Typography variant="subtitle1" fontWeight="bold">{request.cropName} • {request.quantity} {request.unit || 'kg'}</Typography>
+                                <Typography variant="body2" color="text.secondary">Current negotiated price: ₹{currentPrice}/kg</Typography>
+                                <Chip size="small" sx={{ mt: 1 }} label={request.status} color={request.status === 'accepted' ? 'success' : request.status === 'declined' || request.status === 'cancelled' ? 'error' : 'warning'} />
+                              </Box>
+                              <Stack direction="row" spacing={1}>
+                                {buyerTurn && (
+                                  <>
+                                    <Button size="small" variant="contained" color="success" onClick={() => handleNegotiationAction(request, 'accept')}>Accept</Button>
+                                    <Button size="small" variant="outlined" color="warning" onClick={() => handleNegotiationAction(request, 'counter')}>Counter</Button>
+                                  </>
+                                )}
+                                {['open', 'countered'].includes(request.status) && (
+                                  <Button size="small" variant="text" color="error" onClick={() => handleNegotiationAction(request, 'cancel')}>Cancel</Button>
+                                )}
+                              </Stack>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+
+                    {negotiations.length === 0 && (
+                      <Typography color="text.secondary" textAlign="center" py={3}>No negotiations yet. Start from Marketplace.</Typography>
+                    )}
+                  </Stack>
+                </Paper>
               </Box>
             )}
 
@@ -926,6 +1112,19 @@ const RestaurantDashboard = () => {
                                 </Stack>
                               </>
                             )}
+                            <Divider sx={{ my: 2 }} />
+                            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }}>
+                              <Typography variant="caption" color="text.secondary">
+                                {order.delivery?.requestedVehicleId?.name
+                                  ? `Requested: ${order.delivery.requestedVehicleId.name} (${order.delivery?.requestedPartnerId?.name || 'Delivery Partner'})`
+                                  : 'No delivery vehicle requested yet'}
+                              </Typography>
+                              {!order.delivery?.requestedVehicleId && ['pending', 'confirmed', 'processing'].includes(String(order.status || '').toLowerCase()) && (
+                                <Button size="small" variant="outlined" startIcon={<LocalShipping />} onClick={() => setAssignDialog({ open: true, orderId: order._id })}>
+                                  Request Delivery Vehicle
+                                </Button>
+                              )}
+                            </Stack>
                           </CardContent>
                         </Card>
                       </Grid>
@@ -1099,13 +1298,12 @@ const RestaurantDashboard = () => {
             {activeSection === 'logistics' && (
               <Box>
                 <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-                  <Typography variant="h5" fontWeight="bold">Delivery Riders</Typography>
-                  <Button variant="contained" startIcon={<Add />} onClick={() => setAddRiderDialog(true)}>Add Rider</Button>
+                  <Typography variant="h5" fontWeight="bold">Delivery Partner Vehicles</Typography>
                 </Stack>
 
                 <Grid container spacing={3} sx={{ mb: 4 }}>
                   {[
-                    { label: 'Total Riders', value: fleet.length, color: 'primary.main' },
+                    { label: 'Total Partner Vehicles', value: fleet.length, color: 'primary.main' },
                     { label: 'Available', value: fleet.filter(r=>r.status==='Available').length, color: 'success.main' },
                     { label: 'On Delivery', value: fleet.filter(r=>r.status==='On Delivery').length, color: 'warning.main' },
                   ].map(s => (
@@ -1124,9 +1322,9 @@ const RestaurantDashboard = () => {
                       <TableRow>
                         <TableCell><strong>ID</strong></TableCell>
                         <TableCell><strong>Name</strong></TableCell>
-                        <TableCell><strong>Type</strong></TableCell>
+                        <TableCell><strong>Partner</strong></TableCell>
+                        <TableCell><strong>Capacity</strong></TableCell>
                         <TableCell><strong>Status</strong></TableCell>
-                        <TableCell align="right"><strong>Actions</strong></TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -1134,69 +1332,18 @@ const RestaurantDashboard = () => {
                         <TableRow key={rider.id}>
                           <TableCell>{rider.id}</TableCell>
                           <TableCell>{rider.name}</TableCell>
-                          <TableCell>{rider.capacity}</TableCell>
+                          <TableCell>{rider.ownerName || 'Delivery Partner'}</TableCell>
+                          <TableCell>{rider.capacity} kg</TableCell>
                           <TableCell>
                             <Chip label={rider.status}
                               color={rider.status==='Available'?'success':rider.status==='On Delivery'?'warning':'default'}
                               size="small" />
-                          </TableCell>
-                          <TableCell align="right">
-                            <Stack direction="row" spacing={1} justifyContent="flex-end">
-                              <Button variant="outlined" size="small"
-                                disabled={rider.status === 'On Delivery'}
-                                onClick={() => toggleRiderStatus(rider.id)}>
-                                {rider.status === 'Available' ? 'Set Off-duty' : 'Set Available'}
-                              </Button>
-                              <Button variant="outlined" size="small" color="error"
-                                disabled={rider.status === 'On Delivery'}
-                                onClick={() => removeRider(rider.id)}>
-                                Remove
-                              </Button>
-                            </Stack>
                           </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
                 </TableContainer>
-
-                {/* Add Rider Dialog */}
-                <Dialog open={addRiderDialog} onClose={() => setAddRiderDialog(false)} maxWidth="xs" fullWidth>
-                  <DialogTitle>Add New Rider</DialogTitle>
-                  <DialogContent>
-                    <Stack spacing={2} sx={{ mt: 1 }}>
-                      <TextField label="Rider Name" fullWidth value={newRider.name} onChange={(e) => setNewRider({ ...newRider, name: e.target.value })} />
-                      <TextField label="Vehicle Type" fullWidth select value={newRider.type} onChange={(e) => setNewRider({ ...newRider, type: e.target.value })}>
-                        {['Bike', 'Car', 'Van', 'Truck', 'Other'].map(t => <MenuItem key={t} value={t}>{t}</MenuItem>)}
-                      </TextField>
-                      <TextField label="Plate Number (optional)" fullWidth value={newRider.plate} onChange={(e) => setNewRider({ ...newRider, plate: e.target.value })} />
-                    </Stack>
-                  </DialogContent>
-                  <DialogActions>
-                    <Button onClick={() => setAddRiderDialog(false)}>Cancel</Button>
-                    <Button variant="contained" onClick={addRider} disabled={!newRider.name.trim()}>Add Rider</Button>
-                  </DialogActions>
-                </Dialog>
-
-                {/* Assign Dialog */}
-                <Dialog open={assignDialog.open} onClose={() => setAssignDialog({ open: false, riderId: null })}>
-                  <DialogTitle>Assign Delivery Rider</DialogTitle>
-                  <DialogContent>
-                    <Typography gutterBottom>Assign this rider to an active order.</Typography>
-                    <TextField fullWidth label="Select Order" select sx={{ mt: 2 }} defaultValue="">
-                      {orders.filter(o => ['confirmed','shipped'].includes(o.status)).map(o => (
-                        <MenuItem key={o._id} value={o._id}>{o.orderNumber} — ₹{(o.total||0).toLocaleString()}</MenuItem>
-                      ))}
-                    </TextField>
-                  </DialogContent>
-                  <DialogActions>
-                    <Button onClick={() => setAssignDialog({ open: false, riderId: null })}>Cancel</Button>
-                    <Button variant="contained" onClick={() => {
-                      setAssignDialog({ open: false, riderId: null });
-                      setSnackbar({ open: true, message: 'Rider assigned successfully', severity: 'success' });
-                    }}>Confirm</Button>
-                  </DialogActions>
-                </Dialog>
               </Box>
             )}
 
@@ -1270,6 +1417,21 @@ const RestaurantDashboard = () => {
                     <Button startIcon={<DoneAll />} onClick={markAllRead}>Mark All as Read</Button>
                   )}
                 </Stack>
+                <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap' }}>
+                  {['all', 'unread', 'order', 'payment', 'delivery'].map((filter) => (
+                    <Button
+                      key={filter}
+                      size="small"
+                      variant={notificationFilter === filter ? 'contained' : 'outlined'}
+                      onClick={() => {
+                        setNotificationFilter(filter);
+                        setNotificationPage(1);
+                      }}
+                    >
+                      {filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
+                    </Button>
+                  ))}
+                </Stack>
                 {notifications.length === 0 ? (
                   <Paper sx={{ p: 8, textAlign: 'center' }}>
                     <Notifications sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
@@ -1295,6 +1457,13 @@ const RestaurantDashboard = () => {
                         </CardContent>
                       </Card>
                     ))}
+                    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 1 }}>
+                      <Typography variant="caption" color="text.secondary">Page {notificationPage} of {notificationTotalPages}</Typography>
+                      <Stack direction="row" spacing={1}>
+                        <Button size="small" variant="outlined" disabled={notificationPage <= 1} onClick={() => setNotificationPage((p) => Math.max(1, p - 1))}>Prev</Button>
+                        <Button size="small" variant="outlined" disabled={notificationPage >= notificationTotalPages} onClick={() => setNotificationPage((p) => Math.min(notificationTotalPages, p + 1))}>Next</Button>
+                      </Stack>
+                    </Stack>
                   </Stack>
                 )}
               </Box>
@@ -1395,6 +1564,52 @@ const RestaurantDashboard = () => {
           </Container>
         </Box>
       </Box>
+
+      <Dialog open={assignDialog.open} onClose={() => setAssignDialog({ open: false, orderId: null })} maxWidth="sm" fullWidth>
+        <DialogTitle>Select Delivery Partner Vehicle</DialogTitle>
+        <DialogContent>
+          {(() => {
+            const order = orders.find((o) => String(o._id) === String(assignDialog.orderId));
+            const required = Number(order?.orderItems?.[0]?.quantity || 0);
+
+            return (
+              <>
+                {order && (
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    Order: <strong>{order.orderNumber}</strong> — {required} {order?.orderItems?.[0]?.unit || 'units'}
+                  </Alert>
+                )}
+                <List>
+                  {fleet.map((vehicle) => {
+                    const canCarry = vehicle.capacity >= required;
+                    const isAvailable = vehicle.status === 'Available';
+                    return (
+                      <ListItem key={vehicle.id} sx={{ mb: 1, border: 1, borderColor: 'divider', borderRadius: 1, opacity: (!canCarry || !isAvailable) ? 0.5 : 1 }}>
+                        <ListItemIcon><LocalShipping color={isAvailable && canCarry ? 'primary' : 'disabled'} /></ListItemIcon>
+                        <ListItemText
+                          primary={vehicle.name}
+                          secondary={`Partner: ${vehicle.ownerName || 'Delivery Partner'} | Capacity: ${vehicle.capacity} kg | Status: ${vehicle.status}`}
+                        />
+                        <Button variant="contained" size="small" disabled={!canCarry || !isAvailable} onClick={() => requestDeliveryVehicle(vehicle)}>
+                          Request
+                        </Button>
+                      </ListItem>
+                    );
+                  })}
+                  {fleet.length === 0 && (
+                    <Typography color="text.secondary" textAlign="center" py={2}>
+                      No delivery partner vehicles are currently available.
+                    </Typography>
+                  )}
+                </List>
+              </>
+            );
+          })()}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAssignDialog({ open: false, orderId: null })}>Cancel</Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar open={snackbar.open} autoHideDuration={5000} onClose={() => setSnackbar({ ...snackbar, open: false })}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>

@@ -1,6 +1,8 @@
 import express from 'express';
 import Payment from '../models/Payment.model.js';
 import Order from '../models/Order.model.js';
+import MarketplaceRequest from '../models/MarketplaceRequest.model.js';
+import { notifyUsers } from '../utils/notification.util.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
 import { validateObjectId } from '../middleware/validation.middleware.js';
@@ -169,6 +171,28 @@ router.post('/', authenticate, async (req, res) => {
       });
     }
 
+    if (order.marketplaceRequestId) {
+      const linkedRequest = await MarketplaceRequest.findById(order.marketplaceRequestId);
+      if (!linkedRequest) {
+        return res.status(400).json({
+          success: false,
+          message: 'Linked negotiation request not found for this order'
+        });
+      }
+
+      if (
+        linkedRequest.status !== 'accepted' ||
+        !linkedRequest.buyerAccepted ||
+        !linkedRequest.farmerAccepted ||
+        !Number(linkedRequest.agreedPrice)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: 'Payment is allowed only after both buyer and farmer accept the negotiated price'
+        });
+      }
+    }
+
     // Check if payment already exists for this order
     const existingPayment = await Payment.findOne({ orderId, status: { $in: ['success', 'processing'] } });
     if (existingPayment) {
@@ -187,6 +211,13 @@ router.post('/', authenticate, async (req, res) => {
     });
 
     await payment.save();
+
+    await notifyUsers([order.buyerId, order.sellerId], {
+      title: 'Payment Initiated',
+      message: `Payment has been initiated for order ${order.orderNumber}.`,
+      type: 'payment',
+      relatedId: order._id
+    });
 
     res.status(201).json({
       success: true,
@@ -222,7 +253,7 @@ router.patch('/:id/success', authenticate, validateObjectId('id'), async (req, r
     });
 
     // Update order status to confirmed
-    await Order.findByIdAndUpdate(payment.orderId, {
+    const updatedOrder = await Order.findByIdAndUpdate(payment.orderId, {
       status: 'confirmed',
       $push: {
         statusHistory: {
@@ -232,7 +263,16 @@ router.patch('/:id/success', authenticate, validateObjectId('id'), async (req, r
           notes: 'Payment received'
         }
       }
-    });
+    }, { new: true });
+
+    if (updatedOrder) {
+      await notifyUsers([updatedOrder.buyerId, updatedOrder.sellerId], {
+        title: 'Payment Successful',
+        message: `Payment received for order ${updatedOrder.orderNumber}. Order is now confirmed.`,
+        type: 'payment',
+        relatedId: updatedOrder._id
+      });
+    }
 
     res.json({
       success: true,
@@ -263,6 +303,16 @@ router.patch('/:id/failed', authenticate, validateObjectId('id'), async (req, re
 
     await payment.markFailed(reason);
 
+    const order = await Order.findById(payment.orderId);
+    if (order) {
+      await notifyUsers([order.buyerId, order.sellerId], {
+        title: 'Payment Failed',
+        message: `Payment failed for order ${order.orderNumber}${reason ? `: ${reason}` : ''}.`,
+        type: 'payment',
+        relatedId: order._id
+      });
+    }
+
     res.json({
       success: true,
       message: 'Payment marked as failed',
@@ -291,6 +341,16 @@ router.post('/:id/refund', authenticate, authorize('admin'), validateObjectId('i
     const { amount, reason } = req.body;
 
     await payment.processRefund(amount, reason);
+
+    const order = await Order.findById(payment.orderId);
+    if (order) {
+      await notifyUsers([order.buyerId, order.sellerId], {
+        title: 'Refund Processed',
+        message: `Refund of ${amount || payment.amount} has been processed for order ${order.orderNumber}.`,
+        type: 'payment',
+        relatedId: order._id
+      });
+    }
 
     res.json({
       success: true,

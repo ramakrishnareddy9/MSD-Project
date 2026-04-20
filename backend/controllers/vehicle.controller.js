@@ -1,14 +1,49 @@
 import Vehicle from '../models/Vehicle.model.js';
+import User from '../models/User.model.js';
 
 // @desc    Get all vehicles
 // @route   GET /api/vehicles
 // @access  Private
 export const getAllVehicles = async (req, res) => {
   try {
-    const { ownerId, status } = req.query;
+    const { ownerId, status, marketplace } = req.query;
     
     const query = {};
     const isAdmin = req.user.roles?.includes('admin');
+
+    if (String(marketplace).toLowerCase() === 'true') {
+      const allowedMarketplaceRoles = ['business', 'restaurant', 'customer', 'travel_agency', 'admin'];
+      const canBrowseMarketplaceVehicles = req.user.roles?.some((role) => allowedMarketplaceRoles.includes(role));
+
+      if (!canBrowseMarketplaceVehicles) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to browse delivery partner vehicles'
+        });
+      }
+
+      const deliveryPartners = await User.find({
+        roles: { $in: ['delivery', 'delivery_large', 'delivery_small'] },
+        status: 'active'
+      }).select('_id');
+
+      query.owner = { $in: deliveryPartners.map((p) => p._id) };
+      if (status) {
+        query.status = status;
+      } else {
+        query.status = 'Available';
+      }
+
+      const vehicles = await Vehicle.find(query)
+        .populate('owner', 'name email phone roles')
+        .populate('driver', 'name email phone')
+        .sort({ updatedAt: -1 });
+
+      return res.status(200).json({
+        success: true,
+        data: vehicles
+      });
+    }
 
     if (ownerId) {
       if (!isAdmin && ownerId.toString() !== req.user._id.toString()) {

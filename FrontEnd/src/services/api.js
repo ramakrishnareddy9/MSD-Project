@@ -203,6 +203,20 @@ export const orderAPI = {
     });
   },
 
+  requestDelivery: async (id, vehicleId) => {
+    return apiCall(`/orders/${id}/request-delivery`, {
+      method: 'PATCH',
+      body: JSON.stringify({ vehicleId })
+    });
+  },
+
+  respondDeliveryRequest: async (id, action, vehicleId) => {
+    return apiCall(`/orders/${id}/delivery-response`, {
+      method: 'PATCH',
+      body: JSON.stringify({ action, vehicleId })
+    });
+  },
+
   update: async (id, orderData) => {
     return apiCall(`/orders/${id}`, {
       method: 'PUT',
@@ -485,6 +499,13 @@ export const marketplaceRequestAPI = {
       method: 'PATCH',
       body: JSON.stringify(responseData)
     });
+  },
+
+  buyerRespond: async (id, responseData) => {
+    return apiCall(`/marketplace-requests/${id}/buyer-respond`, {
+      method: 'PATCH',
+      body: JSON.stringify(responseData)
+    });
   }
 };
 
@@ -753,6 +774,11 @@ export const notificationAPI = {
 export const vehicleAPI = {
   getAll: async (params = {}) => {
     const query = new URLSearchParams(params).toString();
+    return apiCall(`/vehicles?${query}`);
+  },
+
+  getMarketplaceVehicles: async (params = {}) => {
+    const query = new URLSearchParams({ marketplace: 'true', ...params }).toString();
     return apiCall(`/vehicles?${query}`);
   },
 

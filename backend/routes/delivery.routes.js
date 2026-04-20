@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import Shipment from '../models/Shipment.model.js';
 import DeliveryTask from '../models/DeliveryTask.model.js';
 import Order from '../models/Order.model.js';
+import { notifyUsers } from '../utils/notification.util.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
 import { validateObjectId } from '../middleware/validation.middleware.js';
@@ -134,6 +135,15 @@ router.post('/shipments', authenticate, authorize('admin', 'delivery_large'), as
     }
     
     await session.commitTransaction();
+
+    const relatedOrders = await Order.find({ _id: { $in: orders.map((o) => o.orderId) } }).select('buyerId sellerId');
+    const recipients = [shipment.deliveryPartnerId, ...relatedOrders.flatMap((o) => [o.buyerId, o.sellerId])];
+    await notifyUsers(recipients, {
+      title: 'Shipment Scheduled',
+      message: `Shipment ${shipment.shipmentNumber} has been scheduled.`,
+      type: 'delivery',
+      relatedId: shipment._id
+    });
     
     res.status(201).json({
       success: true,
@@ -208,6 +218,15 @@ router.patch('/shipments/:id/deliver', authenticate, authorize('delivery', 'deli
     }
     
     await shipment.markDelivered();
+
+    const relatedOrders = await Order.find({ _id: { $in: shipment.orders.map((o) => o.orderId) } }).select('buyerId sellerId');
+    const recipients = [shipment.deliveryPartnerId, ...relatedOrders.flatMap((o) => [o.buyerId, o.sellerId])];
+    await notifyUsers(recipients, {
+      title: 'Shipment Delivered',
+      message: `Shipment ${shipment.shipmentNumber} has been marked as delivered.`,
+      type: 'delivery',
+      relatedId: shipment._id
+    });
     
     res.json({
       success: true,
@@ -360,6 +379,13 @@ router.post('/tasks', authenticate, authorize('admin', 'delivery_small'), async 
     );
     
     await session.commitTransaction();
+
+    await notifyUsers([task.deliveryPartnerId, order.buyerId, order.sellerId], {
+      title: 'Delivery Task Created',
+      message: `Delivery task ${task.taskNumber} has been created for order ${order.orderNumber}.`,
+      type: 'delivery',
+      relatedId: task._id
+    });
     
     res.status(201).json({
       success: true,
@@ -397,6 +423,16 @@ router.patch('/tasks/:id/accept', authenticate, authorize('delivery', 'delivery_
     }
     
     await task.accept();
+
+    const order = await Order.findById(task.orderId).select('orderNumber buyerId sellerId');
+    if (order) {
+      await notifyUsers([order.buyerId, order.sellerId], {
+        title: 'Delivery Task Accepted',
+        message: `Delivery partner accepted delivery task for order ${order.orderNumber}.`,
+        type: 'delivery',
+        relatedId: task._id
+      });
+    }
     
     res.json({
       success: true,
@@ -431,6 +467,16 @@ router.patch('/tasks/:id/start', authenticate, authorize('delivery', 'delivery_s
     }
     
     await task.startDelivery();
+
+    const order = await Order.findById(task.orderId).select('orderNumber buyerId sellerId');
+    if (order) {
+      await notifyUsers([order.buyerId, order.sellerId], {
+        title: 'Out For Delivery',
+        message: `Order ${order.orderNumber} is now out for delivery.`,
+        type: 'delivery',
+        relatedId: task._id
+      });
+    }
     
     res.json({
       success: true,
@@ -485,6 +531,16 @@ router.patch('/tasks/:id/complete', authenticate, authorize('delivery', 'deliver
     );
     
     await session.commitTransaction();
+
+    const order = await Order.findById(task.orderId).select('orderNumber buyerId sellerId');
+    if (order) {
+      await notifyUsers([order.buyerId, order.sellerId, task.deliveryPartnerId], {
+        title: 'Order Delivered',
+        message: `Order ${order.orderNumber} has been delivered successfully.`,
+        type: 'delivery',
+        relatedId: task._id
+      });
+    }
     
     res.json({
       success: true,

@@ -79,14 +79,31 @@ app.use(cors(corsOptions)); // CORS configured for security
 app.use(compression());
 
 // Rate limiting (Per BACKEND_API_PROMPT line 538)
-const limiter = rateLimit({
+const isLocalDevRequest = (ip = '') => {
+  const normalizedIp = String(ip || '').trim();
+  return normalizedIp === '::1' || normalizedIp === '127.0.0.1' || normalizedIp.startsWith('::ffff:127.0.0.1');
+};
+
+const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: process.env.NODE_ENV === 'production' ? 300 : 1000,
   message: 'Too many requests from this IP, please try again later',
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  skip: (req) => process.env.NODE_ENV !== 'production' && isLocalDevRequest(req.ip)
 });
-app.use('/api/', limiter);
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 50 : 200,
+  message: 'Too many authentication attempts, please try again later',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => process.env.NODE_ENV !== 'production' && isLocalDevRequest(req.ip)
+});
+
+app.use('/api/auth', authLimiter);
+app.use('/api/', apiLimiter);
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));

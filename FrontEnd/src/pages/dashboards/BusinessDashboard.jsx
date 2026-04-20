@@ -18,7 +18,7 @@ import {
   Refresh, Warning
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { productAPI, orderAPI, inventoryAPI, analyticsAPI, authAPI, vehicleAPI, userAPI } from '../../services/api';
+import { productAPI, orderAPI, inventoryAPI, analyticsAPI, authAPI, vehicleAPI, userAPI, notificationAPI, marketplaceRequestAPI } from '../../services/api';
 
 // ─── fallback seed data (used when backend is offline) ─────────────────────────
 const SEED_ORDERS = [
@@ -70,12 +70,24 @@ const DEFAULT_BUSINESS_DATA = {
 };
 
 const BusinessDashboard = () => {
+  const mapNotification = (n) => ({
+    id: n._id || n.id,
+    title: n.title || 'Notification',
+    message: n.message || '',
+    time: new Date(n.createdAt || Date.now()).toLocaleString('en-IN'),
+    type: n.type === 'alert' ? 'warning' : n.type === 'order' ? 'success' : 'info',
+    read: !!n.isRead
+  });
+
   // ── core state (API-driven) ─────────────────────────────────────────────────
   const [businessData, setBusinessData] = useState(null);
   const [orders, setOrders] = useState([]);
   const [fleet, setFleet] = useState([]);
   const [inventory, setInventory] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [notificationFilter, setNotificationFilter] = useState('all');
+  const [notificationPage, setNotificationPage] = useState(1);
+  const [notificationTotalPages, setNotificationTotalPages] = useState(1);
   const [availableProducts, setAvailableProducts] = useState([]);
   const [metrics, setMetrics] = useState({
     totalOrders: 0,
@@ -88,6 +100,7 @@ const BusinessDashboard = () => {
   });
   const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState({ data: true, products: false, orders: false, fleet: false });
+  const [negotiations, setNegotiations] = useState([]);
 
   // ── UI state ────────────────────────────────────────────────────────────────
   const [activeSection, setActiveSection] = useState('overview');
@@ -163,33 +176,38 @@ const BusinessDashboard = () => {
           // Get business orders
           const ordersRes = await orderAPI.getAll({ buyerId: currentUser._id });
           if (ordersRes.success && ordersRes.data?.orders) {
-            const mappedOrders = ordersRes.data.orders.map((o) => ({
+              const mappedOrders = ordersRes.data.orders.map((o) => ({
               id: o._id || o.id,
               product: o.orderItems?.[0]?.productName || 'Product',
               units: `${o.orderItems?.[0]?.quantity || 0} ${o.orderItems?.[0]?.unit || 'units'}`,
               supplier: o.sellerId?.name || o.orderItems?.[0]?.farmerName || 'Supplier',
               amount: o.total || 0,
               status: mapOrderStatus(o.status),
-              date: new Date(o.createdAt).toLocaleDateString()
+                assignedVehicle: o.delivery?.requestedVehicleId?.name || '',
+                assignedPartner: o.delivery?.requestedPartnerId?.name || '',
+                date: new Date(o.createdAt).toLocaleDateString()
             }));
             setOrders(mappedOrders);
           }
 
-          // Get business vehicles
-          const vehiclesRes = await vehicleAPI.getAll({ ownerId: currentUser._id });
+          await fetchNotifications(1, 'all');
+
+          // Get available delivery-partner vehicles
+          const vehiclesRes = await vehicleAPI.getMarketplaceVehicles({ status: 'Available' });
           if (vehiclesRes.success && vehiclesRes.data) {
             const mappedFleet = vehiclesRes.data.map((v, idx) => ({
               id: v._id || idx,
               name: v.name || 'Vehicle',
               capacity: v.capacity || 0,
               type: v.type || 'Truck',
+              ownerName: v.owner?.name || 'Delivery Partner',
               status: v.status || 'Available'
             }));
             setFleet(mappedFleet);
           }
 
           // Get available products (marketplace)
-          const productsRes = await productAPI.getAll({ status: 'active' });
+          const productsRes = await productAPI.getAll({ status: 'active', limit: 200 });
           if (productsRes.success && productsRes.data?.products) {
             const mappedProducts = productsRes.data.products.map(p => ({
               id: p._id || p.id,
@@ -224,10 +242,16 @@ const BusinessDashboard = () => {
   }, []);
 
   // ── API fetch: products (marketplace) ───────────────────────────────────────
-  const fetchProducts = useCallback(async () => {
+  const fetchProducts = useCallback(async (searchText = '') => {
     setLoading(l => ({ ...l, products: true }));
     try {
-      const res = await productAPI.getAll({ status: 'active' });
+      const params = { status: 'active', limit: 200 };
+      const normalizedSearch = String(searchText || '').trim();
+      if (normalizedSearch) {
+        params.search = normalizedSearch;
+      }
+
+      const res = await productAPI.getAll(params);
       const products = res?.data?.products || [];
       const mapped = products.map(p => ({
         id: p._id || p.id,
@@ -271,6 +295,8 @@ const BusinessDashboard = () => {
           supplier: o.sellerId?.name || o.orderItems?.[0]?.farmerName || 'Supplier',
           amount: o.total || 0,
           status: mapOrderStatus(o.status),
+          assignedVehicle: o.delivery?.requestedVehicleId?.name || '',
+          assignedPartner: o.delivery?.requestedPartnerId?.name || '',
           date: new Date(o.createdAt || Date.now()).toLocaleDateString()
         }));
         setOrders(mapped);
@@ -292,6 +318,25 @@ const BusinessDashboard = () => {
       // backend unavailable; keep current in-memory state
     } finally {
       setLoading(l => ({ ...l, orders: false }));
+    }
+  }, []);
+
+  const fetchDeliveryVehicles = useCallback(async () => {
+    try {
+      const vehiclesRes = await vehicleAPI.getMarketplaceVehicles({ status: 'Available' });
+      if (vehiclesRes.success && vehiclesRes.data) {
+        const mappedFleet = vehiclesRes.data.map((v, idx) => ({
+          id: v._id || idx,
+          name: v.name || 'Vehicle',
+          capacity: v.capacity || 0,
+          type: v.type || 'Truck',
+          ownerName: v.owner?.name || 'Delivery Partner',
+          status: v.status || 'Available'
+        }));
+        setFleet(mappedFleet);
+      }
+    } catch {
+      // Keep current state when partner vehicle list fails.
     }
   }, []);
 
@@ -326,13 +371,45 @@ const BusinessDashboard = () => {
 
   // ── initial data load ────────────────────────────────────────────────────────
   useEffect(() => {
-    fetchProducts();
+    fetchProducts('');
     fetchOrders();
     fetchInventory();
-  }, [fetchProducts, fetchOrders, fetchInventory]);
+    fetchDeliveryVehicles();
+  }, [fetchProducts, fetchOrders, fetchInventory, fetchDeliveryVehicles]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchProducts(marketplaceSearch.product);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [marketplaceSearch.product, fetchProducts]);
 
   // ── snackbar helper ──────────────────────────────────────────────────────────
   const showSnackbar = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
+
+  const fetchNotifications = async (page = notificationPage, filter = notificationFilter) => {
+    const params = { page, limit: 8 };
+    if (filter === 'unread') params.unread = true;
+    if (filter !== 'all' && filter !== 'unread') params.type = filter;
+
+    const notificationsRes = await notificationAPI.getAll(params);
+    if (notificationsRes.success) {
+      setNotifications((notificationsRes.data || []).map(mapNotification));
+      setNotificationTotalPages(notificationsRes.pagination?.totalPages || 1);
+    }
+  };
+
+  const fetchNegotiations = useCallback(async () => {
+    try {
+      const res = await marketplaceRequestAPI.getMyRequests({ limit: 25 });
+      if (res.success) {
+        setNegotiations(res.data?.requests || []);
+      }
+    } catch {
+      // Ignore negotiation fetch failure to keep dashboard interactive.
+    }
+  }, []);
 
   const onProfileChange = (e) => {
     const { name, value } = e.target;
@@ -382,6 +459,59 @@ const BusinessDashboard = () => {
     });
     showSnackbar(`Added ${qty} kg of ${farmer.product} from ${farmer.name}`, 'success');
   };
+
+  const handleCreateNegotiation = async (item) => {
+    const qtyValue = Number(document.getElementById(`qty-${item.id}-${item.product}`)?.value || 0);
+    const qty = qtyValue > 0 ? qtyValue : 1;
+    const basePrice = Number(item.price || 0);
+    const offeredPrice = Number(window.prompt(`Enter your offered price per kg (₹${basePrice} suggested)`, String(basePrice)));
+
+    if (!offeredPrice || Number.isNaN(offeredPrice) || offeredPrice <= 0) {
+      showSnackbar('Valid offered price is required', 'error');
+      return;
+    }
+
+    try {
+      await marketplaceRequestAPI.create({
+        productId: item.productId || item.id,
+        cropName: item.product,
+        quantity: qty,
+        unit: 'kg',
+        offeredPrice,
+        requesterType: 'business',
+        location: safeBusinessData.address || 'India',
+        notes: `Business requested ${qty} kg`
+      });
+      await fetchNegotiations();
+      showSnackbar('Negotiation request sent to farmer', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to create negotiation', 'error');
+    }
+  };
+
+  const handleBuyerNegotiationAction = async (request, action) => {
+    try {
+      if (action === 'counter') {
+        const current = Number(request.currentOfferPrice ?? request.offeredPrice ?? 0);
+        const counter = Number(window.prompt('Enter your counter offer price', String(current)));
+        if (!counter || Number.isNaN(counter) || counter <= 0) {
+          showSnackbar('Valid counter offer is required', 'error');
+          return;
+        }
+        await marketplaceRequestAPI.buyerRespond(request._id, { action: 'counter', offeredPrice: counter });
+      } else {
+        await marketplaceRequestAPI.buyerRespond(request._id, { action });
+      }
+      await fetchNegotiations();
+      showSnackbar(`Negotiation ${action} completed`, 'success');
+    } catch (error) {
+      showSnackbar(error.message || `Failed to ${action} negotiation`, 'error');
+    }
+  };
+
+  useEffect(() => {
+    fetchNegotiations();
+  }, [fetchNegotiations]);
 
   const removeFromCart = (id, product) => setCart(prev => prev.filter(i => !(i.id === id && i.product === product)));
 
@@ -460,21 +590,24 @@ const BusinessDashboard = () => {
       return;
     }
     try {
-      await orderAPI.updateStatus(order.id, 'shipped');
-      await vehicleAPI.updateStatus(vehicle.id, 'In Transit');
-      setOrders(prev => prev.map(o => o.id === assignDialog.orderId ? { ...o, status: 'In Transit', assignedVehicle: vehicle.name } : o));
-      setFleet(prev => prev.map(v => v.id === vehicle.id ? { ...v, status: 'In Transit' } : v));
+      await orderAPI.requestDelivery(order.id, vehicle.id);
+      setOrders(prev => prev.map(o => o.id === assignDialog.orderId ? {
+        ...o,
+        assignedVehicle: vehicle.name,
+        assignedPartner: vehicle.ownerName || 'Delivery Partner'
+      } : o));
+      await fetchDeliveryVehicles();
     } catch {
-      showSnackbar('Unable to assign vehicle from server. Please retry.', 'error');
+      showSnackbar('Unable to request delivery vehicle. Please retry.', 'error');
       return;
     }
     setNotifications(prev => [{
-      id: Date.now(), title: 'Vehicle Dispatched',
-      message: `${vehicle.name} dispatched for "${order.product}" — ${order.units}`,
+      id: Date.now(), title: 'Delivery Requested',
+      message: `${vehicle.name} (${vehicle.ownerName || 'Delivery Partner'}) requested for "${order.product}" — ${order.units}`,
       time: 'just now', type: 'info', read: false
     }, ...prev]);
     setAssignDialog({ open: false, orderId: null });
-    showSnackbar(`${vehicle.name} dispatched successfully!`, 'success');
+    showSnackbar(`${vehicle.name} requested successfully!`, 'success');
   };
 
   // ── fleet management ─────────────────────────────────────────────────────────
@@ -528,19 +661,36 @@ const BusinessDashboard = () => {
   };
 
   // ── notifications ────────────────────────────────────────────────────────────
-  const markAllRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    showSnackbar('All notifications marked as read', 'success');
+  const markAllRead = async () => {
+    try {
+      await notificationAPI.markAllAsRead();
+      await fetchNotifications(notificationPage, notificationFilter);
+      showSnackbar('All notifications marked as read', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to update notifications', 'error');
+    }
   };
 
-  const markRead = (id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  const markRead = async (id) => {
+    try {
+      await notificationAPI.markAsRead(id);
+      await fetchNotifications(notificationPage, notificationFilter);
+    } catch {
+      // Keep UI responsive even if network call fails
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    }
+  };
 
   // ── marketplace filter ───────────────────────────────────────────────────────
-  const filteredMarketplace = availableProducts
-    .filter(p => !marketplaceSearch.product || p.product.toLowerCase().includes(marketplaceSearch.product.toLowerCase()))
-    .sort((a, b) => b.stock - a.stock);
+  const filteredMarketplace = [...availableProducts].sort((a, b) => b.stock - a.stock);
 
   const unreadCount = notifications.filter(n => !n.read).length;
+
+  useEffect(() => {
+    if (activeSection === 'notifications') {
+      fetchNotifications(notificationPage, notificationFilter);
+    }
+  }, [activeSection, notificationPage, notificationFilter]);
 
   useEffect(() => {
     const totalOrders = orders.length;
@@ -567,7 +717,8 @@ const BusinessDashboard = () => {
     { id: 'overview', label: 'Overview', icon: <Dashboard /> },
     { id: 'orders', label: 'Orders', icon: <ShoppingCart />, badge: metrics.pendingTransport || null },
     { id: 'suppliers', label: 'Marketplace', icon: <Store />, badge: cart.length || null },
-    { id: 'fleet', label: 'My Fleet', icon: <LocalShipping /> },
+    { id: 'negotiations', label: 'Negotiations', icon: <AttachMoney />, badge: negotiations.filter((r) => ['open', 'countered'].includes(r.status)).length || null },
+    { id: 'fleet', label: 'Delivery Partners', icon: <LocalShipping /> },
     { id: 'inventory', label: 'Inventory', icon: <Inventory /> },
     { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: unreadCount || null },
     { id: 'profile', label: 'Profile', icon: <AccountCircle /> }
@@ -653,7 +804,7 @@ const BusinessDashboard = () => {
             </Box>
             <Stack direction="row" spacing={1} alignItems="center">
               <Tooltip title="Refresh data from server">
-                <IconButton onClick={() => { fetchOrders(); fetchProducts(); fetchInventory(); }} color="default">
+                <IconButton onClick={() => { fetchOrders(); fetchProducts(marketplaceSearch.product); fetchInventory(); fetchDeliveryVehicles(); }} color="default">
                   <Refresh />
                 </IconButton>
               </Tooltip>
@@ -766,7 +917,7 @@ const BusinessDashboard = () => {
                         <Button variant="contained" fullWidth startIcon={<Store />} onClick={() => setActiveSection('suppliers')}>Go to Marketplace</Button>
                         <Button variant="outlined" fullWidth startIcon={<Inventory />} onClick={() => setActiveSection('inventory')}>Check Inventory</Button>
                         <Button variant="outlined" fullWidth startIcon={<LocalShipping />} onClick={() => setActiveSection('fleet')} color="warning">
-                          Manage Fleet ({fleet.filter(v => v.status === 'Available').length} available)
+                          Delivery Partners ({fleet.filter(v => v.status === 'Available').length} available)
                         </Button>
                       </Stack>
                     </Paper>
@@ -841,11 +992,11 @@ const BusinessDashboard = () => {
                                 {order.status === 'Pending Transport' && (
                                   <Button variant="outlined" size="small" startIcon={<LocalShipping />}
                                     onClick={() => setAssignDialog({ open: true, orderId: order.id })}>
-                                    Assign Vehicle
+                                    Request Delivery
                                   </Button>
                                 )}
-                                {order.assignedVehicle && order.status === 'In Transit' && (
-                                  <Chip label={order.assignedVehicle} size="small" color="info" icon={<DirectionsCar />} />
+                                {order.assignedVehicle && (
+                                  <Chip label={`${order.assignedVehicle}${order.assignedPartner ? ` • ${order.assignedPartner}` : ''}`} size="small" color="info" icon={<DirectionsCar />} />
                                 )}
                               </TableCell>
                             </TableRow>
@@ -868,7 +1019,7 @@ const BusinessDashboard = () => {
                   <Typography variant="h5" fontWeight="bold">Marketplace</Typography>
                   <Stack direction="row" spacing={2} alignItems="center">
                     {loading.products && <CircularProgress size={20} />}
-                    <Button variant="outlined" startIcon={<Refresh />} onClick={fetchProducts} size="small">Refresh Stock</Button>
+                    <Button variant="outlined" startIcon={<Refresh />} onClick={() => fetchProducts(marketplaceSearch.product)} size="small">Refresh Stock</Button>
                   </Stack>
                 </Stack>
                 <Grid container spacing={3}>
@@ -938,6 +1089,9 @@ const BusinessDashboard = () => {
                                       handleAddToCart(item, qty);
                                     }}
                                   >Add</Button>
+                                  <Button variant="outlined" color="warning" onClick={() => handleCreateNegotiation(item)}>
+                                    Negotiate
+                                  </Button>
                                 </Stack>
                               </Grid>
                             </Grid>
@@ -1000,24 +1154,65 @@ const BusinessDashboard = () => {
               </Box>
             )}
 
+            {activeSection === 'negotiations' && (
+              <Box>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
+                  <Typography variant="h5" fontWeight="bold">Price Negotiations</Typography>
+                  <Button variant="outlined" startIcon={<Refresh />} onClick={fetchNegotiations} size="small">Refresh</Button>
+                </Stack>
+                <Paper sx={{ p: 3 }}>
+                  <Stack spacing={2}>
+                    {negotiations.map((request) => {
+                      const currentPrice = Number(request.currentOfferPrice ?? request.offeredPrice ?? 0);
+                      const buyerTurn = request.status === 'countered' && request.lastOfferedBy === 'farmer';
+
+                      return (
+                        <Card key={request._id} variant="outlined">
+                          <CardContent>
+                            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }}>
+                              <Box>
+                                <Typography variant="subtitle1" fontWeight="bold">{request.cropName} • {request.quantity} {request.unit || 'kg'}</Typography>
+                                <Typography variant="body2" color="text.secondary">Current negotiated price: ₹{currentPrice}/kg</Typography>
+                                <Chip size="small" sx={{ mt: 1 }} label={request.status} color={request.status === 'accepted' ? 'success' : request.status === 'declined' || request.status === 'cancelled' ? 'error' : 'warning'} />
+                              </Box>
+                              <Stack direction="row" spacing={1}>
+                                {buyerTurn && (
+                                  <>
+                                    <Button size="small" variant="contained" color="success" onClick={() => handleBuyerNegotiationAction(request, 'accept')}>Accept</Button>
+                                    <Button size="small" variant="outlined" color="warning" onClick={() => handleBuyerNegotiationAction(request, 'counter')}>Counter</Button>
+                                  </>
+                                )}
+                                {['open', 'countered'].includes(request.status) && (
+                                  <Button size="small" variant="text" color="error" onClick={() => handleBuyerNegotiationAction(request, 'cancel')}>Cancel</Button>
+                                )}
+                              </Stack>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                    {negotiations.length === 0 && (
+                      <Typography color="text.secondary" textAlign="center" py={3}>No negotiations yet. Use Marketplace to start one.</Typography>
+                    )}
+                  </Stack>
+                </Paper>
+              </Box>
+            )}
+
             {/* ── FLEET MANAGEMENT ────────────────────────────────────────── */}
             {activeSection === 'fleet' && (
               <Box>
                 <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
                   <Typography variant="h5" fontWeight="bold">
-                    My Fleet
+                    Delivery Partner Vehicles
                     <Chip label={`${fleet.filter(v => v.status === 'Available').length} available`} size="small" color="success" sx={{ ml: 1 }} />
                   </Typography>
-                  <Button variant="contained" startIcon={<AddCircle />} onClick={() => setAddVehicleDialog(true)}>
-                    Add Vehicle
-                  </Button>
                 </Stack>
 
                 {fleet.length === 0 ? (
                   <Paper sx={{ p: 6, textAlign: 'center' }}>
                     <LocalShipping sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
-                    <Typography variant="h6" color="text.secondary">No vehicles in your fleet</Typography>
-                    <Button variant="contained" sx={{ mt: 2 }} startIcon={<Add />} onClick={() => setAddVehicleDialog(true)}>Add Your First Vehicle</Button>
+                    <Typography variant="h6" color="text.secondary">No delivery partner vehicles available right now</Typography>
                   </Paper>
                 ) : (
                   <Grid container spacing={3}>
@@ -1034,24 +1229,12 @@ const BusinessDashboard = () => {
                             <Typography variant="h6" fontWeight="bold" gutterBottom>{vehicle.name}</Typography>
                             <Stack spacing={0.5}>
                               <Typography variant="body2" color="text.secondary">Type: {vehicle.type || 'Truck'}</Typography>
+                              <Typography variant="body2" color="text.secondary">Partner: <strong>{vehicle.ownerName || 'Delivery Partner'}</strong></Typography>
                               <Typography variant="body2" color="text.secondary">Capacity: <strong>{vehicle.capacity?.toLocaleString()} kg</strong></Typography>
                               {vehicle.plate && <Typography variant="body2" color="text.secondary">Plate: {vehicle.plate}</Typography>}
                             </Stack>
                             <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-                              <Button
-                                size="small" variant="outlined" fullWidth
-                                color={vehicle.status === 'Maintenance' ? 'success' : 'warning'}
-                                onClick={() => handleToggleVehicleStatus(vehicle.id)}
-                                disabled={vehicle.status === 'In Transit'}
-                              >
-                                {vehicle.status === 'Maintenance' ? 'Set Available' : 'Maintenance'}
-                              </Button>
-                              <IconButton color="error" size="small"
-                                onClick={() => handleRemoveVehicle(vehicle.id)}
-                                disabled={vehicle.status === 'In Transit'}
-                              >
-                                <Delete fontSize="small" />
-                              </IconButton>
+                              <Chip size="small" label={vehicle.status} color={vehicle.status === 'Available' ? 'success' : 'default'} />
                             </Stack>
                           </CardContent>
                         </Card>
@@ -1129,6 +1312,21 @@ const BusinessDashboard = () => {
                   )}
                 </Stack>
                 <Paper sx={{ p: 3 }}>
+                  <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap' }}>
+                    {['all', 'unread', 'order', 'payment', 'delivery'].map((filter) => (
+                      <Button
+                        key={filter}
+                        size="small"
+                        variant={notificationFilter === filter ? 'contained' : 'outlined'}
+                        onClick={() => {
+                          setNotificationFilter(filter);
+                          setNotificationPage(1);
+                        }}
+                      >
+                        {filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
+                      </Button>
+                    ))}
+                  </Stack>
                   {notifications.length === 0 ? (
                     <Typography color="text.secondary" textAlign="center" py={4}>No notifications</Typography>
                   ) : (
@@ -1157,6 +1355,13 @@ const BusinessDashboard = () => {
                       ))}
                     </Stack>
                   )}
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 2 }}>
+                    <Typography variant="caption" color="text.secondary">Page {notificationPage} of {notificationTotalPages}</Typography>
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" variant="outlined" disabled={notificationPage <= 1} onClick={() => setNotificationPage((p) => Math.max(1, p - 1))}>Prev</Button>
+                      <Button size="small" variant="outlined" disabled={notificationPage >= notificationTotalPages} onClick={() => setNotificationPage((p) => Math.min(notificationTotalPages, p + 1))}>Next</Button>
+                    </Stack>
+                  </Stack>
                 </Paper>
               </Box>
             )}
@@ -1221,7 +1426,7 @@ const BusinessDashboard = () => {
 
       {/* ── Vehicle Assignment Dialog ─────────────────────────────────────────── */}
       <Dialog open={assignDialog.open} onClose={() => setAssignDialog({ open: false, orderId: null })} maxWidth="sm" fullWidth>
-        <DialogTitle>Assign Vehicle for Transport</DialogTitle>
+        <DialogTitle>Select Delivery Partner Vehicle</DialogTitle>
         <DialogContent>
           {(() => {
             const order = orders.find(o => o.id === assignDialog.orderId);
@@ -1234,7 +1439,7 @@ const BusinessDashboard = () => {
                   </Alert>
                 )}
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Select an available vehicle with sufficient capacity.
+                  Select an available delivery-partner vehicle with sufficient capacity.
                 </Typography>
                 <List>
                   {fleet.map(vehicle => {
@@ -1245,18 +1450,18 @@ const BusinessDashboard = () => {
                         <ListItemIcon><LocalShipping color={isAvailable && canCarry ? 'primary' : 'disabled'} /></ListItemIcon>
                         <ListItemText
                           primary={vehicle.name}
-                          secondary={`Capacity: ${vehicle.capacity?.toLocaleString()} kg | Status: ${vehicle.status}`}
+                          secondary={`Partner: ${vehicle.ownerName || 'Delivery Partner'} | Capacity: ${vehicle.capacity?.toLocaleString()} kg | Status: ${vehicle.status}`}
                         />
                         <Button variant="contained" size="small" disabled={!canCarry || !isAvailable}
                           onClick={() => handleAssignVehicle(vehicle)}>
-                          Dispatch
+                          Request
                         </Button>
                       </ListItem>
                     );
                   })}
                   {fleet.length === 0 && (
                     <Typography color="text.secondary" textAlign="center" py={2}>
-                      No vehicles in fleet — <Button size="small" onClick={() => { setAssignDialog({ open: false, orderId: null }); setActiveSection('fleet'); }}>Add vehicles</Button>
+                      No delivery partner vehicles are currently available.
                     </Typography>
                   )}
                 </List>

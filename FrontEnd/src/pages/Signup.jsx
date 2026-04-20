@@ -7,11 +7,90 @@ import { getDashboardPath } from '../utils/roleRouting';
 const Signup = () => {
   const navigate = useNavigate();
   const { register } = useAuth();
-  const [form, setForm] = useState({ name: '', email: '', phone: '', address: '', role: 'customer', password: '', confirmPassword: '' });
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    address: '',
+    city: '',
+    role: 'customer',
+    password: '',
+    confirmPassword: '',
+    farmName: '',
+    totalLand: '',
+    experience: '',
+    businessType: '',
+    owner: '',
+    gst: '',
+    licenseNumber: '',
+    accountType: '',
+    companyName: '',
+    agencyName: ''
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const onChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
+
+  const buildRegisterPayload = () => {
+    const role = form.role;
+    const payload = {
+      name: form.name.trim(),
+      email: form.email.trim().toLowerCase(),
+      phone: form.phone.trim(),
+      address: form.address.trim(),
+      city: form.city.trim(),
+      password: form.password,
+      roles: [role],
+      profileData: {}
+    };
+
+    if (role === 'farmer') {
+      payload.farmName = form.farmName.trim() || `${form.name.trim()}'s Farm`;
+      payload.totalLand = form.totalLand.trim();
+      payload.experience = form.experience.trim();
+      payload.profileData.farmer = {
+        farmName: payload.farmName,
+        farmSize: Number(form.totalLand) || 1,
+        experience: Number(form.experience) || 0
+      };
+    }
+
+    if (role === 'business') {
+      payload.businessType = form.businessType.trim() || 'Business';
+      payload.owner = form.owner.trim() || form.name.trim();
+      payload.gst = form.gst.trim();
+      payload.profileData.business = {
+        companyName: form.companyName.trim() || `${form.name.trim()} Traders`,
+        companyType: 'retailer',
+        gstNumber: payload.gst
+      };
+    }
+
+    if (role === 'restaurant') {
+      payload.businessType = 'Restaurant';
+      payload.profileData.restaurant = {
+        restaurantName: form.companyName.trim() || `${form.name.trim()} Restaurant`
+      };
+    }
+
+    if (role === 'travel_agency') {
+      payload.profileData.travelAgency = {
+        agencyName: form.agencyName.trim() || `${form.name.trim()} Travels`
+      };
+    }
+
+    if (role === 'delivery_large' || role === 'delivery_small') {
+      payload.licenseNumber = form.licenseNumber.trim();
+      payload.accountType = form.accountType.trim() || (role === 'delivery_large' ? 'Large-Scale Transporter' : 'Last-Mile Delivery');
+      payload.profileData.delivery = {
+        companyName: form.companyName.trim() || `${form.name.trim()} Logistics`,
+        scale: role === 'delivery_large' ? 'large' : 'small'
+      };
+    }
+
+    return payload;
+  };
   
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -40,14 +119,7 @@ const Signup = () => {
     setLoading(true);
 
     try {
-      const res = await register({
-        name: form.name.trim(),
-        email: form.email.trim().toLowerCase(),
-        phone: form.phone.trim(),
-        address: form.address.trim(),
-        password: form.password,
-        roles: [form.role]
-      });
+      const res = await register(buildRegisterPayload());
 
       if (!res.success) {
         setError(res.error || 'Registration failed');
@@ -126,6 +198,17 @@ const Signup = () => {
                 variant="outlined"
                 disabled={loading}
               />
+
+              <TextField
+                label="City"
+                name="city"
+                value={form.city}
+                onChange={onChange}
+                placeholder="Enter your city"
+                fullWidth
+                variant="outlined"
+                disabled={loading}
+              />
               
               <TextField
                 label="Role"
@@ -146,6 +229,149 @@ const Signup = () => {
                 <MenuItem value="delivery_large">Large Scale Delivery</MenuItem>
                 <MenuItem value="delivery_small">Small Scale Delivery</MenuItem>
               </TextField>
+
+              {form.role === 'farmer' && (
+                <>
+                  <TextField
+                    label="Farm Name"
+                    name="farmName"
+                    value={form.farmName}
+                    onChange={onChange}
+                    placeholder="Enter farm name"
+                    fullWidth
+                    variant="outlined"
+                    disabled={loading}
+                  />
+                  <TextField
+                    label="Total Land (acres)"
+                    name="totalLand"
+                    type="number"
+                    value={form.totalLand}
+                    onChange={onChange}
+                    placeholder="e.g. 5"
+                    fullWidth
+                    variant="outlined"
+                    disabled={loading}
+                  />
+                  <TextField
+                    label="Experience (years)"
+                    name="experience"
+                    type="number"
+                    value={form.experience}
+                    onChange={onChange}
+                    placeholder="e.g. 3"
+                    fullWidth
+                    variant="outlined"
+                    disabled={loading}
+                  />
+                </>
+              )}
+
+              {form.role === 'business' && (
+                <>
+                  <TextField
+                    label="Company Name"
+                    name="companyName"
+                    value={form.companyName}
+                    onChange={onChange}
+                    placeholder="Enter company name"
+                    fullWidth
+                    variant="outlined"
+                    disabled={loading}
+                  />
+                  <TextField
+                    label="Business Type"
+                    name="businessType"
+                    value={form.businessType}
+                    onChange={onChange}
+                    placeholder="Retailer, wholesaler, etc."
+                    fullWidth
+                    variant="outlined"
+                    disabled={loading}
+                  />
+                  <TextField
+                    label="Owner"
+                    name="owner"
+                    value={form.owner}
+                    onChange={onChange}
+                    placeholder="Owner name"
+                    fullWidth
+                    variant="outlined"
+                    disabled={loading}
+                  />
+                  <TextField
+                    label="GST"
+                    name="gst"
+                    value={form.gst}
+                    onChange={onChange}
+                    placeholder="GST number"
+                    fullWidth
+                    variant="outlined"
+                    disabled={loading}
+                  />
+                </>
+              )}
+
+              {form.role === 'restaurant' && (
+                <TextField
+                  label="Restaurant Name"
+                  name="companyName"
+                  value={form.companyName}
+                  onChange={onChange}
+                  placeholder="Enter restaurant name"
+                  fullWidth
+                  variant="outlined"
+                  disabled={loading}
+                />
+              )}
+
+              {form.role === 'travel_agency' && (
+                <TextField
+                  label="Agency Name"
+                  name="agencyName"
+                  value={form.agencyName}
+                  onChange={onChange}
+                  placeholder="Enter travel agency name"
+                  fullWidth
+                  variant="outlined"
+                  disabled={loading}
+                />
+              )}
+
+              {(form.role === 'delivery_large' || form.role === 'delivery_small') && (
+                <>
+                  <TextField
+                    label="Company Name"
+                    name="companyName"
+                    value={form.companyName}
+                    onChange={onChange}
+                    placeholder="Enter logistics company name"
+                    fullWidth
+                    variant="outlined"
+                    disabled={loading}
+                  />
+                  <TextField
+                    label="License Number"
+                    name="licenseNumber"
+                    value={form.licenseNumber}
+                    onChange={onChange}
+                    placeholder="Enter license number"
+                    fullWidth
+                    variant="outlined"
+                    disabled={loading}
+                  />
+                  <TextField
+                    label="Account Type"
+                    name="accountType"
+                    value={form.accountType}
+                    onChange={onChange}
+                    placeholder="Large-Scale Transporter / Last-Mile Delivery"
+                    fullWidth
+                    variant="outlined"
+                    disabled={loading}
+                  />
+                </>
+              )}
               
               <TextField
                 label="Password"

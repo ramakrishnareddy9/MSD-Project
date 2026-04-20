@@ -1,9 +1,14 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import Order from '../models/Order.model.js';
 import Product from '../models/Product.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
 import PriceAgreement from '../models/PriceAgreement.model.js';
+import MarketplaceRequest from '../models/MarketplaceRequest.model.js';
 import Commission from '../models/Commission.model.js';
+import Vehicle from '../models/Vehicle.model.js';
+import User from '../models/User.model.js';
+import { notifyUsers } from '../utils/notification.util.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
 import { validateOrder, validateObjectId } from '../middleware/validation.middleware.js';
@@ -17,13 +22,18 @@ router.get('/', authenticate, async (req, res) => {
     
     const query = {};
     const isAdmin = req.user.roles?.includes('admin');
+    const isDeliveryUser = req.user.roles?.some((role) => ['delivery', 'delivery_large', 'delivery_small'].includes(role));
 
     if (isAdmin) {
       if (buyerId) query.buyerId = buyerId;
       if (sellerId) query.sellerId = sellerId;
     } else {
-      // Non-admin users can only see orders where they are buyer or seller.
+      // Non-admin users can see orders where they are buyer/seller.
+      // Delivery partners additionally see orders explicitly requested to them.
       query.$or = [{ buyerId: req.user._id }, { sellerId: req.user._id }];
+      if (isDeliveryUser) {
+        query.$or.push({ 'delivery.requestedPartnerId': req.user._id });
+      }
     }
     if (type) query.type = type;
     if (status) query.status = status;
@@ -32,6 +42,8 @@ router.get('/', authenticate, async (req, res) => {
       .populate('buyerId', 'name email phone')
       .populate('sellerId', 'name email phone')
       .populate('orderItems.productId', 'name images')
+      .populate('delivery.requestedVehicleId', 'name type capacity status plateNumber')
+      .populate('delivery.requestedPartnerId', 'name email phone')
       .limit(limit * 1)
       .skip((page - 1) * limit)
       .sort({ createdAt: -1 });
@@ -89,14 +101,42 @@ router.post('/', authenticate, (req, res, next) => {
 }, validateOrder, async (req, res) => {
   let session = null;
   const useTransaction = false;
+  let reservationToken = null;
+  const reservedLotIds = [];
   
   try {
-    const { type, sellerId, orderItems, deliveryAddress } = req.body;
+    const { type, sellerId, orderItems, deliveryAddress, marketplaceRequestId } = req.body;
     const buyerId = req.user._id;
+    reservationToken = new mongoose.Types.ObjectId();
     let resolvedSellerId = sellerId || null;
     let resolvedPriceAgreementId = null;
+    let resolvedMarketplaceRequestId = null;
     let subtotal = 0;
     const processedItems = [];
+
+    let marketplaceRequest = null;
+    if (marketplaceRequestId) {
+      marketplaceRequest = await MarketplaceRequest.findById(marketplaceRequestId).populate('productId', 'name ownerId');
+      if (!marketplaceRequest) {
+        throw new Error('Linked negotiation request not found');
+      }
+
+      if (String(marketplaceRequest.requesterId) !== String(buyerId)) {
+        throw new Error('Only the requester can place order against this negotiation');
+      }
+
+      if (
+        marketplaceRequest.status !== 'accepted' ||
+        !marketplaceRequest.buyerAccepted ||
+        !marketplaceRequest.farmerAccepted ||
+        !Number(marketplaceRequest.agreedPrice)
+      ) {
+        throw new Error('Payment/order can proceed only after both parties accept the negotiated price');
+      }
+
+      resolvedSellerId = marketplaceRequest.matchedFarmerId || resolvedSellerId;
+      resolvedMarketplaceRequestId = marketplaceRequest._id;
+    }
     
     // Process each order item
     for (const item of orderItems) {
@@ -120,13 +160,23 @@ router.post('/', authenticate, (req, res, next) => {
       
       // Check for B2B price agreement
       let unitPrice = product.basePrice;
+
+      if (marketplaceRequest) {
+        const productMatchesRequest = String(product._id) === String(marketplaceRequest.productId?._id || marketplaceRequest.productId);
+        if (!productMatchesRequest) {
+          throw new Error('Negotiated order item does not match requested crop product');
+        }
+
+        unitPrice = Number(marketplaceRequest.agreedPrice);
+      }
       
-      if (type === 'b2b') {
+      if (type === 'b2b' && !marketplaceRequest) {
         const agreementQuery = PriceAgreement.findOne({
           buyerId,
-          farmerId: product.ownerId,
+          sellerId: product.ownerId,
           productId: item.productId,
           status: 'active',
+          validFrom: { $lte: new Date() },
           validUntil: { $gt: new Date() }
         });
 
@@ -144,7 +194,7 @@ router.post('/', authenticate, (req, res, next) => {
           );
           
           if (tier) {
-            unitPrice = tier.pricePerUnit;
+            unitPrice = tier.price;
             if (!resolvedPriceAgreementId) {
               resolvedPriceAgreementId = agreement._id;
             }
@@ -169,7 +219,8 @@ router.post('/', authenticate, (req, res, next) => {
       }
       
       // Reserve inventory (will auto-expire in 30 minutes)
-      await inventory.reserve(null, item.quantity); // Order ID will be set after creation
+      await inventory.reserve(reservationToken, item.quantity);
+      reservedLotIds.push(inventory._id);
       
       // Build processed item
       const itemTotal = unitPrice * item.quantity;
@@ -213,6 +264,7 @@ router.post('/', authenticate, (req, res, next) => {
       currency: 'INR',
       deliveryAddress,
       priceAgreementId: resolvedPriceAgreementId,
+      marketplaceRequestId: resolvedMarketplaceRequestId,
       paymentTerms: type === 'b2b' ? 'net_15' : 'prepaid',
       commission: {
         rate: commissionRate,
@@ -237,7 +289,7 @@ router.post('/', authenticate, (req, res, next) => {
     // Update inventory reservations with order ID
     for (const item of processedItems) {
       const updateOptions = {
-        arrayFilters: [{ 'elem.status': 'active', 'elem.orderId': null }]
+        arrayFilters: [{ 'elem.status': 'active', 'elem.orderId': reservationToken }]
       };
 
       if (useTransaction) {
@@ -283,6 +335,17 @@ router.post('/', authenticate, (req, res, next) => {
     if (useTransaction) {
       await session.commitTransaction();
     }
+
+    try {
+      await notifyUsers([buyerId, resolvedSellerId], {
+        title: 'Order Placed',
+        message: `Order ${order.orderNumber} has been placed and is awaiting processing.`,
+        type: 'order',
+        relatedId: order._id
+      });
+    } catch {
+      // Best-effort notification should not fail order creation.
+    }
     
     res.status(201).json({
       success: true,
@@ -296,6 +359,16 @@ router.post('/', authenticate, (req, res, next) => {
       }
     });
   } catch (error) {
+    if (reservationToken && reservedLotIds.length > 0) {
+      // Roll back temporary reservations when order creation fails mid-way.
+      for (const lotId of reservedLotIds) {
+        const lot = await InventoryLot.findById(lotId);
+        if (lot) {
+          await lot.cancelReservation(reservationToken);
+        }
+      }
+    }
+
     if (useTransaction) {
       await session.abortTransaction();
     }
@@ -314,12 +387,8 @@ router.post('/', authenticate, (req, res, next) => {
 router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'delivery_large', 'delivery_small', 'admin'), validateObjectId('id'), async (req, res) => {
   try {
     const { status } = req.body;
-    
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { $set: { status } },
-      { new: true, runValidators: true }
-    );
+
+    const order = await Order.findById(req.params.id);
 
     if (!order) {
       return res.status(404).json({
@@ -328,10 +397,315 @@ router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'deliv
       });
     }
 
+    const isAdmin = req.user.roles?.includes('admin');
+    const isDeliveryUser = req.user.roles?.some((role) => ['delivery', 'delivery_large', 'delivery_small'].includes(role));
+
+    if (!isAdmin && isDeliveryUser) {
+      const assignedToPartner = String(order.delivery?.requestedPartnerId || '') === String(req.user._id);
+      const requestAccepted = order.delivery?.requestStatus === 'accepted';
+      if (!assignedToPartner || !requestAccepted) {
+        return res.status(403).json({
+          success: false,
+          message: 'Delivery partner can only update status for accepted delivery assignments'
+        });
+      }
+
+      if (!['shipped', 'delivered'].includes(String(status))) {
+        return res.status(400).json({
+          success: false,
+          message: 'Delivery partner can only update status to shipped or delivered'
+        });
+      }
+    }
+
+    const previousStatus = order.status;
+    order.status = status;
+    if (String(status) === 'delivered') {
+      order.delivery = {
+        ...(order.delivery || {}),
+        actualDelivery: new Date()
+      };
+      if (order.delivery?.requestedVehicleId) {
+        await Vehicle.findByIdAndUpdate(order.delivery.requestedVehicleId, { status: 'Available' });
+      }
+    }
+    if (String(status) === 'cancelled' && order.delivery?.requestedVehicleId) {
+      await Vehicle.findByIdAndUpdate(order.delivery.requestedVehicleId, { status: 'Available' });
+    }
+    order.statusHistory = [
+      ...(order.statusHistory || []),
+      {
+        status,
+        timestamp: new Date(),
+        updatedBy: req.user._id,
+        notes: `Status changed from ${previousStatus} to ${status}`
+      }
+    ];
+    await order.save();
+
+    const normalizedStatus = String(status || '').toLowerCase();
+    const isCancelled = normalizedStatus === 'cancelled' || normalizedStatus === 'canceled';
+
+    await notifyUsers([order.buyerId, order.sellerId], {
+      title: isCancelled ? 'Order Cancelled' : 'Order Status Updated',
+      message: isCancelled
+        ? `Order ${order.orderNumber} has been cancelled.`
+        : `Order ${order.orderNumber} status is now ${status}.`,
+      type: isCancelled ? 'alert' : 'order',
+      relatedId: order._id
+    });
+
     res.json({
       success: true,
       message: 'Order status updated successfully',
       data: { order }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// Buyer requests a delivery partner vehicle for an order
+router.patch('/:id/request-delivery', authenticate, validateObjectId('id'), async (req, res) => {
+  try {
+    const { vehicleId } = req.body;
+    if (!vehicleId) {
+      return res.status(400).json({
+        success: false,
+        message: 'vehicleId is required'
+      });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    const isAdmin = req.user.roles?.includes('admin');
+    const isBuyer = String(order.buyerId) === String(req.user._id);
+    if (!isAdmin && !isBuyer) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to request delivery for this order'
+      });
+    }
+
+    const vehicle = await Vehicle.findById(vehicleId).populate('owner', 'roles status');
+    if (!vehicle) {
+      return res.status(404).json({
+        success: false,
+        message: 'Vehicle not found'
+      });
+    }
+
+    const ownerRoles = vehicle.owner?.roles || [];
+    const isDeliveryPartnerVehicle = ownerRoles.some((r) => ['delivery', 'delivery_large', 'delivery_small'].includes(r));
+    const isOwnerActive = vehicle.owner?.status === 'active';
+    if (!isDeliveryPartnerVehicle || !isOwnerActive) {
+      return res.status(400).json({
+        success: false,
+        message: 'Selected vehicle must belong to an active delivery partner'
+      });
+    }
+
+    if (vehicle.status !== 'Available') {
+      return res.status(400).json({
+        success: false,
+        message: 'Selected vehicle is not available'
+      });
+    }
+
+    order.delivery = {
+      ...(order.delivery || {}),
+      requestedVehicleId: vehicle._id,
+      requestedPartnerId: vehicle.owner?._id || vehicle.owner,
+      requestedAt: new Date(),
+      requestStatus: 'requested'
+    };
+
+    order.statusHistory = [
+      ...(order.statusHistory || []),
+      {
+        status: order.status,
+        timestamp: new Date(),
+        updatedBy: req.user._id,
+        notes: `Delivery requested with vehicle ${vehicle.name}`
+      }
+    ];
+
+    await order.save();
+
+    const requestedPartnerId = vehicle.owner?._id || vehicle.owner;
+    await notifyUsers([requestedPartnerId, order.buyerId, order.sellerId], {
+      title: 'Delivery Vehicle Requested',
+      message: `Vehicle ${vehicle.name} was requested for order ${order.orderNumber}.`,
+      type: 'delivery',
+      relatedId: order._id
+    });
+
+    const populatedOrder = await Order.findById(order._id)
+      .populate('buyerId', 'name email')
+      .populate('sellerId', 'name email')
+      .populate('delivery.requestedVehicleId', 'name type capacity status plateNumber')
+      .populate('delivery.requestedPartnerId', 'name email phone');
+
+    res.json({
+      success: true,
+      message: 'Delivery vehicle requested successfully',
+      data: { order: populatedOrder }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// Delivery partner accepts/rejects a requested delivery assignment
+router.patch('/:id/delivery-response', authenticate, validateObjectId('id'), async (req, res) => {
+  try {
+    const { action, vehicleId } = req.body;
+    const normalizedAction = String(action || '').toLowerCase();
+    if (!['accepted', 'rejected'].includes(normalizedAction)) {
+      return res.status(400).json({
+        success: false,
+        message: 'action must be accepted or rejected'
+      });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    const isAdmin = req.user.roles?.includes('admin');
+    const isDeliveryUser = req.user.roles?.some((role) => ['delivery', 'delivery_large', 'delivery_small'].includes(role));
+    if (!isAdmin && !isDeliveryUser) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only delivery partners can respond to delivery requests'
+      });
+    }
+
+    const requestedPartnerId = order.delivery?.requestedPartnerId;
+    if (!isAdmin && String(requestedPartnerId || '') !== String(req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to respond to this delivery request'
+      });
+    }
+
+    if (!order.delivery || order.delivery.requestStatus === 'none') {
+      return res.status(400).json({
+        success: false,
+        message: 'No delivery request found for this order'
+      });
+    }
+
+    let resolvedVehicle = null;
+    if (normalizedAction === 'accepted') {
+      const targetVehicleId = vehicleId || order.delivery?.requestedVehicleId;
+      if (!targetVehicleId) {
+        return res.status(400).json({
+          success: false,
+          message: 'vehicleId is required to accept delivery request'
+        });
+      }
+
+      const targetPartnerId = isAdmin
+        ? (order.delivery?.requestedPartnerId || req.user._id)
+        : req.user._id;
+
+      resolvedVehicle = await Vehicle.findById(targetVehicleId).populate('owner', 'roles status');
+      if (!resolvedVehicle) {
+        return res.status(404).json({
+          success: false,
+          message: 'Vehicle not found'
+        });
+      }
+
+      if (String(resolvedVehicle.owner?._id || resolvedVehicle.owner) !== String(targetPartnerId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Selected vehicle does not belong to requested delivery partner'
+        });
+      }
+
+      const ownerRoles = resolvedVehicle.owner?.roles || [];
+      const isDeliveryPartnerVehicle = ownerRoles.some((r) => ['delivery', 'delivery_large', 'delivery_small'].includes(r));
+      if (!isDeliveryPartnerVehicle || resolvedVehicle.owner?.status !== 'active') {
+        return res.status(400).json({
+          success: false,
+          message: 'Selected vehicle owner is not an active delivery partner'
+        });
+      }
+
+      if (resolvedVehicle.status !== 'Available') {
+        return res.status(400).json({
+          success: false,
+          message: 'Selected vehicle is not available'
+        });
+      }
+
+      await Vehicle.findByIdAndUpdate(resolvedVehicle._id, { status: 'On Delivery' });
+      order.delivery = {
+        ...(order.delivery || {}),
+        requestedVehicleId: resolvedVehicle._id,
+        requestedPartnerId: targetPartnerId,
+        requestStatus: 'accepted'
+      };
+    } else {
+      order.delivery = {
+        ...(order.delivery || {}),
+        requestStatus: 'rejected'
+      };
+    }
+
+    order.statusHistory = [
+      ...(order.statusHistory || []),
+      {
+        status: order.status,
+        timestamp: new Date(),
+        updatedBy: req.user._id,
+        notes: normalizedAction === 'accepted'
+          ? `Delivery request accepted${resolvedVehicle ? ` with vehicle ${resolvedVehicle.name}` : ''}`
+          : 'Delivery request rejected by delivery partner'
+      }
+    ];
+
+    await order.save();
+
+    await notifyUsers([order.buyerId, order.sellerId, order.delivery?.requestedPartnerId].filter(Boolean), {
+      title: normalizedAction === 'accepted' ? 'Delivery Request Accepted' : 'Delivery Request Rejected',
+      message: normalizedAction === 'accepted'
+        ? `Delivery partner accepted order ${order.orderNumber}.`
+        : `Delivery partner rejected order ${order.orderNumber}.`,
+      type: 'delivery',
+      relatedId: order._id
+    });
+
+    const populatedOrder = await Order.findById(order._id)
+      .populate('buyerId', 'name email')
+      .populate('sellerId', 'name email')
+      .populate('delivery.requestedVehicleId', 'name type capacity status plateNumber')
+      .populate('delivery.requestedPartnerId', 'name email phone');
+
+    res.json({
+      success: true,
+      message: normalizedAction === 'accepted'
+        ? 'Delivery request accepted successfully'
+        : 'Delivery request rejected successfully',
+      data: { order: populatedOrder }
     });
   } catch (error) {
     res.status(500).json({

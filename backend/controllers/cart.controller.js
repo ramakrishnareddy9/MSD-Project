@@ -1,5 +1,22 @@
 import Cart from '../models/Cart.model.js';
 import Product from '../models/Product.model.js';
+import User from '../models/User.model.js';
+
+const ensureFarmerProduct = async (productId) => {
+  const product = await Product.findById(productId).select('ownerId status stockQuantity');
+  if (!product || product.status !== 'active') {
+    return { ok: false, message: 'Product not found or unavailable', product: null };
+  }
+
+  const owner = await User.findById(product.ownerId).select('roles status');
+  const isFarmerOwner = owner?.roles?.includes('farmer');
+
+  if (!isFarmerOwner || owner?.status !== 'active') {
+    return { ok: false, message: 'Only crops grown by active farmers can be added to cart', product: null };
+  }
+
+  return { ok: true, message: '', product };
+};
 
 // @desc    Get user cart
 // @route   GET /api/cart
@@ -28,9 +45,9 @@ export const addItemToCart = async (req, res) => {
   try {
     const { productId, qty } = req.body;
 
-    const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
+    const productCheck = await ensureFarmerProduct(productId);
+    if (!productCheck.ok) {
+      return res.status(400).json({ success: false, message: productCheck.message });
     }
 
     let cart = await Cart.findOne({ user: req.user._id });

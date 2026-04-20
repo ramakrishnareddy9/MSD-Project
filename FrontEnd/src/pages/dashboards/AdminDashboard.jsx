@@ -14,7 +14,7 @@ import {
   Security, AdminPanelSettings, Schedule, Cancel
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { analyticsAPI, userAPI, orderAPI } from '../../services/api';
+import { analyticsAPI, userAPI, orderAPI, notificationAPI } from '../../services/api';
 
 const AdminDashboard = () => {
   const [activeSection, setActiveSection] = useState('overview');
@@ -23,6 +23,10 @@ const AdminDashboard = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [activities, setActivities] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationFilter, setNotificationFilter] = useState('all');
+  const [notificationPage, setNotificationPage] = useState(1);
+  const [notificationTotalPages, setNotificationTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
 
   // Real API data state
@@ -114,6 +118,8 @@ const AdminDashboard = () => {
         ];
 
         setActivities(systemActivities.sort((a, b) => b.ts - a.ts));
+
+        await fetchNotifications(1, 'all');
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
         showSnackbar('Error loading dashboard data. Using offline mode.', 'error');
@@ -145,6 +151,25 @@ const AdminDashboard = () => {
     setSnackbar({ open: true, message, severity });
   };
 
+  const fetchNotifications = async (page = notificationPage, filter = notificationFilter) => {
+    const params = { page, limit: 8 };
+    if (filter === 'unread') params.unread = true;
+    if (filter !== 'all' && filter !== 'unread') params.type = filter;
+
+    const notificationsRes = await notificationAPI.getAll(params);
+    if (notificationsRes.success) {
+      setNotifications((notificationsRes.data || []).map((n) => ({
+        id: n._id || n.id,
+        title: n.title || 'Notification',
+        message: n.message || '',
+        time: new Date(n.createdAt || Date.now()).toLocaleString('en-IN'),
+        type: n.type === 'alert' ? 'warning' : n.type === 'order' ? 'success' : 'info',
+        read: !!n.isRead
+      })));
+      setNotificationTotalPages(notificationsRes.pagination?.totalPages || 1);
+    }
+  };
+
   const handleMenuOpen = (event, user) => {
     setAnchorEl(event.currentTarget);
     setSelectedUser(user);
@@ -159,12 +184,39 @@ const AdminDashboard = () => {
     handleMenuClose();
   };
 
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const markNotificationRead = async (id) => {
+    try {
+      await notificationAPI.markAsRead(id);
+      await fetchNotifications(notificationPage, notificationFilter);
+    } catch {
+      setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, read: true } : n));
+    }
+  };
+
+  const markAllNotificationsRead = async () => {
+    try {
+      await notificationAPI.markAllAsRead();
+      await fetchNotifications(notificationPage, notificationFilter);
+      showSnackbar('All notifications marked as read', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to update notifications', 'error');
+    }
+  };
+
+  useEffect(() => {
+    if (activeSection === 'notifications') {
+      fetchNotifications(notificationPage, notificationFilter);
+    }
+  }, [activeSection, notificationPage, notificationFilter]);
+
   const menuItems = [
     { id: 'overview', label: 'Dashboard', icon: <Dashboard /> },
     { id: 'users', label: 'User Management', icon: <People />, badge: stats.pendingApprovals },
     { id: 'orders', label: 'Orders', icon: <ShoppingCart /> },
     { id: 'analytics', label: 'Analytics', icon: <Assessment /> },
-    { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: 5 },
+    { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: unreadCount || null },
     { id: 'settings', label: 'Settings', icon: <Settings /> },
   ];
 
@@ -851,15 +903,24 @@ const AdminDashboard = () => {
                 <Grid container spacing={3}>
                   <Grid item xs={12}>
                     <Paper sx={{ p: 3 }}>
+                      <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap' }}>
+                        {['all', 'unread', 'order', 'payment', 'delivery'].map((filter) => (
+                          <Button
+                            key={filter}
+                            size="small"
+                            variant={notificationFilter === filter ? 'contained' : 'outlined'}
+                            onClick={() => {
+                              setNotificationFilter(filter);
+                              setNotificationPage(1);
+                            }}
+                          >
+                            {filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
+                          </Button>
+                        ))}
+                      </Stack>
                       <Stack spacing={2}>
-                        {[
-                          { id: 1, title: 'New User Registration', message: 'Meera Sharma registered as a Farmer', time: '5 minutes ago', type: 'info', read: false },
-                          { id: 2, title: 'Pending Approval', message: '3 new farmers awaiting verification', time: '1 hour ago', type: 'warning', read: false },
-                          { id: 3, title: 'System Alert', message: 'Server maintenance scheduled for tonight', time: '2 hours ago', type: 'error', read: false },
-                          { id: 4, title: 'Order Completed', message: 'Order #1234 has been delivered successfully', time: '3 hours ago', type: 'success', read: true },
-                          { id: 5, title: 'New Business Registration', message: 'Business Ltd has joined the platform', time: '5 hours ago', type: 'info', read: true },
-                        ].map((notification) => (
-                          <Card key={notification.id} sx={{ bgcolor: notification.read ? 'background.paper' : 'action.hover' }}>
+                        {notifications.map((notification) => (
+                          <Card key={notification.id} sx={{ bgcolor: notification.read ? 'background.paper' : 'action.hover', cursor: notification.read ? 'default' : 'pointer' }} onClick={() => !notification.read && markNotificationRead(notification.id)}>
                             <CardContent>
                               <Stack direction="row" spacing={2} alignItems="flex-start">
                                 <Avatar sx={{ 
@@ -897,9 +958,16 @@ const AdminDashboard = () => {
                           </Card>
                         ))}
                       </Stack>
-                      <Button fullWidth variant="outlined" sx={{ mt: 3 }} onClick={() => showSnackbar('All notifications marked as read', 'success')}>
+                      <Button fullWidth variant="outlined" sx={{ mt: 3 }} onClick={markAllNotificationsRead}>
                         Mark All as Read
                       </Button>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 2 }}>
+                        <Typography variant="caption" color="text.secondary">Page {notificationPage} of {notificationTotalPages}</Typography>
+                        <Stack direction="row" spacing={1}>
+                          <Button size="small" variant="outlined" disabled={notificationPage <= 1} onClick={() => setNotificationPage((p) => Math.max(1, p - 1))}>Prev</Button>
+                          <Button size="small" variant="outlined" disabled={notificationPage >= notificationTotalPages} onClick={() => setNotificationPage((p) => Math.min(notificationTotalPages, p + 1))}>Next</Button>
+                        </Stack>
+                      </Stack>
                     </Paper>
                   </Grid>
                 </Grid>

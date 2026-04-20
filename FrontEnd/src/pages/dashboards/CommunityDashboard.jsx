@@ -14,7 +14,7 @@ import {
   Savings, Store, Refresh
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { authAPI, communityAPI, orderAPI, userAPI, analyticsAPI } from '../../services/api';
+import { authAPI, communityAPI, orderAPI, userAPI, analyticsAPI, notificationAPI } from '../../services/api';
 
 const CommunityDashboard = () => {
   // ── API-driven State ────────────────────────────────────────────────────────
@@ -40,6 +40,10 @@ const CommunityDashboard = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [currentUser, setCurrentUser] = useState(null);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationFilter, setNotificationFilter] = useState('all');
+  const [notificationPage, setNotificationPage] = useState(1);
+  const [notificationTotalPages, setNotificationTotalPages] = useState(1);
   const [profileForm, setProfileForm] = useState({
     communityName: '',
     address: '',
@@ -151,6 +155,8 @@ const CommunityDashboard = () => {
                 totalMembers: mappedMembers.length
               }));
             }
+
+            await fetchNotifications(1, 'all');
           }
         }
       } catch (error) {
@@ -187,6 +193,25 @@ const CommunityDashboard = () => {
 
   const showSnackbar = (message, severity = 'success') => {
     setSnackbar({ open: true, message, severity });
+  };
+
+  const fetchNotifications = async (page = notificationPage, filter = notificationFilter) => {
+    const params = { page, limit: 8 };
+    if (filter === 'unread') params.unread = true;
+    if (filter !== 'all' && filter !== 'unread') params.type = filter;
+
+    const notificationsRes = await notificationAPI.getAll(params);
+    if (notificationsRes.success) {
+      setNotifications((notificationsRes.data || []).map((n) => ({
+        id: n._id || n.id,
+        title: n.title || 'Notification',
+        message: n.message || '',
+        time: new Date(n.createdAt || Date.now()).toLocaleString('en-IN'),
+        type: n.type === 'alert' ? 'warning' : n.type === 'order' ? 'success' : 'info',
+        read: !!n.isRead
+      })));
+      setNotificationTotalPages(notificationsRes.pagination?.totalPages || 1);
+    }
   };
 
   const onProfileChange = (e) => {
@@ -235,6 +260,33 @@ const CommunityDashboard = () => {
   };
 
   const onChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const markNotificationRead = async (id) => {
+    try {
+      await notificationAPI.markAsRead(id);
+      await fetchNotifications(notificationPage, notificationFilter);
+    } catch {
+      setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, read: true } : n));
+    }
+  };
+
+  const markAllNotificationsRead = async () => {
+    try {
+      await notificationAPI.markAllAsRead();
+      await fetchNotifications(notificationPage, notificationFilter);
+      showSnackbar('All notifications marked as read', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to update notifications', 'error');
+    }
+  };
+
+  useEffect(() => {
+    if (activeSection === 'notifications') {
+      fetchNotifications(notificationPage, notificationFilter);
+    }
+  }, [activeSection, notificationPage, notificationFilter]);
   
   const placeOrder = (e) => {
     e.preventDefault();
@@ -259,7 +311,7 @@ const CommunityDashboard = () => {
     { id: 'orders', label: 'Bulk Orders', icon: <ShoppingCart />, badge: safeCommunityData.stats?.activeOrders || 0 },
     { id: 'members', label: 'Members', icon: <People />, badge: safeCommunityData.stats?.totalMembers || 0 },
     { id: 'announcements', label: 'Announcements', icon: <Message /> },
-    { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: 6 },
+    { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: unreadCount || null },
     { id: 'profile', label: 'Profile', icon: <AccountCircle /> },
   ];
 
@@ -870,16 +922,24 @@ const CommunityDashboard = () => {
                 <Grid container spacing={3}>
                   <Grid item xs={12}>
                     <Paper sx={{ p: 3 }}>
+                      <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap' }}>
+                        {['all', 'unread', 'order', 'payment', 'delivery'].map((filter) => (
+                          <Button
+                            key={filter}
+                            size="small"
+                            variant={notificationFilter === filter ? 'contained' : 'outlined'}
+                            onClick={() => {
+                              setNotificationFilter(filter);
+                              setNotificationPage(1);
+                            }}
+                          >
+                            {filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
+                          </Button>
+                        ))}
+                      </Stack>
                       <Stack spacing={2}>
-                        {[
-                          { id: 1, title: 'New Member Joined', message: '3 new members have joined the community', time: '20 minutes ago', type: 'success', read: false },
-                          { id: 2, title: 'Bulk Order Ready', message: 'Your bulk order is ready for pickup', time: '2 hours ago', type: 'info', read: false },
-                          { id: 3, title: 'Community Event', message: 'Farmers market this Saturday at 9 AM', time: '4 hours ago', type: 'info', read: false },
-                          { id: 4, title: 'Payment Reminder', message: 'Monthly contribution due in 3 days', time: '1 day ago', type: 'warning', read: false },
-                          { id: 5, title: 'Order Delivered', message: 'Community order #234 has been delivered', time: '2 days ago', type: 'success', read: true },
-                          { id: 6, title: 'New Announcement', message: 'Check the latest announcement from admin', time: '3 days ago', type: 'info', read: true },
-                        ].map((notification) => (
-                          <Card key={notification.id} sx={{ bgcolor: notification.read ? 'background.paper' : 'action.hover' }}>
+                        {notifications.map((notification) => (
+                          <Card key={notification.id} sx={{ bgcolor: notification.read ? 'background.paper' : 'action.hover', cursor: notification.read ? 'default' : 'pointer' }} onClick={() => !notification.read && markNotificationRead(notification.id)}>
                             <CardContent>
                               <Stack direction="row" spacing={2} alignItems="flex-start">
                                 <Avatar sx={{ 
@@ -917,9 +977,16 @@ const CommunityDashboard = () => {
                           </Card>
                         ))}
                       </Stack>
-                      <Button fullWidth variant="outlined" sx={{ mt: 3 }} onClick={() => showSnackbar('All notifications marked as read', 'success')}>
+                      <Button fullWidth variant="outlined" sx={{ mt: 3 }} onClick={markAllNotificationsRead}>
                         Mark All as Read
                       </Button>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 2 }}>
+                        <Typography variant="caption" color="text.secondary">Page {notificationPage} of {notificationTotalPages}</Typography>
+                        <Stack direction="row" spacing={1}>
+                          <Button size="small" variant="outlined" disabled={notificationPage <= 1} onClick={() => setNotificationPage((p) => Math.max(1, p - 1))}>Prev</Button>
+                          <Button size="small" variant="outlined" disabled={notificationPage >= notificationTotalPages} onClick={() => setNotificationPage((p) => Math.min(notificationTotalPages, p + 1))}>Next</Button>
+                        </Stack>
+                      </Stack>
                     </Paper>
                   </Grid>
                 </Grid>

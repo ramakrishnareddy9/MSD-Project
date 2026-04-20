@@ -52,11 +52,82 @@ const AuthPage = () => {
     name: '',
     phone: '',
     address: '',
-    role: 'customer'
+    city: '',
+    role: 'customer',
+    farmName: '',
+    totalLand: '',
+    experience: '',
+    companyName: '',
+    businessType: '',
+    owner: '',
+    gst: '',
+    agencyName: '',
+    licenseNumber: '',
+    accountType: ''
   });
   
   // Forget Password Form State
   const [forgetForm, setForgetForm] = useState({ email: '' });
+
+  const buildRegisterPayload = () => {
+    const role = registerForm.role;
+    const payload = {
+      name: registerForm.name.trim(),
+      email: registerForm.email.trim().toLowerCase(),
+      phone: registerForm.phone.trim(),
+      address: registerForm.address.trim(),
+      city: registerForm.city.trim(),
+      password: registerForm.password,
+      roles: [role],
+      profileData: {}
+    };
+
+    if (role === 'farmer') {
+      payload.farmName = registerForm.farmName.trim() || `${registerForm.name.trim()}'s Farm`;
+      payload.totalLand = registerForm.totalLand.trim();
+      payload.experience = registerForm.experience.trim();
+      payload.profileData.farmer = {
+        farmName: payload.farmName,
+        farmSize: Number(registerForm.totalLand) || 1,
+        experience: Number(registerForm.experience) || 0
+      };
+    }
+
+    if (role === 'business') {
+      payload.businessType = registerForm.businessType.trim() || 'Business';
+      payload.owner = registerForm.owner.trim() || registerForm.name.trim();
+      payload.gst = registerForm.gst.trim();
+      payload.profileData.business = {
+        companyName: registerForm.companyName.trim() || `${registerForm.name.trim()} Traders`,
+        companyType: 'retailer',
+        gstNumber: payload.gst
+      };
+    }
+
+    if (role === 'restaurant') {
+      payload.businessType = 'Restaurant';
+      payload.profileData.restaurant = {
+        restaurantName: registerForm.companyName.trim() || `${registerForm.name.trim()} Restaurant`
+      };
+    }
+
+    if (role === 'travel_agency') {
+      payload.profileData.travelAgency = {
+        agencyName: registerForm.agencyName.trim() || `${registerForm.name.trim()} Travels`
+      };
+    }
+
+    if (role === 'delivery_large' || role === 'delivery_small') {
+      payload.licenseNumber = registerForm.licenseNumber.trim();
+      payload.accountType = registerForm.accountType.trim() || (role === 'delivery_large' ? 'Large-Scale Transporter' : 'Last-Mile Delivery');
+      payload.profileData.delivery = {
+        companyName: registerForm.companyName.trim() || `${registerForm.name.trim()} Logistics`,
+        scale: role === 'delivery_large' ? 'large' : 'small'
+      };
+    }
+
+    return payload;
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -102,14 +173,7 @@ const AuthPage = () => {
     setLoading(true);
 
     try {
-      const res = await register({
-        name: registerForm.name.trim(),
-        email: registerForm.email.trim().toLowerCase(),
-        phone: registerForm.phone.trim(),
-        address: registerForm.address.trim(),
-        password: registerForm.password,
-        roles: [registerForm.role]
-      });
+      const res = await register(buildRegisterPayload());
 
       if (!res.success) {
         setError(res.error || 'Registration failed');
@@ -496,6 +560,29 @@ const AuthPage = () => {
                   }}
                 />
 
+                <TextField
+                  fullWidth
+                  placeholder="City"
+                  value={registerForm.city}
+                  onChange={(e) => setRegisterForm({ ...registerForm, city: e.target.value })}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <AccountCircle className="text-gray-400" />
+                      </InputAdornment>
+                    ),
+                  }}
+                  variant="outlined"
+                  disabled={loading}
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      backgroundColor: '#f5f5f5',
+                      borderRadius: '8px',
+                      '& fieldset': { border: 'none' },
+                    },
+                  }}
+                />
+
                 <FormControl fullWidth variant="outlined">
                   <Select
                     value={registerForm.role}
@@ -519,6 +606,209 @@ const AuthPage = () => {
                     <MenuItem value="delivery_small">Delivery Small</MenuItem>
                   </Select>
                 </FormControl>
+
+                {registerForm.role === 'farmer' && (
+                  <>
+                    <TextField
+                      fullWidth
+                      placeholder="Farm Name"
+                      value={registerForm.farmName}
+                      onChange={(e) => setRegisterForm({ ...registerForm, farmName: e.target.value })}
+                      variant="outlined"
+                      disabled={loading}
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          backgroundColor: '#f5f5f5',
+                          borderRadius: '8px',
+                          '& fieldset': { border: 'none' },
+                        },
+                      }}
+                    />
+                    <TextField
+                      fullWidth
+                      type="number"
+                      placeholder="Total Land (acres)"
+                      value={registerForm.totalLand}
+                      onChange={(e) => setRegisterForm({ ...registerForm, totalLand: e.target.value })}
+                      variant="outlined"
+                      disabled={loading}
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          backgroundColor: '#f5f5f5',
+                          borderRadius: '8px',
+                          '& fieldset': { border: 'none' },
+                        },
+                      }}
+                    />
+                    <TextField
+                      fullWidth
+                      type="number"
+                      placeholder="Experience (years)"
+                      value={registerForm.experience}
+                      onChange={(e) => setRegisterForm({ ...registerForm, experience: e.target.value })}
+                      variant="outlined"
+                      disabled={loading}
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          backgroundColor: '#f5f5f5',
+                          borderRadius: '8px',
+                          '& fieldset': { border: 'none' },
+                        },
+                      }}
+                    />
+                  </>
+                )}
+
+                {registerForm.role === 'business' && (
+                  <>
+                    <TextField
+                      fullWidth
+                      placeholder="Company Name"
+                      value={registerForm.companyName}
+                      onChange={(e) => setRegisterForm({ ...registerForm, companyName: e.target.value })}
+                      variant="outlined"
+                      disabled={loading}
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          backgroundColor: '#f5f5f5',
+                          borderRadius: '8px',
+                          '& fieldset': { border: 'none' },
+                        },
+                      }}
+                    />
+                    <TextField
+                      fullWidth
+                      placeholder="Business Type"
+                      value={registerForm.businessType}
+                      onChange={(e) => setRegisterForm({ ...registerForm, businessType: e.target.value })}
+                      variant="outlined"
+                      disabled={loading}
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          backgroundColor: '#f5f5f5',
+                          borderRadius: '8px',
+                          '& fieldset': { border: 'none' },
+                        },
+                      }}
+                    />
+                    <TextField
+                      fullWidth
+                      placeholder="Owner"
+                      value={registerForm.owner}
+                      onChange={(e) => setRegisterForm({ ...registerForm, owner: e.target.value })}
+                      variant="outlined"
+                      disabled={loading}
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          backgroundColor: '#f5f5f5',
+                          borderRadius: '8px',
+                          '& fieldset': { border: 'none' },
+                        },
+                      }}
+                    />
+                    <TextField
+                      fullWidth
+                      placeholder="GST Number"
+                      value={registerForm.gst}
+                      onChange={(e) => setRegisterForm({ ...registerForm, gst: e.target.value })}
+                      variant="outlined"
+                      disabled={loading}
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          backgroundColor: '#f5f5f5',
+                          borderRadius: '8px',
+                          '& fieldset': { border: 'none' },
+                        },
+                      }}
+                    />
+                  </>
+                )}
+
+                {registerForm.role === 'restaurant' && (
+                  <TextField
+                    fullWidth
+                    placeholder="Restaurant Name"
+                    value={registerForm.companyName}
+                    onChange={(e) => setRegisterForm({ ...registerForm, companyName: e.target.value })}
+                    variant="outlined"
+                    disabled={loading}
+                    sx={{
+                      '& .MuiOutlinedInput-root': {
+                        backgroundColor: '#f5f5f5',
+                        borderRadius: '8px',
+                        '& fieldset': { border: 'none' },
+                      },
+                    }}
+                  />
+                )}
+
+                {registerForm.role === 'travel_agency' && (
+                  <TextField
+                    fullWidth
+                    placeholder="Agency Name"
+                    value={registerForm.agencyName}
+                    onChange={(e) => setRegisterForm({ ...registerForm, agencyName: e.target.value })}
+                    variant="outlined"
+                    disabled={loading}
+                    sx={{
+                      '& .MuiOutlinedInput-root': {
+                        backgroundColor: '#f5f5f5',
+                        borderRadius: '8px',
+                        '& fieldset': { border: 'none' },
+                      },
+                    }}
+                  />
+                )}
+
+                {(registerForm.role === 'delivery_large' || registerForm.role === 'delivery_small') && (
+                  <>
+                    <TextField
+                      fullWidth
+                      placeholder="Company Name"
+                      value={registerForm.companyName}
+                      onChange={(e) => setRegisterForm({ ...registerForm, companyName: e.target.value })}
+                      variant="outlined"
+                      disabled={loading}
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          backgroundColor: '#f5f5f5',
+                          borderRadius: '8px',
+                          '& fieldset': { border: 'none' },
+                        },
+                      }}
+                    />
+                    <TextField
+                      fullWidth
+                      placeholder="License Number"
+                      value={registerForm.licenseNumber}
+                      onChange={(e) => setRegisterForm({ ...registerForm, licenseNumber: e.target.value })}
+                      variant="outlined"
+                      disabled={loading}
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          backgroundColor: '#f5f5f5',
+                          borderRadius: '8px',
+                          '& fieldset': { border: 'none' },
+                        },
+                      }}
+                    />
+                    <TextField
+                      fullWidth
+                      placeholder="Account Type"
+                      value={registerForm.accountType}
+                      onChange={(e) => setRegisterForm({ ...registerForm, accountType: e.target.value })}
+                      variant="outlined"
+                      disabled={loading}
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          backgroundColor: '#f5f5f5',
+                          borderRadius: '8px',
+                          '& fieldset': { border: 'none' },
+                        },
+                      }}
+                    />
+                  </>
+                )}
               </div>
 
               <Button

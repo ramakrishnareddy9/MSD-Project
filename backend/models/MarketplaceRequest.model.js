@@ -25,6 +25,10 @@ const marketplaceRequestSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  productId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Product'
+  },
   season: {
     type: String,
     trim: true
@@ -44,6 +48,45 @@ const marketplaceRequestSchema = new mongoose.Schema({
     required: true,
     min: 0
   },
+  currentOfferPrice: {
+    type: Number,
+    min: 0
+  },
+  lastOfferedBy: {
+    type: String,
+    enum: ['buyer', 'farmer'],
+    default: 'buyer'
+  },
+  buyerAccepted: {
+    type: Boolean,
+    default: true
+  },
+  farmerAccepted: {
+    type: Boolean,
+    default: false
+  },
+  agreedPrice: {
+    type: Number,
+    min: 0
+  },
+  agreedAt: Date,
+  negotiationHistory: [{
+    offeredBy: {
+      type: String,
+      enum: ['buyer', 'farmer'],
+      required: true
+    },
+    price: {
+      type: Number,
+      required: true,
+      min: 0
+    },
+    message: String,
+    offeredAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   location: {
     type: String,
     trim: true,
@@ -58,7 +101,7 @@ const marketplaceRequestSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['open', 'accepted', 'declined', 'fulfilled', 'cancelled'],
+    enum: ['open', 'countered', 'accepted', 'declined', 'fulfilled', 'cancelled'],
     default: 'open'
   },
   matchedFarmerId: {
@@ -82,6 +125,9 @@ marketplaceRequestSchema.pre('validate', function(next) {
   if (!this.requestNumber) {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     this.requestNumber = `MRQ${Date.now()}${randomSuffix}`;
+  }
+  if (this.currentOfferPrice == null && this.offeredPrice != null) {
+    this.currentOfferPrice = this.offeredPrice;
   }
   next();
 });

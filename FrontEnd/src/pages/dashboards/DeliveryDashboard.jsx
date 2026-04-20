@@ -1,148 +1,146 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Box, Container, Grid, Card, CardContent, Typography, Button, TextField,
-  Avatar, Divider, Paper, AppBar, Toolbar, Drawer, List, ListItemButton,
-  ListItemIcon, ListItemText, Stack, IconButton, Badge, Table, TableBody,
-  TableCell, TableContainer, TableHead, TableRow, Chip, Switch,
-  LinearProgress, Snackbar, Alert, MenuItem, Dialog,
-  DialogTitle, DialogContent, DialogActions, CircularProgress, Tooltip
+  Alert,
+  AppBar,
+  Avatar,
+  Badge,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  CircularProgress,
+  Container,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  Drawer,
+  Grid,
+  IconButton,
+  LinearProgress,
+  List,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  MenuItem,
+  Paper,
+  Snackbar,
+  Stack,
+  Switch,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Toolbar,
+  Tooltip,
+  Typography
 } from '@mui/material';
 import {
-  LocalShipping, Route, AccountCircle,
-  Add, Delete, Notifications, Menu as MenuIcon, Dashboard,
-  CheckCircle, Schedule, Cancel, LocationOn, Speed, AttachMoney,
-  DirectionsCar, ShoppingCart, Business,
-  Agriculture, CalendarMonth, Visibility, PlayArrow,
-  Assignment, Inventory, HourglassTop, Done, Close, Refresh,
-  CurrencyRupee, StarRate, Timer, FlashOn, TwoWheeler
+  AccountCircle,
+  Add,
+  Assignment,
+  CheckCircle,
+  Delete,
+  DirectionsCar,
+  DoneAll,
+  HourglassTop,
+  LocalShipping,
+  Menu as MenuIcon,
+  Notifications,
+  Refresh,
+  Route,
+  TwoWheeler,
+  Update
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { deliveryAPI, orderAPI, authAPI, analyticsAPI, vehicleAPI, userAPI } from '../../services/api';
+import { authAPI, notificationAPI, orderAPI, userAPI, vehicleAPI } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 
-// ─── Constants ───────────────────────────────────────────────────────────────
-const VEHICLE_TYPES_LARGE = ['Truck', 'Mini Truck', 'Trailer', 'Tanker', 'Container'];
-const VEHICLE_TYPES_SMALL = ['Bike', 'Scooter', 'Van', 'Bicycle', 'On Foot'];
+const VEHICLE_TYPES_LARGE = ['Truck', 'Van', 'Car', 'Other'];
+const VEHICLE_TYPES_SMALL = ['Bike', 'Scooter', 'Bicycle', 'Van', 'Other'];
 
-const STATUS_COLOR = {
-  scheduled: 'info',
-  in_transit: 'warning',
-  at_checkpoint: 'secondary',
-  delivered: 'success',
-  cancelled: 'error',
-  delayed: 'error',
-  assigned: 'default',
-  accepted: 'primary',
-  picked_up: 'info',
-  out_for_delivery: 'warning',
-  failed: 'error',
-  rescheduled: 'secondary',
-  pending: 'warning',
-  confirmed: 'info',
-  processing: 'primary',
-  shipped: 'info',
+const DELIVERY_STATUS_FLOW = ['pending', 'confirmed', 'processing', 'shipped', 'delivered'];
+
+const getNextOrderAction = (status) => {
+  if (['pending', 'confirmed', 'processing'].includes(status)) {
+    return { label: 'Mark Shipped', status: 'shipped', color: 'warning' };
+  }
+  if (status === 'shipped') {
+    return { label: 'Mark Delivered', status: 'delivered', color: 'success' };
+  }
+  return null;
 };
 
-const STATUS_LABEL = {
-  scheduled: 'Scheduled',
-  in_transit: 'In Transit',
-  at_checkpoint: 'At Checkpoint',
-  delivered: 'Delivered',
-  cancelled: 'Cancelled',
-  delayed: 'Delayed',
-  assigned: 'Assigned',
-  accepted: 'Accepted',
-  picked_up: 'Picked Up',
-  out_for_delivery: 'Out for Delivery',
-  failed: 'Failed',
-  rescheduled: 'Rescheduled',
-  pending: 'Pending',
-  confirmed: 'Confirmed',
-  processing: 'Processing',
-  shipped: 'Shipped',
+const mapVehicle = (vehicle) => ({
+  id: vehicle._id || vehicle.id,
+  number: vehicle.name || vehicle.plateNumber || 'Vehicle',
+  type: vehicle.type || 'Truck',
+  capacity: Number(vehicle.capacity || 0),
+  costPerKm: Number(vehicle.costPerKm || 0),
+  available: vehicle.status === 'Available',
+  status: vehicle.status || 'Available'
+});
+
+const mapOrder = (order) => {
+  const items = Array.isArray(order.orderItems) ? order.orderItems : [];
+  const totalQuantity = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const primaryItem = items[0];
+  return {
+    id: order._id,
+    orderNumber: order.orderNumber,
+    buyerName: order.buyerId?.name || 'Buyer',
+    sellerName: order.sellerId?.name || 'Seller',
+    productSummary: primaryItem
+      ? `${primaryItem.productName || 'Product'}${items.length > 1 ? ` +${items.length - 1}` : ''}`
+      : 'Order',
+    quantity: totalQuantity,
+    total: Number(order.total || 0),
+    status: order.status,
+    requestStatus: order.delivery?.requestStatus || 'none',
+    requestedVehicle: order.delivery?.requestedVehicleId
+      ? {
+          id: order.delivery.requestedVehicleId._id,
+          name: order.delivery.requestedVehicleId.name || order.delivery.requestedVehicleId.plateNumber || 'Vehicle',
+          type: order.delivery.requestedVehicleId.type || 'Vehicle',
+          capacity: Number(order.delivery.requestedVehicleId.capacity || 0)
+        }
+      : null,
+    requestedAt: order.delivery?.requestedAt,
+    deliveryAddress: order.deliveryAddress,
+    history: Array.isArray(order.statusHistory) ? order.statusHistory : []
+  };
 };
 
-// ─── Seed data for waiting/open orders (simulating what business/restaurant/farmer pays) ──
-const SEED_WAITING_ORDERS = [
-  {
-    id: 'wo1', orderNumber: 'ORD20240001', requester: 'Fresh Mart Pvt Ltd', requesterType: 'business',
-    from: 'Banaskantha, Gujarat', to: 'Mumbai, Maharashtra', distance: '520 km',
-    cargo: 'Wheat – 500 kg', date: '2024-01-28', amount: 3800, priority: 'high',
-    type: 'large', status: 'pending_transport'
-  },
-  {
-    id: 'wo2', orderNumber: 'ORD20240002', requester: 'Green Cuisine Restaurant', requesterType: 'restaurant',
-    from: 'Pune Wholesale Market', to: 'Koregaon Park, Pune', distance: '12 km',
-    cargo: 'Mixed Vegetables – 80 kg', date: '2024-01-25', amount: 320, priority: 'urgent',
-    type: 'small', status: 'pending_transport'
-  },
-  {
-    id: 'wo3', orderNumber: 'ORD20240003', requester: 'Rohan Patel (Farmer)', requesterType: 'farmer',
-    from: 'Anand, Gujarat', to: 'Ahmedabad Hub', distance: '70 km',
-    cargo: 'Milk – 200 L', date: '2024-01-26', amount: 900, priority: 'normal',
-    type: 'large', status: 'pending_transport'
-  },
-  {
-    id: 'wo4', orderNumber: 'ORD20240004', requester: 'Aarav Customer', requesterType: 'customer',
-    from: 'FarmKart Pune Hub', to: 'Baner, Pune', distance: '8 km',
-    cargo: 'Fruits & Veggies – 5 kg', date: '2024-01-25', amount: 60, priority: 'normal',
-    type: 'small', status: 'pending_transport'
-  },
-  {
-    id: 'wo5', orderNumber: 'ORD20240005', requester: 'Metro Foods Ltd', requesterType: 'business',
-    from: 'Surat, Gujarat', to: 'Kolkata, West Bengal', distance: '1850 km',
-    cargo: 'Organic Produce – 1000 kg', date: '2024-01-30', amount: 12000, priority: 'normal',
-    type: 'large', status: 'pending_transport'
-  },
-];
-
-// State is sourced from backend APIs; no local persistence fallback.
-
-// ─── Component ────────────────────────────────────────────────────────────────
 const DeliveryDashboard = ({ mode = 'large' }) => {
   const { user, updateUser } = useAuth();
   const isLarge = mode === 'large';
+  const sidebarColor = isLarge ? 'warning' : 'info';
 
-  // ── Section navigation ──
   const [activeSection, setActiveSection] = useState('overview');
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
-  const showMsg = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
-
-  // ── Loading states ──
   const [loading, setLoading] = useState(true);
-  const [loadingShipments, setLoadingShipments] = useState(false);
-  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // ── API-driven Fleet ──
+  const [orders, setOrders] = useState([]);
   const [vehicles, setVehicles] = useState([]);
-  const [metrics, setMetrics] = useState({
-    activeVehicles: 0,
-    totalDeliveries: 0,
-    earnings: 0,
-    acceptanceRate: 0
-  });
-  const [vehicleForm, setVehicleForm] = useState({ number: '', type: isLarge ? 'Truck' : 'Bike', capacity: '', costPerKm: '' });
+  const [notifications, setNotifications] = useState([]);
 
-  // ── API-driven Orders ──
-  const [waitingOrders, setWaitingOrders] = useState([]);
-  const [acceptedJobs, setAcceptedJobs] = useState([]);
-  const [deliveryHistory, setDeliveryHistory] = useState([]);
-  const [shipments, setShipments] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [stats, setStats] = useState({
-    pendingWaiting: 0,
-    activeJobs: 0,
-    vehiclesAvailable: 0,
-    monthlyEarnings: 0,
-    rating: 0,
-    onTimeRate: 0,
-    totalDeliveries: 0
+  const [notificationFilter, setNotificationFilter] = useState('all');
+  const [notificationPage, setNotificationPage] = useState(1);
+  const [notificationTotalPages, setNotificationTotalPages] = useState(1);
+
+  const [vehicleForm, setVehicleForm] = useState({
+    number: '',
+    type: isLarge ? 'Truck' : 'Bike',
+    capacity: '',
+    costPerKm: ''
   });
 
-  // ── Action dialogs ──
-  const [assignDialog, setAssignDialog] = useState({ open: false, job: null, selectedVehicle: '' });
-  const [detailDialog, setDetailDialog] = useState({ open: false, item: null });
   const [profileForm, setProfileForm] = useState({
     name: '',
     email: '',
@@ -152,214 +150,226 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
     address: ''
   });
 
-  // ── Initialize: Fetch delivery data on mount ──────────────────────────────────
+  const [assignDialog, setAssignDialog] = useState({
+    open: false,
+    order: null,
+    selectedVehicleId: ''
+  });
+
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const showMessage = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
+
+  const pendingRequests = useMemo(
+    () => orders.filter((o) => o.requestStatus === 'requested'),
+    [orders]
+  );
+
+  const activeDeliveries = useMemo(
+    () => orders.filter((o) => o.requestStatus === 'accepted' && !['delivered', 'cancelled'].includes(o.status)),
+    [orders]
+  );
+
+  const completedDeliveries = useMemo(
+    () => orders.filter((o) => o.requestStatus === 'accepted' && ['delivered', 'cancelled'].includes(o.status)),
+    [orders]
+  );
+
+  const stats = useMemo(() => {
+    const availableVehicles = vehicles.filter((v) => v.available).length;
+    const totalEarnings = completedDeliveries
+      .filter((o) => o.status === 'delivered')
+      .reduce((sum, o) => sum + Number(o.total || 0), 0);
+
+    return {
+      pendingRequests: pendingRequests.length,
+      activeDeliveries: activeDeliveries.length,
+      completedDeliveries: completedDeliveries.length,
+      availableVehicles,
+      totalVehicles: vehicles.length,
+      totalEarnings
+    };
+  }, [pendingRequests, activeDeliveries, completedDeliveries, vehicles]);
+
+  const unreadCount = useMemo(
+    () => notifications.filter((n) => !n.read).length,
+    [notifications]
+  );
+
+  const fetchOrders = useCallback(async () => {
+    const response = await orderAPI.getAll({ limit: 200 });
+    const list = response?.data?.orders || [];
+    const mapped = list.map(mapOrder);
+    setOrders(mapped);
+  }, []);
+
+  const fetchVehicles = useCallback(async () => {
+    if (!user?._id) return;
+    const response = await vehicleAPI.getAll({ ownerId: user._id });
+    const list = response?.data || [];
+    setVehicles(list.map(mapVehicle));
+  }, [user?._id]);
+
+  const fetchNotifications = useCallback(async (page = notificationPage, filter = notificationFilter) => {
+    const params = { page, limit: 8 };
+    if (filter === 'unread') params.unread = true;
+    if (filter !== 'all' && filter !== 'unread') params.type = filter;
+
+    const response = await notificationAPI.getAll(params);
+    const mapped = (response?.data || []).map((entry) => ({
+      id: entry._id || entry.id,
+      title: entry.title || 'Notification',
+      message: entry.message || '',
+      time: new Date(entry.createdAt || Date.now()).toLocaleString('en-IN'),
+      read: !!entry.isRead,
+      type: entry.type || 'info'
+    }));
+
+    setNotifications(mapped);
+    setNotificationTotalPages(response?.pagination?.totalPages || 1);
+  }, [notificationFilter, notificationPage]);
+
+  const refreshAll = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([fetchOrders(), fetchVehicles()]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchOrders, fetchVehicles]);
+
   useEffect(() => {
-    const initializeDeliveryData = async () => {
+    const initialize = async () => {
       try {
         setLoading(true);
+        const me = await authAPI.getCurrentUser();
+        const currentUser = me?.data?.user || me?.data;
 
-        const userRes = await authAPI.getCurrentUser();
-        if (userRes.success) {
-          const currentUser = userRes.data?.user || userRes.data;
-          if (!currentUser?._id) {
-            throw new Error('Invalid auth payload for delivery dashboard');
-          }
+        setProfileForm({
+          name: currentUser?.name || '',
+          email: currentUser?.email || '',
+          phone: currentUser?.phone || '',
+          licenseNumber: currentUser?.licenseNumber || '',
+          accountType: currentUser?.accountType || (isLarge ? 'Large-Scale Delivery Partner' : 'Last-Mile Delivery Partner'),
+          address: currentUser?.address || currentUser?.addresses?.[0]?.line1 || ''
+        });
 
-          setProfileForm({
-            name: currentUser.name || '',
-            email: currentUser.email || '',
-            phone: currentUser.phone || '',
-            licenseNumber: currentUser.licenseNumber || `DL-${String(currentUser._id).slice(-8)}`,
-            accountType: currentUser.accountType || (isLarge ? 'Large-Scale Transporter' : 'Last-Mile Delivery'),
-            address: currentUser.address || currentUser.addresses?.[0]?.line1 || ''
-          });
-
-          const isMockToken = String(currentUser.token || '').startsWith('mock');
-          let mappedVehicles = [];
-
-          // Get delivery provider's vehicles
-          const vehiclesRes = await vehicleAPI.getAll({ ownerId: currentUser._id });
-          if (vehiclesRes.success && vehiclesRes.data) {
-            mappedVehicles = vehiclesRes.data.map(v => ({
-              id: v._id || v.id,
-              number: v.name || 'Vehicle',
-              type: v.type || 'Truck',
-              capacity: v.capacity || 0,
-              costPerKm: v.costPerKm || 0,
-              available: v.status === 'Available',
-              status: v.status || 'Available'
-            }));
-            setVehicles(mappedVehicles);
-            setMetrics(prev => ({
-              ...prev,
-              activeVehicles: mappedVehicles.filter(v => v.available).length
-            }));
-          }
-
-          // Get available shipment/delivery tasks
-          const shipmentsRes = await deliveryAPI.shipments.getAll({ status: 'scheduled' });
-          if (shipmentsRes.success && shipmentsRes.data) {
-            const shipmentList = shipmentsRes.data.shipments || [];
-            setShipments(shipmentList);
-            setWaitingOrders(shipmentList.map((s, idx) => ({
-              id: idx + 1,
-              _id: s._id,
-              orderNumber: s.shipmentNumber || s.orderId?.orderNumber || `SHIP${Date.now()}`,
-              requester: s.deliveryPartnerId?.name || 'Delivery Partner',
-              requesterType: s.type === 'farm_to_hub' ? 'farmer' : 'business',
-              from: s.origin?.address?.city || s.origin?.address?.line1 || 'Origin',
-              to: s.destination?.address?.city || s.destination?.address?.line1 || 'Destination',
-              distance: s.distance || '0 km',
-              cargo: s.orders?.length ? `${s.orders.length} order(s)` : 'Cargo',
-              amount: s.cost?.total || 0,
-              priority: s.status === 'delayed' ? 'urgent' : 'normal',
-              status: s.status || 'scheduled'
-            })));
-            setMetrics(prev => ({
-              ...prev,
-              pendingWaiting: shipmentList.length
-            }));
-          }
-
-          // Get accepted jobs
-          const tasksRes = await deliveryAPI.tasks.getAll({ status: 'assigned' });
-          if (tasksRes.success && tasksRes.data) {
-            const taskList = tasksRes.data.tasks || [];
-            setTasks(taskList);
-            setAcceptedJobs(taskList.map((t, idx) => ({
-              id: idx + 1,
-              _id: t._id,
-              orderNumber: t.orderId?.orderNumber || `TASK${Date.now()}`,
-              requester: t.orderId?.buyerId?.name || 'Buyer',
-              from: t.pickupLocation?.address?.city || t.pickupLocation?.address?.line1 || 'Origin',
-              to: t.deliveryLocation?.address?.city || t.deliveryLocation?.address?.line1 || 'Destination',
-              distance: t.tracking?.distance ? `${t.tracking.distance} km` : '0 km',
-              cargo: t.orderId?.orderItems?.[0]?.productName || 'Cargo',
-              amount: t.payment?.deliveryCharge || 0,
-              assignedVehicle: t.vehicle?.number || 'Unassigned',
-              status: t.status || 'assigned'
-            })));
-
-            setMetrics(prev => ({
-              ...prev,
-              activeJobs: taskList.filter(t => ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(t.status)).length,
-              totalDeliveries: taskList.filter(t => t.status === 'delivered').length,
-              earnings: taskList.reduce((sum, t) => sum + (t.payment?.deliveryCharge || 0), 0)
-            }));
-
-            setStats(prev => ({
-              ...prev,
-              activeJobs: taskList.filter(t => ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(t.status)).length,
-              totalDeliveries: taskList.filter(t => t.status === 'delivered').length,
-              vehiclesAvailable: mappedVehicles.filter(v => v.available).length,
-              monthlyEarnings: taskList.reduce((sum, t) => sum + (t.payment?.deliveryCharge || 0), 0)
-            }));
-          }
-        }
+        await Promise.all([fetchOrders(), fetchVehicles(), fetchNotifications(1, 'all')]);
       } catch (error) {
-        console.error('Error initializing delivery data:', error);
+        showMessage(error.message || 'Failed to initialize delivery dashboard', 'error');
       } finally {
         setLoading(false);
       }
     };
 
-    initializeDeliveryData();
-  }, []);
-
-  // ── Fetch from backend ──
-  const fetchShipments = useCallback(async () => {
-    if (!user?.token || user?.token?.startsWith('mock')) return;
-    setLoadingShipments(true);
-    try {
-      const res = await deliveryAPI.shipments.getAll({ status: 'scheduled' });
-      if (res.success) {
-        const shipmentList = res.data.shipments || [];
-        setShipments(shipmentList);
-        setWaitingOrders(shipmentList.map((s, idx) => ({
-          id: idx + 1,
-          _id: s._id,
-          orderNumber: s.shipmentNumber || s.orderId?.orderNumber || `SHIP${Date.now()}`,
-          requester: s.deliveryPartnerId?.name || 'Delivery Partner',
-          requesterType: s.type === 'farm_to_hub' ? 'farmer' : 'business',
-          from: s.origin?.address?.city || s.origin?.address?.line1 || 'Origin',
-          to: s.destination?.address?.city || s.destination?.address?.line1 || 'Destination',
-          distance: s.distance || '0 km',
-          cargo: s.orders?.length ? `${s.orders.length} order(s)` : 'Cargo',
-          amount: s.cost?.total || 0,
-          priority: s.status === 'delayed' ? 'urgent' : 'normal',
-          status: s.status || 'scheduled'
-        })));
-        setStats(prev => ({ ...prev, pendingWaiting: shipmentList.length }));
-      }
-    } catch { /* backend unavailable */ }
-    finally { setLoadingShipments(false); }
-  }, [user]);
-
-  const fetchTasks = useCallback(async () => {
-    if (!user?.token || user?.token?.startsWith('mock')) return;
-    setLoadingTasks(true);
-    try {
-      const res = await deliveryAPI.tasks.getAll({ status: 'assigned' });
-      if (res.success) {
-        const taskList = res.data.tasks || [];
-        setTasks(taskList);
-        setAcceptedJobs(taskList.map((t, idx) => ({
-          id: idx + 1,
-          _id: t._id,
-          jobId: t.taskNumber || `TASK${Date.now()}`,
-          orderNumber: t.orderId?.orderNumber || `TASK${Date.now()}`,
-          requester: t.orderId?.buyerId?.name || 'Buyer',
-          from: t.pickupLocation?.address?.city || t.pickupLocation?.address?.line1 || 'Origin',
-          to: t.deliveryLocation?.address?.city || t.deliveryLocation?.address?.line1 || 'Destination',
-          distance: t.tracking?.distance ? `${t.tracking.distance} km` : '0 km',
-          cargo: t.orderId?.orderItems?.[0]?.productName || 'Cargo',
-          amount: t.payment?.deliveryCharge || 0,
-          assignedVehicle: t.vehicle?.number || 'Unassigned',
-          status: t.status || 'assigned'
-        })));
-        setStats(prev => ({
-          ...prev,
-          activeJobs: taskList.filter(t => ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(t.status)).length,
-          totalDeliveries: taskList.filter(t => t.status === 'delivered').length,
-          monthlyEarnings: taskList.reduce((sum, t) => sum + (t.payment?.deliveryCharge || 0), 0)
-        }));
-      }
-    } catch { /* backend unavailable */ }
-    finally { setLoadingTasks(false); }
-  }, [user]);
+    initialize();
+  }, [fetchOrders, fetchVehicles, fetchNotifications, isLarge]);
 
   useEffect(() => {
-    if (isLarge) fetchShipments();
-    else fetchTasks();
-  }, [isLarge, fetchShipments, fetchTasks]);
+    if (activeSection === 'notifications') {
+      fetchNotifications(notificationPage, notificationFilter);
+    }
+  }, [activeSection, notificationPage, notificationFilter, fetchNotifications]);
 
-  useEffect(() => {
-    const vehiclesAvailable = vehicles.filter((v) => v.available).length;
-    const pendingWaiting = waitingOrders.length;
-    const activeJobs = acceptedJobs.filter((job) => ['assigned', 'accepted', 'picked_up', 'out_for_delivery'].includes(job.status)).length;
-    const totalDeliveries = acceptedJobs.filter((job) => job.status === 'delivered').length;
-    const monthlyEarnings = acceptedJobs.reduce((sum, job) => sum + Number(job.amount || 0), 0);
+  const handleOpenAssignDialog = (order) => {
+    const availableVehicles = vehicles.filter((v) => v.available);
+    let defaultVehicle = '';
+    if (order.requestedVehicle?.id && availableVehicles.some((v) => v.id === order.requestedVehicle.id)) {
+      defaultVehicle = order.requestedVehicle.id;
+    }
+    setAssignDialog({
+      open: true,
+      order,
+      selectedVehicleId: defaultVehicle
+    });
+  };
 
-    setStats((prev) => ({
-      ...prev,
-      vehiclesAvailable,
-      pendingWaiting,
-      activeJobs,
-      totalDeliveries,
-      monthlyEarnings
-    }));
-  }, [vehicles, waitingOrders, acceptedJobs]);
+  const handleAcceptRequest = async () => {
+    const { order, selectedVehicleId } = assignDialog;
+    if (!order || !selectedVehicleId) {
+      showMessage('Select a vehicle before accepting request', 'error');
+      return;
+    }
 
-  const onProfileChange = (e) => {
-    const { name, value } = e.target;
+    try {
+      await orderAPI.respondDeliveryRequest(order.id, 'accepted', selectedVehicleId);
+      showMessage(`Delivery request for ${order.orderNumber} accepted`, 'success');
+      setAssignDialog({ open: false, order: null, selectedVehicleId: '' });
+      await refreshAll();
+    } catch (error) {
+      showMessage(error.message || 'Failed to accept delivery request', 'error');
+    }
+  };
+
+  const handleRejectRequest = async (orderId) => {
+    try {
+      await orderAPI.respondDeliveryRequest(orderId, 'rejected');
+      showMessage('Delivery request rejected', 'info');
+      await refreshAll();
+    } catch (error) {
+      showMessage(error.message || 'Failed to reject delivery request', 'error');
+    }
+  };
+
+  const handleDeliveryStatusUpdate = async (orderId, nextStatus) => {
+    try {
+      await orderAPI.updateStatus(orderId, nextStatus);
+      showMessage(`Order marked as ${nextStatus}`, 'success');
+      await refreshAll();
+    } catch (error) {
+      showMessage(error.message || 'Failed to update delivery status', 'error');
+    }
+  };
+
+  const addVehicle = async (event) => {
+    event.preventDefault();
+    if (!vehicleForm.number || !vehicleForm.type || !vehicleForm.capacity || !vehicleForm.costPerKm) {
+      showMessage('Fill all vehicle fields', 'error');
+      return;
+    }
+
+    try {
+      await vehicleAPI.create({
+        name: vehicleForm.number,
+        type: vehicleForm.type,
+        capacity: Number(vehicleForm.capacity),
+        plateNumber: vehicleForm.number,
+        costPerKm: Number(vehicleForm.costPerKm)
+      });
+      showMessage('Vehicle added successfully', 'success');
+      setVehicleForm({ number: '', type: isLarge ? 'Truck' : 'Bike', capacity: '', costPerKm: '' });
+      await fetchVehicles();
+    } catch (error) {
+      showMessage(error.message || 'Failed to add vehicle', 'error');
+    }
+  };
+
+  const deleteVehicle = async (id) => {
+    try {
+      await vehicleAPI.delete(id);
+      showMessage('Vehicle removed', 'info');
+      await fetchVehicles();
+    } catch (error) {
+      showMessage(error.message || 'Failed to remove vehicle', 'error');
+    }
+  };
+
+  const toggleVehicleAvailability = async (vehicle) => {
+    const nextStatus = vehicle.available ? 'Maintenance' : 'Available';
+    try {
+      await vehicleAPI.updateStatus(vehicle.id, nextStatus);
+      await fetchVehicles();
+    } catch (error) {
+      showMessage(error.message || 'Failed to update vehicle status', 'error');
+    }
+  };
+
+  const onProfileChange = (event) => {
+    const { name, value } = event.target;
     setProfileForm((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleProfileUpdate = async () => {
-    if (!user?._id) {
-      showMsg('Unable to update profile', 'error');
-      return;
-    }
+    if (!user?._id) return;
 
     try {
       const payload = {
@@ -370,217 +380,58 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
         accountType: profileForm.accountType,
         address: profileForm.address
       };
-
-      const res = await userAPI.update(user._id, payload);
-      const updatedUser = res?.data?.user;
-      if (updatedUser) {
-        updateUser(updatedUser);
-      }
-      showMsg('Profile updated successfully', 'success');
+      const response = await userAPI.update(user._id, payload);
+      const updatedUser = response?.data?.user;
+      if (updatedUser) updateUser(updatedUser);
+      showMessage('Profile updated successfully', 'success');
     } catch (error) {
-      showMsg(error.message || 'Failed to update profile', 'error');
+      showMessage(error.message || 'Failed to update profile', 'error');
     }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Business Logic: Accept a waiting order job
-  // ─────────────────────────────────────────────────────────────────────────
-  const handleAcceptJob = (job) => {
-    // Open assign vehicle dialog
-    setAssignDialog({ open: true, job, selectedVehicle: '' });
-  };
-
-  const confirmAcceptJob = () => {
-    const { job, selectedVehicle } = assignDialog;
-    if (!selectedVehicle) { showMsg('Please select a vehicle', 'error'); return; }
-    const vehicle = vehicles.find(v => v.id === selectedVehicle);
-    if (!vehicle) return;
-
-    const jobId = `JOB${Date.now().toString().slice(-5)}`;
-    const newJob = {
-      ...job,
-      jobId,
-      assignedVehicle: vehicle.number,
-      vehicleType: vehicle.type,
-      status: 'accepted',
-      acceptedAt: new Date().toISOString(),
-    };
-
-    // Add to accepted jobs
-    setAcceptedJobs(prev => [newJob, ...prev]);
-
-    // Remove from waiting
-    setWaitingOrders(prev => prev.filter(o => o.id !== job.id));
-
-    // Mark vehicle as in use
-    setVehicles(prev => prev.map(v => v.id === selectedVehicle
-      ? { ...v, available: false, status: 'In Transit' }
-      : v));
-
-    setAssignDialog({ open: false, job: null, selectedVehicle: '' });
-    showMsg(`Job ${jobId} accepted! ${vehicle.number} assigned for pickup.`, 'success');
-  };
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Business Logic: Update job status (start → out_for_delivery → delivered)
-  // ─────────────────────────────────────────────────────────────────────────
-  const handleStatusUpdate = async (job, newStatus) => {
-    // Try real API first
+  const markOneNotificationRead = async (id) => {
     try {
-      if (!user?.token?.startsWith('mock')) {
-        if (isLarge && (job._id || job.id)) {
-          if (newStatus === 'in_transit') await deliveryAPI.shipments.updateTracking(job._id, [], 'Started transit');
-          if (newStatus === 'delivered') await deliveryAPI.shipments.markDelivered(job._id);
-        } else if (!isLarge && (job._id || job.id)) {
-          if (newStatus === 'accepted') await deliveryAPI.tasks.accept(job._id);
-          if (newStatus === 'out_for_delivery') await deliveryAPI.tasks.start(job._id);
-          if (newStatus === 'delivered') await deliveryAPI.tasks.complete(job._id, { receiverName: 'Customer', notes: 'Delivered' });
-        }
-      }
-    } catch { /* fallback to local */ }
-
-    setAcceptedJobs(prev => prev.map(j => j.id === job.id || j.jobId === job.jobId
-      ? { ...j, status: newStatus, [`${newStatus}At`]: new Date().toISOString() }
-      : j));
-
-    // Free vehicle when delivered
-    if (newStatus === 'delivered') {
-      setVehicles(prev => prev.map(v => v.number === job.assignedVehicle
-        ? { ...v, available: true, status: 'Available' }
-        : v));
+      await notificationAPI.markAsRead(id);
+      await fetchNotifications(notificationPage, notificationFilter);
+    } catch {
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
     }
-
-    const labels = {
-      in_transit: 'Started — vehicle is now in transit!',
-      out_for_delivery: 'Out for delivery!',
-      picked_up: 'Cargo picked up from source!',
-      delivered: '✅ Delivery completed! Earnings updated.',
-    };
-    showMsg(labels[newStatus] || `Status updated to ${newStatus}`, 'success');
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Vehicle management
-  // ─────────────────────────────────────────────────────────────────────────
-  const addVehicle = (e) => {
-    e.preventDefault();
-    if (!vehicleForm.number || !vehicleForm.type || !vehicleForm.capacity || !vehicleForm.costPerKm) {
-      showMsg('Please fill all vehicle fields', 'error');
-      return;
+  const markAllNotificationsRead = async () => {
+    try {
+      await notificationAPI.markAllAsRead();
+      await fetchNotifications(notificationPage, notificationFilter);
+      showMessage('All notifications marked as read', 'success');
+    } catch (error) {
+      showMessage(error.message || 'Failed to update notifications', 'error');
     }
-    vehicleAPI.create({
-      name: vehicleForm.number,
-      type: vehicleForm.type,
-      capacity: Number(vehicleForm.capacity),
-      plate: vehicleForm.number,
-      costPerKm: Number(vehicleForm.costPerKm)
-    }).then((res) => {
-      if (!res.success) throw new Error(res.message || 'Failed to add vehicle');
-      const v = res.data;
-      const newV = {
-        id: v._id,
-        number: v.name,
-        type: v.type,
-        capacity: v.capacity || vehicleForm.capacity,
-        costPerKm: v.costPerKm || vehicleForm.costPerKm,
-        available: v.status === 'Available',
-        status: v.status || 'Available'
-      };
-      setVehicles(prev => [...prev, newV]);
-      setStats(prev => ({ ...prev, vehiclesAvailable: prev.vehiclesAvailable + 1 }));
-      setVehicleForm({ number: '', type: isLarge ? 'Truck' : 'Bike', capacity: '', costPerKm: '' });
-      showMsg('Vehicle added to fleet!', 'success');
-    }).catch((error) => {
-      showMsg(error.message || 'Failed to add vehicle', 'error');
-    });
   };
 
-  const deleteVehicle = (id) => {
-    vehicleAPI.delete(id).then((res) => {
-      if (!res.success) throw new Error(res.message || 'Failed to remove vehicle');
-      setVehicles(prev => prev.filter(v => v.id !== id));
-      showMsg('Vehicle removed from fleet', 'info');
-    }).catch((error) => showMsg(error.message || 'Failed to remove vehicle', 'error'));
-  };
-
-  const toggleVehicleAvailability = (id) => {
-    const vehicle = vehicles.find(v => v.id === id);
-    if (!vehicle) return;
-    const nextStatus = vehicle.available ? 'Maintenance' : 'Available';
-    vehicleAPI.updateStatus(id, nextStatus).then((res) => {
-      if (!res.success) throw new Error(res.message || 'Failed to update vehicle');
-      setVehicles(prev => prev.map(v => v.id === id
-        ? { ...v, available: !v.available, status: nextStatus }
-        : v));
-    }).catch((error) => showMsg(error.message || 'Failed to update vehicle status', 'error'));
-  };
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Menu definition
-  // ─────────────────────────────────────────────────────────────────────────
   const menuItems = [
-    { id: 'overview', label: 'Overview', icon: <Dashboard /> },
-    {
-      id: 'waiting', label: 'Waiting Orders',
-      icon: <HourglassTop />,
-      badge: waitingOrders.length,
-      badgeColor: 'error'
-    },
-    {
-      id: 'my_jobs', label: 'My Jobs',
-      icon: <Assignment />,
-      badge: acceptedJobs.filter(j => j.status !== 'delivered' && j.status !== 'cancelled').length,
-      badgeColor: 'warning'
-    },
-    {
-      id: isLarge ? 'shipments' : 'tasks',
-      label: isLarge ? 'Live Shipments' : 'Live Tasks',
-      icon: <LocalShipping />,
-      badge: isLarge ? shipments.filter(s => s.status === 'in_transit').length : tasks.filter(t => t.status === 'out_for_delivery').length,
-    },
+    { id: 'overview', label: 'Overview', icon: <Route /> },
+    { id: 'requests', label: 'Delivery Requests', icon: <HourglassTop />, badge: pendingRequests.length, badgeColor: 'error' },
+    { id: 'active', label: 'Active Deliveries', icon: <LocalShipping />, badge: activeDeliveries.length, badgeColor: sidebarColor },
+    { id: 'completed', label: 'Completed', icon: <DoneAll /> },
     { id: 'vehicles', label: 'Fleet', icon: isLarge ? <DirectionsCar /> : <TwoWheeler /> },
-    { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: 2 },
-    { id: 'profile', label: 'Profile', icon: <AccountCircle /> },
+    { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: unreadCount || null },
+    { id: 'profile', label: 'Profile', icon: <AccountCircle /> }
   ];
 
-  const sidebarColor = isLarge ? 'warning' : 'info';
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Next action button logic
-  // ─────────────────────────────────────────────────────────────────────────
-  const getNextAction = (job) => {
-    const s = job.status;
-    if (isLarge) {
-      if (s === 'accepted' || s === 'scheduled') return { label: 'Start Transit', nextStatus: 'in_transit', color: 'primary', icon: <PlayArrow /> };
-      if (s === 'in_transit') return { label: 'Mark Delivered', nextStatus: 'delivered', color: 'success', icon: <CheckCircle /> };
-      if (s === 'delivered') return null;
-      if (s === 'cancelled') return null;
-    } else {
-      if (s === 'assigned' || s === 'accepted') return { label: 'Start Pickup', nextStatus: 'picked_up', color: 'primary', icon: <FlashOn /> };
-      if (s === 'picked_up') return { label: 'Out for Delivery', nextStatus: 'out_for_delivery', color: 'warning', icon: <LocalShipping /> };
-      if (s === 'out_for_delivery') return { label: 'Mark Delivered', nextStatus: 'delivered', color: 'success', icon: <CheckCircle /> };
-      if (s === 'delivered') return null;
-      if (s === 'cancelled') return null;
-    }
-    return null;
-  };
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Sidebar Drawer content
-  // ─────────────────────────────────────────────────────────────────────────
   const SidebarContent = () => (
     <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 3 }}>
-        <LocalShipping color={sidebarColor} sx={{ fontSize: 32 }} />
+      <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 3 }}>
+        <Avatar sx={{ bgcolor: `${sidebarColor}.main` }}>
+          <LocalShipping />
+        </Avatar>
         <Box>
-          <Typography variant="subtitle1" fontWeight="bold" color={`${sidebarColor}.main`}>
-            FarmKart
-          </Typography>
+          <Typography variant="subtitle1" fontWeight="bold">FarmKart Delivery</Typography>
           <Typography variant="caption" color="text.secondary">
-            {isLarge ? 'Large-Scale Delivery' : 'Last-Mile Delivery'}
+            {isLarge ? 'Large-scale transport partner' : 'Last-mile delivery partner'}
           </Typography>
         </Box>
       </Stack>
+
       <List sx={{ flexGrow: 1 }}>
         {menuItems.map((item) => (
           <ListItemButton
@@ -588,10 +439,11 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
             selected={activeSection === item.id}
             onClick={() => { setActiveSection(item.id); setDrawerOpen(false); }}
             sx={{
-              borderRadius: 2, mb: 0.5,
+              borderRadius: 2,
+              mb: 0.5,
               '&.Mui-selected': {
-                bgcolor: `${sidebarColor}.main`, color: 'white',
-                '&:hover': { bgcolor: `${sidebarColor}.dark` },
+                bgcolor: `${sidebarColor}.main`,
+                color: 'white',
                 '& .MuiListItemIcon-root': { color: 'white' }
               }
             }}
@@ -607,57 +459,57 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
           </ListItemButton>
         ))}
       </List>
+
       <Divider sx={{ my: 2 }} />
-      <Paper sx={{ p: 2, bgcolor: `${sidebarColor}.50`, borderRadius: 2 }}>
-        <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
-          Quick Stats
-        </Typography>
+      <Paper sx={{ p: 2, bgcolor: `${sidebarColor}.50` }}>
+        <Typography variant="caption" color="text.secondary">Delivery Operations</Typography>
         <Stack spacing={1} sx={{ mt: 1 }}>
           <Stack direction="row" justifyContent="space-between">
-            <Typography variant="body2">Waiting</Typography>
-            <Chip label={stats.pendingWaiting} size="small" color="error" />
+            <Typography variant="body2">Requests</Typography>
+            <Chip size="small" color="error" label={stats.pendingRequests} />
           </Stack>
           <Stack direction="row" justifyContent="space-between">
-            <Typography variant="body2">Active Jobs</Typography>
-            <Chip label={stats.activeJobs} size="small" color={sidebarColor} />
+            <Typography variant="body2">Active</Typography>
+            <Chip size="small" color={sidebarColor} label={stats.activeDeliveries} />
           </Stack>
           <Stack direction="row" justifyContent="space-between">
             <Typography variant="body2">Vehicles Free</Typography>
-            <Chip label={stats.vehiclesAvailable} size="small" color="success" />
+            <Chip size="small" color="success" label={`${stats.availableVehicles}/${stats.totalVehicles}`} />
           </Stack>
         </Stack>
       </Paper>
     </Box>
   );
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // Render
-  // ══════════════════════════════════════════════════════════════════════════
+  if (loading) {
+    return (
+      <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
+        <Stack spacing={2} alignItems="center">
+          <CircularProgress />
+          <Typography color="text.secondary">Loading delivery operations...</Typography>
+        </Stack>
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ display: 'flex', bgcolor: 'background.default', minHeight: '100vh' }}>
-      {/* Mobile Drawer */}
       <Drawer
         variant="temporary"
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        sx={{ display: { xs: 'block', md: 'none' }, '& .MuiDrawer-paper': { width: 280 } }}
+        sx={{ display: { xs: 'block', md: 'none' }, '& .MuiDrawer-paper': { width: 290 } }}
       >
         <SidebarContent />
       </Drawer>
 
-      {/* Desktop Sidebar */}
-      <Box sx={{
-        width: 280, flexShrink: 0, display: { xs: 'none', md: 'block' },
-        bgcolor: 'background.paper', borderRight: 1, borderColor: 'divider'
-      }}>
-        <Box sx={{ position: 'sticky', top: 0, height: '100vh', overflowY: 'auto' }}>
+      <Box sx={{ width: 290, display: { xs: 'none', md: 'block' }, borderRight: 1, borderColor: 'divider' }}>
+        <Box sx={{ position: 'sticky', top: 0, height: '100vh', overflowY: 'auto', bgcolor: 'background.paper' }}>
           <SidebarContent />
         </Box>
       </Box>
 
-      {/* Main Content */}
-      <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        {/* AppBar */}
+      <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
         <AppBar position="sticky" color="inherit" elevation={1} sx={{ borderBottom: 1, borderColor: 'divider' }}>
           <Toolbar>
             <IconButton edge="start" onClick={() => setDrawerOpen(true)} sx={{ mr: 2, display: { md: 'none' } }}>
@@ -665,290 +517,198 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
             </IconButton>
             <Box sx={{ flexGrow: 1 }}>
               <Typography variant="h6" fontWeight="bold">
-                {menuItems.find(m => m.id === activeSection)?.label || 'Dashboard'}
+                {menuItems.find((item) => item.id === activeSection)?.label || 'Delivery Dashboard'}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                {isLarge ? 'Long-haul • Farm-to-Hub Transport' : 'Last-mile • Hub-to-Customer Delivery'}
+                Delivery agency operations: request handling, fleet allocation, and delivery updates
               </Typography>
             </Box>
+
             <Stack direction="row" spacing={1} alignItems="center">
-              <Tooltip title="Refresh data">
-                <IconButton onClick={() => { if (isLarge) fetchShipments(); else fetchTasks(); }}>
-                  <Refresh />
+              <Tooltip title="Refresh dashboard">
+                <IconButton onClick={refreshAll} disabled={refreshing}>
+                  {refreshing ? <CircularProgress size={18} /> : <Refresh />}
                 </IconButton>
               </Tooltip>
               <IconButton color={sidebarColor} onClick={() => setActiveSection('notifications')}>
-                <Badge badgeContent={2} color="error"><Notifications /></Badge>
+                <Badge badgeContent={unreadCount} color="error">
+                  <Notifications />
+                </Badge>
               </IconButton>
               <ProfileDropdown activeTab={activeSection} setActiveTab={setActiveSection} />
             </Stack>
           </Toolbar>
         </AppBar>
 
-        {/* Content Area */}
         <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
           <Container maxWidth="xl" sx={{ py: 4 }}>
-
-            {/* ====== OVERVIEW ====== */}
             {activeSection === 'overview' && (
-              <Box>
-                <Grid container spacing={3} sx={{ mb: 4 }}>
-                  {[
-                    { label: 'Waiting Orders', value: stats.pendingWaiting, color: 'error', icon: <HourglassTop sx={{ fontSize: 32 }} />, action: () => setActiveSection('waiting') },
-                    { label: 'Active Jobs', value: stats.activeJobs, color: sidebarColor, icon: <Assignment sx={{ fontSize: 32 }} />, action: () => setActiveSection('my_jobs') },
-                    { label: 'Earnings (Total)', value: `₹${stats.monthlyEarnings.toLocaleString()}`, color: 'success', icon: <CurrencyRupee sx={{ fontSize: 32 }} /> },
-                    { label: 'Fleet Available', value: `${stats.vehiclesAvailable}/${vehicles.length}`, color: 'info', icon: <DirectionsCar sx={{ fontSize: 32 }} />, action: () => setActiveSection('vehicles') },
-                  ].map((stat, i) => (
-                    <Grid item xs={12} sm={6} md={3} key={i}>
-                      <Card
-                        sx={{ cursor: stat.action ? 'pointer' : 'default', '&:hover': stat.action ? { boxShadow: 4 } : {} }}
-                        onClick={stat.action}
-                      >
-                        <CardContent>
-                          <Stack direction="row" justifyContent="space-between" alignItems="center">
-                            <Box>
-                              <Typography variant="caption" color="text.secondary">{stat.label}</Typography>
-                              <Typography variant="h4" fontWeight="bold" color={`${stat.color}.main`}>
-                                {stat.value}
-                              </Typography>
-                            </Box>
-                            <Avatar sx={{ bgcolor: `${stat.color}.main`, width: 56, height: 56 }}>
-                              {stat.icon}
-                            </Avatar>
-                          </Stack>
-                        </CardContent>
-                      </Card>
-                    </Grid>
-                  ))}
-                </Grid>
-
-                <Grid container spacing={3}>
-                  {/* Performance */}
-                  <Grid item xs={12} md={4}>
-                    <Paper sx={{ p: 3 }}>
-                      <Typography variant="h6" fontWeight="bold" gutterBottom>Performance</Typography>
-                      <Divider sx={{ mb: 2 }} />
-                      <Stack spacing={2}>
-                        <Box>
-                          <Stack direction="row" justifyContent="space-between" sx={{ mb: 1 }}>
-                            <Typography variant="body2">Customer Rating</Typography>
-                            <Typography variant="body2" fontWeight="bold">{stats.rating}/5.0 ⭐</Typography>
-                          </Stack>
-                          <LinearProgress variant="determinate" value={(stats.rating / 5) * 100} sx={{ height: 8, borderRadius: 1 }} />
-                        </Box>
-                        <Box>
-                          <Stack direction="row" justifyContent="space-between" sx={{ mb: 1 }}>
-                            <Typography variant="body2">On-Time Rate</Typography>
-                            <Typography variant="body2" fontWeight="bold">{stats.onTimeRate}%</Typography>
-                          </Stack>
-                          <LinearProgress variant="determinate" value={stats.onTimeRate} color="success" sx={{ height: 8, borderRadius: 1 }} />
-                        </Box>
-                        <Divider />
-                        <Stack direction="row" justifyContent="space-between">
-                          <Typography variant="body2">Total Completed</Typography>
-                          <Chip label={stats.totalDeliveries} size="small" color="success" />
+              <Grid container spacing={3}>
+                {[
+                  { label: 'Incoming Requests', value: stats.pendingRequests, color: 'error', icon: <HourglassTop />, action: 'requests' },
+                  { label: 'Active Deliveries', value: stats.activeDeliveries, color: sidebarColor, icon: <LocalShipping />, action: 'active' },
+                  { label: 'Completed Deliveries', value: stats.completedDeliveries, color: 'success', icon: <DoneAll />, action: 'completed' },
+                  { label: 'Fleet Availability', value: `${stats.availableVehicles}/${stats.totalVehicles}`, color: 'info', icon: isLarge ? <DirectionsCar /> : <TwoWheeler />, action: 'vehicles' }
+                ].map((card) => (
+                  <Grid item xs={12} sm={6} md={3} key={card.label}>
+                    <Card
+                      onClick={() => setActiveSection(card.action)}
+                      sx={{ cursor: 'pointer', '&:hover': { boxShadow: 4 } }}
+                    >
+                      <CardContent>
+                        <Stack direction="row" justifyContent="space-between" alignItems="center">
+                          <Box>
+                            <Typography variant="caption" color="text.secondary">{card.label}</Typography>
+                            <Typography variant="h4" fontWeight="bold" color={`${card.color}.main`}>{card.value}</Typography>
+                          </Box>
+                          <Avatar sx={{ bgcolor: `${card.color}.main` }}>{card.icon}</Avatar>
                         </Stack>
-                      </Stack>
-                    </Paper>
-
-                    <Paper sx={{ p: 3, mt: 3 }}>
-                      <Typography variant="h6" fontWeight="bold" gutterBottom>Quick Actions</Typography>
-                      <Stack spacing={2} sx={{ mt: 1 }}>
-                        <Button variant="contained" color={sidebarColor} fullWidth startIcon={<HourglassTop />} onClick={() => setActiveSection('waiting')}>
-                          View Waiting Orders ({stats.pendingWaiting})
-                        </Button>
-                        <Button variant="outlined" fullWidth startIcon={<Add />} onClick={() => setActiveSection('vehicles')}>
-                          Add Vehicle to Fleet
-                        </Button>
-                      </Stack>
-                    </Paper>
+                      </CardContent>
+                    </Card>
                   </Grid>
+                ))}
 
-                  {/* Recent Jobs */}
-                  <Grid item xs={12} md={8}>
-                    <Paper sx={{ p: 3 }}>
-                      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-                        <Typography variant="h6" fontWeight="bold">Recent Jobs</Typography>
-                        <Button size="small" onClick={() => setActiveSection('my_jobs')}>View All</Button>
+                <Grid item xs={12} md={8}>
+                  <Paper sx={{ p: 3 }}>
+                    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+                      <Typography variant="h6" fontWeight="bold">Priority Request Queue</Typography>
+                      <Button size="small" onClick={() => setActiveSection('requests')}>View all</Button>
+                    </Stack>
+                    <Divider sx={{ mb: 2 }} />
+
+                    {pendingRequests.length === 0 ? (
+                      <Typography color="text.secondary">No pending delivery requests at the moment.</Typography>
+                    ) : (
+                      <Stack spacing={2}>
+                        {pendingRequests.slice(0, 5).map((order) => (
+                          <Paper key={order.id} variant="outlined" sx={{ p: 2 }}>
+                            <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" spacing={1}>
+                              <Box>
+                                <Typography fontWeight="bold">{order.orderNumber}</Typography>
+                                <Typography variant="body2" color="text.secondary">
+                                  {order.buyerName} • {order.productSummary} • Qty {order.quantity}
+                                </Typography>
+                              </Box>
+                              <Chip label={`₹${order.total.toLocaleString()}`} color="success" />
+                            </Stack>
+                          </Paper>
+                        ))}
                       </Stack>
-                      <Divider sx={{ mb: 2 }} />
-                      {acceptedJobs.length === 0 ? (
-                        <Box sx={{ textAlign: 'center', py: 6 }}>
-                          <LocalShipping sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
-                          <Typography color="text.secondary">No jobs accepted yet.</Typography>
-                          <Button variant="contained" color={sidebarColor} sx={{ mt: 2 }} onClick={() => setActiveSection('waiting')}>
-                            Browse Waiting Orders
-                          </Button>
-                        </Box>
-                      ) : (
-                        <TableContainer>
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>Job ID</TableCell>
-                                <TableCell>Route</TableCell>
-                                <TableCell>Cargo</TableCell>
-                                <TableCell>Amount</TableCell>
-                                <TableCell>Status</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {acceptedJobs.slice(0, 6).map((job) => (
-                                <TableRow key={job.jobId || job.id} hover>
-                                  <TableCell>
-                                    <Chip label={job.jobId || job.id} size="small" variant="outlined" />
-                                  </TableCell>
-                                  <TableCell>
-                                    <Typography variant="caption">{job.from}</Typography>
-                                    <br />
-                                    <Typography variant="caption" color="text.secondary">→ {job.to}</Typography>
-                                  </TableCell>
-                                  <TableCell>
-                                    <Typography variant="caption">{job.cargo}</Typography>
-                                  </TableCell>
-                                  <TableCell>
-                                    <Typography fontWeight="bold" color="success.main" variant="body2">₹{job.amount}</Typography>
-                                  </TableCell>
-                                  <TableCell>
-                                    <Chip
-                                      label={STATUS_LABEL[job.status] || job.status}
-                                      color={STATUS_COLOR[job.status] || 'default'}
-                                      size="small"
-                                    />
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
-                      )}
-                    </Paper>
-                  </Grid>
+                    )}
+                  </Paper>
                 </Grid>
-              </Box>
+
+                <Grid item xs={12} md={4}>
+                  <Paper sx={{ p: 3 }}>
+                    <Typography variant="h6" fontWeight="bold" gutterBottom>Performance Snapshot</Typography>
+                    <Divider sx={{ mb: 2 }} />
+                    <Stack spacing={2}>
+                      <Box>
+                        <Stack direction="row" justifyContent="space-between" sx={{ mb: 1 }}>
+                          <Typography variant="body2">Delivery Pipeline</Typography>
+                          <Typography variant="body2" fontWeight="bold">
+                            {stats.completedDeliveries + stats.activeDeliveries > 0
+                              ? Math.round((stats.completedDeliveries / (stats.completedDeliveries + stats.activeDeliveries)) * 100)
+                              : 0}% done
+                          </Typography>
+                        </Stack>
+                        <LinearProgress
+                          variant="determinate"
+                          value={
+                            stats.completedDeliveries + stats.activeDeliveries > 0
+                              ? (stats.completedDeliveries / (stats.completedDeliveries + stats.activeDeliveries)) * 100
+                              : 0
+                          }
+                          color="success"
+                          sx={{ height: 8, borderRadius: 1 }}
+                        />
+                      </Box>
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography variant="body2">Estimated Settled Value</Typography>
+                        <Typography variant="body2" color="success.main" fontWeight="bold">₹{stats.totalEarnings.toLocaleString()}</Typography>
+                      </Stack>
+                    </Stack>
+                  </Paper>
+                </Grid>
+              </Grid>
             )}
 
-            {/* ====== WAITING ORDERS (Paid, pending vehicle assignment) ====== */}
-            {activeSection === 'waiting' && (
+            {activeSection === 'requests' && (
               <Box>
                 <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
                   <Box>
-                    <Typography variant="h5" fontWeight="bold">Waiting Orders</Typography>
+                    <Typography variant="h5" fontWeight="bold">Delivery Requests Inbox</Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Orders that have been paid — awaiting vehicle assignment
+                      Buyer requests assigned to your delivery agency. Accept with a fleet vehicle or reject.
                     </Typography>
                   </Box>
-                  <Chip
-                    label={`${waitingOrders.length} pending`}
-                    color="error"
-                    icon={<HourglassTop />}
-                    sx={{ fontWeight: 'bold' }}
-                  />
+                  <Chip label={`${pendingRequests.length} pending`} color="error" icon={<HourglassTop />} />
                 </Stack>
 
-                {waitingOrders.length === 0 ? (
-                  <Paper sx={{ p: 6, textAlign: 'center' }}>
-                    <CheckCircle sx={{ fontSize: 80, color: 'success.main', mb: 2 }} />
-                    <Typography variant="h6" gutterBottom>All caught up!</Typography>
-                    <Typography color="text.secondary">No orders waiting for vehicle assignment.</Typography>
+                {pendingRequests.length === 0 ? (
+                  <Paper sx={{ p: 5, textAlign: 'center' }}>
+                    <CheckCircle sx={{ fontSize: 70, color: 'success.main', mb: 1 }} />
+                    <Typography variant="h6">No pending requests</Typography>
+                    <Typography color="text.secondary">New delivery requests will appear here.</Typography>
                   </Paper>
                 ) : (
                   <Grid container spacing={3}>
-                    {waitingOrders.map((order) => (
+                    {pendingRequests.map((order) => (
                       <Grid item xs={12} md={6} key={order.id}>
-                        <Card variant="outlined" sx={{
-                          height: '100%',
-                          borderColor: order.priority === 'urgent' ? 'error.main' : order.priority === 'high' ? 'warning.main' : 'divider',
-                          borderWidth: order.priority === 'urgent' ? 2 : 1,
-                          '&:hover': { boxShadow: 6 },
-                          transition: 'box-shadow 0.2s'
-                        }}>
+                        <Card variant="outlined" sx={{ height: '100%' }}>
                           <CardContent>
                             <Stack spacing={2}>
-                              {/* Header */}
                               <Stack direction="row" justifyContent="space-between" alignItems="start">
                                 <Box>
-                                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
-                                    {order.requesterType === 'farmer' ? <Agriculture color="success" fontSize="small" /> :
-                                      order.requesterType === 'restaurant' ? <Schedule color="warning" fontSize="small" /> :
-                                        <Business color="primary" fontSize="small" />}
-                                    <Typography fontWeight="bold">{order.requester}</Typography>
-                                  </Stack>
-                                  <Chip
-                                    label={order.orderNumber}
-                                    size="small"
-                                    variant="outlined"
-                                  />
+                                  <Typography variant="h6" fontWeight="bold">{order.orderNumber}</Typography>
+                                  <Typography variant="body2" color="text.secondary">{order.buyerName}</Typography>
                                 </Box>
-                                <Stack alignItems="flex-end" spacing={0.5}>
-                                  <Typography variant="h6" fontWeight="bold" color="success.main">
-                                    ₹{order.amount?.toLocaleString()}
-                                  </Typography>
-                                  {order.priority === 'urgent' && <Chip label="URGENT" color="error" size="small" />}
-                                  {order.priority === 'high' && <Chip label="HIGH" color="warning" size="small" />}
-                                  {order.priority === 'normal' && <Chip label="Normal" size="small" />}
-                                </Stack>
+                                <Chip color="success" label={`₹${order.total.toLocaleString()}`} />
                               </Stack>
 
                               <Divider />
 
-                              {/* Route */}
-                              <Stack spacing={1}>
-                                <Stack direction="row" spacing={1} alignItems="center">
-                                  <LocationOn color="action" fontSize="small" />
-                                  <Box>
-                                    <Typography variant="caption" color="text.secondary">From</Typography>
-                                    <Typography variant="body2" fontWeight="600">{order.from}</Typography>
-                                  </Box>
-                                </Stack>
-                                <Stack direction="row" spacing={1} alignItems="center">
-                                  <LocationOn color="success" fontSize="small" />
-                                  <Box>
-                                    <Typography variant="caption" color="text.secondary">To</Typography>
-                                    <Typography variant="body2" fontWeight="600">{order.to}</Typography>
-                                  </Box>
-                                </Stack>
-                              </Stack>
-
-                              <Divider />
-
-                              {/* Details */}
                               <Grid container spacing={1}>
-                                <Grid item xs={6}>
-                                  <Typography variant="caption" color="text.secondary">Cargo</Typography>
-                                  <Typography variant="body2" fontWeight="600">{order.cargo}</Typography>
+                                <Grid item xs={12}>
+                                  <Typography variant="body2"><strong>Product:</strong> {order.productSummary}</Typography>
                                 </Grid>
                                 <Grid item xs={6}>
-                                  <Typography variant="caption" color="text.secondary">Distance</Typography>
-                                  <Typography variant="body2" fontWeight="600">{order.distance}</Typography>
+                                  <Typography variant="body2"><strong>Qty:</strong> {order.quantity}</Typography>
                                 </Grid>
                                 <Grid item xs={6}>
-                                  <Typography variant="caption" color="text.secondary">Required By</Typography>
-                                  <Typography variant="body2" fontWeight="600" color="error.main">
-                                    {order.date}
-                                  </Typography>
+                                  <Typography variant="body2"><strong>Status:</strong> {order.status}</Typography>
                                 </Grid>
-                                <Grid item xs={6}>
-                                  <Typography variant="caption" color="text.secondary">Type</Typography>
-                                  <Chip label={isLarge ? 'Long-haul' : 'Last-mile'} size="small" color={isLarge ? 'warning' : 'info'} />
+                                <Grid item xs={12}>
+                                  <Typography variant="body2"><strong>Drop:</strong> {order.deliveryAddress?.city || order.deliveryAddress?.line1 || 'N/A'}</Typography>
                                 </Grid>
+                                {order.requestedVehicle && (
+                                  <Grid item xs={12}>
+                                    <Alert severity="info" sx={{ mt: 1 }}>
+                                      Buyer requested: {order.requestedVehicle.name} ({order.requestedVehicle.type}, cap {order.requestedVehicle.capacity})
+                                    </Alert>
+                                  </Grid>
+                                )}
                               </Grid>
 
-                              {/* Action */}
-                              <Button
-                                variant="contained"
-                                color={sidebarColor}
-                                fullWidth
-                                size="large"
-                                startIcon={<DirectionsCar />}
-                                onClick={() => handleAcceptJob(order)}
-                                disabled={vehicles.filter(v => v.available).length === 0}
-                              >
-                                {vehicles.filter(v => v.available).length === 0
-                                  ? 'No Vehicles Available'
-                                  : 'Assign Vehicle & Accept'
-                                }
-                              </Button>
+                              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                                <Button
+                                  fullWidth
+                                  variant="contained"
+                                  color={sidebarColor}
+                                  startIcon={<DirectionsCar />}
+                                  onClick={() => handleOpenAssignDialog(order)}
+                                >
+                                  Accept & Assign Vehicle
+                                </Button>
+                                <Button
+                                  fullWidth
+                                  variant="outlined"
+                                  color="error"
+                                  onClick={() => handleRejectRequest(order.id)}
+                                >
+                                  Reject
+                                </Button>
+                              </Stack>
                             </Stack>
                           </CardContent>
                         </Card>
@@ -959,106 +719,58 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
               </Box>
             )}
 
-            {/* ====== MY JOBS (Accepted, ongoing) ====== */}
-            {activeSection === 'my_jobs' && (
+            {activeSection === 'active' && (
               <Box>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-                  <Box>
-                    <Typography variant="h5" fontWeight="bold">My Jobs</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Accepted orders — manage their delivery status
-                    </Typography>
-                  </Box>
-                </Stack>
+                <Typography variant="h5" fontWeight="bold" gutterBottom>Active Deliveries</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                  Accepted requests currently handled by your delivery agency.
+                </Typography>
 
-                {acceptedJobs.length === 0 ? (
-                  <Paper sx={{ p: 6, textAlign: 'center' }}>
-                    <Assignment sx={{ fontSize: 80, color: 'text.disabled', mb: 2 }} />
-                    <Typography variant="h6" gutterBottom>No jobs yet</Typography>
-                    <Typography color="text.secondary" sx={{ mb: 3 }}>
-                      Go to Waiting Orders to accept jobs and assign vehicles.
-                    </Typography>
-                    <Button variant="contained" color={sidebarColor} onClick={() => setActiveSection('waiting')}>
-                      View Waiting Orders
-                    </Button>
+                {activeDeliveries.length === 0 ? (
+                  <Paper sx={{ p: 5, textAlign: 'center' }}>
+                    <Assignment sx={{ fontSize: 70, color: 'text.disabled', mb: 1 }} />
+                    <Typography variant="h6">No active deliveries</Typography>
+                    <Typography color="text.secondary">Accept requests from inbox to start deliveries.</Typography>
                   </Paper>
                 ) : (
                   <Grid container spacing={3}>
-                    {acceptedJobs.map((job) => {
-                      const nextAction = getNextAction(job);
-                      const isDone = job.status === 'delivered';
-                      const isCancelled = job.status === 'cancelled';
+                    {activeDeliveries.map((order) => {
+                      const nextAction = getNextOrderAction(order.status);
                       return (
-                        <Grid item xs={12} md={6} key={job.jobId || job.id}>
-                          <Card sx={{
-                            borderLeft: 4,
-                            borderColor: isDone ? 'success.main' : isCancelled ? 'error.main' : `${sidebarColor}.main`,
-                            opacity: isDone || isCancelled ? 0.85 : 1
-                          }}>
+                        <Grid item xs={12} md={6} key={order.id}>
+                          <Card sx={{ borderLeft: 4, borderColor: `${sidebarColor}.main` }}>
                             <CardContent>
                               <Stack spacing={2}>
-                                {/* Header */}
                                 <Stack direction="row" justifyContent="space-between" alignItems="start">
                                   <Box>
-                                    <Typography variant="h6" fontWeight="bold">
-                                      {job.jobId}
-                                    </Typography>
-                                    <Typography variant="caption" color="text.secondary">
-                                      {job.orderNumber}
-                                    </Typography>
+                                    <Typography variant="h6" fontWeight="bold">{order.orderNumber}</Typography>
+                                    <Typography variant="body2" color="text.secondary">{order.buyerName}</Typography>
                                   </Box>
-                                  <Chip
-                                    label={STATUS_LABEL[job.status] || job.status}
-                                    color={STATUS_COLOR[job.status] || 'default'}
-                                  />
+                                  <Chip label={order.status} color={order.status === 'shipped' ? 'warning' : 'primary'} />
                                 </Stack>
 
                                 <Divider />
 
-                                {/* Route & Info */}
                                 <Stack spacing={1}>
-                                  <Stack direction="row" justifyContent="space-between">
-                                    <Typography variant="body2" color="text.secondary">Requester</Typography>
-                                    <Typography variant="body2" fontWeight="600">{job.requester}</Typography>
-                                  </Stack>
-                                  <Stack direction="row" justifyContent="space-between">
-                                    <Typography variant="body2" color="text.secondary">Route</Typography>
-                                    <Typography variant="body2" fontWeight="600">{job.from} → {job.to}</Typography>
-                                  </Stack>
-                                  <Stack direction="row" justifyContent="space-between">
-                                    <Typography variant="body2" color="text.secondary">Cargo</Typography>
-                                    <Typography variant="body2" fontWeight="600">{job.cargo}</Typography>
-                                  </Stack>
-                                  <Stack direction="row" justifyContent="space-between">
-                                    <Typography variant="body2" color="text.secondary">Vehicle</Typography>
-                                    <Chip label={job.assignedVehicle} size="small" icon={<DirectionsCar />} />
-                                  </Stack>
-                                  <Stack direction="row" justifyContent="space-between">
-                                    <Typography variant="body2" color="text.secondary">Earnings</Typography>
-                                    <Typography variant="body2" fontWeight="bold" color="success.main">₹{job.amount}</Typography>
-                                  </Stack>
+                                  <Typography variant="body2"><strong>Route:</strong> Seller to {order.deliveryAddress?.city || 'destination'}</Typography>
+                                  <Typography variant="body2"><strong>Cargo:</strong> {order.productSummary} • Qty {order.quantity}</Typography>
+                                  <Typography variant="body2"><strong>Vehicle:</strong> {order.requestedVehicle?.name || 'Assigned'}</Typography>
+                                  <Typography variant="body2"><strong>Value:</strong> ₹{order.total.toLocaleString()}</Typography>
                                 </Stack>
 
-                                {/* Action */}
                                 {nextAction && (
                                   <Button
                                     variant="contained"
                                     color={nextAction.color}
-                                    fullWidth
-                                    startIcon={nextAction.icon}
-                                    onClick={() => handleStatusUpdate(job, nextAction.nextStatus)}
+                                    startIcon={nextAction.status === 'delivered' ? <CheckCircle /> : <Update />}
+                                    onClick={() => handleDeliveryStatusUpdate(order.id, nextAction.status)}
                                   >
                                     {nextAction.label}
                                   </Button>
                                 )}
 
-                                {isDone && (
-                                  <Chip
-                                    label="✅ Completed — Earnings Credited"
-                                    color="success"
-                                    fullWidth
-                                    sx={{ py: 1 }}
-                                  />
+                                {!DELIVERY_STATUS_FLOW.includes(order.status) && (
+                                  <Alert severity="warning">Unsupported status flow: {order.status}</Alert>
                                 )}
                               </Stack>
                             </CardContent>
@@ -1071,230 +783,159 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
               </Box>
             )}
 
-            {/* ====== LIVE SHIPMENTS (Large-scale) ====== */}
-            {activeSection === 'shipments' && isLarge && (
+            {activeSection === 'completed' && (
               <Box>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-                  <Typography variant="h5" fontWeight="bold">Live Shipments (Backend)</Typography>
-                  <Button startIcon={<Refresh />} onClick={fetchShipments} disabled={loadingShipments}>
-                    {loadingShipments ? <CircularProgress size={20} /> : 'Refresh'}
-                  </Button>
-                </Stack>
-                <Paper sx={{ p: 3 }}>
-                  {loadingShipments ? (
-                    <Box sx={{ textAlign: 'center', py: 4 }}><CircularProgress /></Box>
-                  ) : shipments.length === 0 ? (
-                    <Box sx={{ textAlign: 'center', py: 6 }}>
-                      <LocalShipping sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
-                      <Typography color="text.secondary">
-                        No backend shipments found. <br />
-                        Make sure the backend is connected or refresh the waiting orders list.
-                      </Typography>
-                    </Box>
-                  ) : (
-                    <TableContainer>
-                      <Table>
-                        <TableHead>
+                <Typography variant="h5" fontWeight="bold" gutterBottom>Completed Deliveries</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                  Historical deliveries processed by this delivery agency.
+                </Typography>
+
+                <Paper sx={{ p: 2 }}>
+                  <TableContainer>
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Order</TableCell>
+                          <TableCell>Buyer</TableCell>
+                          <TableCell>Vehicle</TableCell>
+                          <TableCell>Status</TableCell>
+                          <TableCell align="right">Amount</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {completedDeliveries.length === 0 ? (
                           <TableRow>
-                            <TableCell>Shipment #</TableCell>
-                            <TableCell>Type</TableCell>
-                            <TableCell>Origin → Destination</TableCell>
-                            <TableCell>Status</TableCell>
-                            <TableCell>Actions</TableCell>
+                            <TableCell colSpan={5}>
+                              <Typography color="text.secondary" sx={{ py: 2 }}>
+                                No completed deliveries yet.
+                              </Typography>
+                            </TableCell>
                           </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {shipments.map((s) => (
-                            <TableRow key={s._id} hover>
-                              <TableCell><Chip label={s.shipmentNumber} size="small" /></TableCell>
-                              <TableCell>{s.type?.replace(/_/g, ' ')}</TableCell>
+                        ) : (
+                          completedDeliveries.map((order) => (
+                            <TableRow key={order.id} hover>
+                              <TableCell>{order.orderNumber}</TableCell>
+                              <TableCell>{order.buyerName}</TableCell>
+                              <TableCell>{order.requestedVehicle?.name || 'N/A'}</TableCell>
                               <TableCell>
-                                <Stack><Typography variant="body2">{s.origin?.address?.city}</Typography>
-                                  <Typography variant="caption" color="text.secondary">→ {s.destination?.address?.city}</Typography>
-                                </Stack>
+                                <Chip size="small" label={order.status} color={order.status === 'delivered' ? 'success' : 'default'} />
                               </TableCell>
-                              <TableCell>
-                                <Chip label={STATUS_LABEL[s.status] || s.status} color={STATUS_COLOR[s.status] || 'default'} size="small" />
-                              </TableCell>
-                              <TableCell>
-                                {s.status === 'scheduled' && (
-                                  <Button size="small" variant="outlined" startIcon={<PlayArrow />}
-                                    onClick={() => deliveryAPI.shipments.updateTracking(s._id, [], 'Started').then(fetchShipments)}>
-                                    Start
-                                  </Button>
-                                )}
-                                {s.status === 'in_transit' && (
-                                  <Button size="small" variant="contained" color="success" startIcon={<CheckCircle />}
-                                    onClick={() => deliveryAPI.shipments.markDelivered(s._id).then(fetchShipments)}>
-                                    Deliver
-                                  </Button>
-                                )}
-                              </TableCell>
+                              <TableCell align="right">₹{order.total.toLocaleString()}</TableCell>
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  )}
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
                 </Paper>
               </Box>
             )}
 
-            {/* ====== LIVE TASKS (Small-scale) ====== */}
-            {activeSection === 'tasks' && !isLarge && (
-              <Box>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-                  <Typography variant="h5" fontWeight="bold">Live Delivery Tasks (Backend)</Typography>
-                  <Button startIcon={<Refresh />} onClick={fetchTasks} disabled={loadingTasks}>
-                    {loadingTasks ? <CircularProgress size={20} /> : 'Refresh'}
-                  </Button>
-                </Stack>
-                <Paper sx={{ p: 3 }}>
-                  {loadingTasks ? (
-                    <Box sx={{ textAlign: 'center', py: 4 }}><CircularProgress /></Box>
-                  ) : tasks.length === 0 ? (
-                    <Box sx={{ textAlign: 'center', py: 6 }}>
-                      <TwoWheeler sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
-                      <Typography color="text.secondary">
-                        No backend tasks found. <br />
-                        Make sure the backend is connected or use the <strong>Waiting Orders</strong> tab.
-                      </Typography>
-                    </Box>
-                  ) : (
-                    <TableContainer>
-                      <Table>
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Task #</TableCell>
-                            <TableCell>Type</TableCell>
-                            <TableCell>Time Slot</TableCell>
-                            <TableCell>Priority</TableCell>
-                            <TableCell>Status</TableCell>
-                            <TableCell>Actions</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {tasks.map((t) => (
-                            <TableRow key={t._id} hover>
-                              <TableCell><Chip label={t.taskNumber} size="small" /></TableCell>
-                              <TableCell>{t.type?.replace(/_/g, ' ')}</TableCell>
-                              <TableCell>
-                                <Typography variant="body2">{t.timeSlot?.slot?.replace(/_/g, ' ')}</Typography>
-                                <Typography variant="caption" color="text.secondary">{t.timeSlot?.date?.split('T')[0]}</Typography>
-                              </TableCell>
-                              <TableCell>
-                                <Chip
-                                  label={t.priority}
-                                  color={t.priority === 'urgent' ? 'error' : t.priority === 'high' ? 'warning' : 'default'}
-                                  size="small"
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Chip label={STATUS_LABEL[t.status] || t.status} color={STATUS_COLOR[t.status] || 'default'} size="small" />
-                              </TableCell>
-                              <TableCell>
-                                {t.status === 'assigned' && (
-                                  <Button size="small" variant="outlined" onClick={() => deliveryAPI.tasks.accept(t._id).then(fetchTasks)}>
-                                    Accept
-                                  </Button>
-                                )}
-                                {t.status === 'accepted' && (
-                                  <Button size="small" variant="outlined" color="warning" onClick={() => deliveryAPI.tasks.start(t._id).then(fetchTasks)}>
-                                    Start
-                                  </Button>
-                                )}
-                                {t.status === 'out_for_delivery' && (
-                                  <Button size="small" variant="contained" color="success"
-                                    onClick={() => deliveryAPI.tasks.complete(t._id, { receiverName: 'Customer' }).then(fetchTasks)}>
-                                    Complete
-                                  </Button>
-                                )}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  )}
-                </Paper>
-              </Box>
-            )}
-
-            {/* ====== VEHICLE FLEET ====== */}
             {activeSection === 'vehicles' && (
               <Box>
-                <Typography variant="h5" fontWeight="bold" gutterBottom>Vehicle Fleet</Typography>
+                <Typography variant="h5" fontWeight="bold" gutterBottom>Fleet Management</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                  Manage only your delivery agency fleet. Buyers cannot create or manage these vehicles.
+                </Typography>
 
-                {/* Add Vehicle Form */}
                 <Paper sx={{ p: 3, mb: 3 }}>
                   <Typography variant="h6" fontWeight="bold" gutterBottom>Add Vehicle</Typography>
                   <Box component="form" onSubmit={addVehicle}>
                     <Grid container spacing={2} sx={{ mt: 1 }}>
                       <Grid item xs={12} sm={6} md={3}>
-                        <TextField fullWidth label="Vehicle Number" placeholder="MH-12-AB-1234"
-                          value={vehicleForm.number} onChange={e => setVehicleForm(p => ({ ...p, number: e.target.value }))} required />
+                        <TextField
+                          fullWidth
+                          label="Vehicle Name/Number"
+                          value={vehicleForm.number}
+                          onChange={(event) => setVehicleForm((prev) => ({ ...prev, number: event.target.value }))}
+                          required
+                        />
                       </Grid>
-                      <Grid item xs={12} sm={6} md={2}>
-                        <TextField select fullWidth label="Type"
-                          value={vehicleForm.type} onChange={e => setVehicleForm(p => ({ ...p, type: e.target.value }))}>
-                          {(isLarge ? VEHICLE_TYPES_LARGE : VEHICLE_TYPES_SMALL).map(t => (
-                            <MenuItem key={t} value={t}>{t}</MenuItem>
+                      <Grid item xs={12} sm={6} md={3}>
+                        <TextField
+                          select
+                          fullWidth
+                          label="Type"
+                          value={vehicleForm.type}
+                          onChange={(event) => setVehicleForm((prev) => ({ ...prev, type: event.target.value }))}
+                        >
+                          {(isLarge ? VEHICLE_TYPES_LARGE : VEHICLE_TYPES_SMALL).map((type) => (
+                            <MenuItem key={type} value={type}>{type}</MenuItem>
                           ))}
                         </TextField>
                       </Grid>
                       <Grid item xs={12} sm={6} md={2}>
-                        <TextField fullWidth label="Capacity" placeholder={isLarge ? '5 tons' : '50 kg'}
-                          value={vehicleForm.capacity} onChange={e => setVehicleForm(p => ({ ...p, capacity: e.target.value }))} required />
+                        <TextField
+                          fullWidth
+                          type="number"
+                          label="Capacity"
+                          value={vehicleForm.capacity}
+                          onChange={(event) => setVehicleForm((prev) => ({ ...prev, capacity: event.target.value }))}
+                          required
+                        />
                       </Grid>
                       <Grid item xs={12} sm={6} md={2}>
-                        <TextField fullWidth label="Cost/km (₹)" type="number"
-                          value={vehicleForm.costPerKm} onChange={e => setVehicleForm(p => ({ ...p, costPerKm: e.target.value }))} required />
+                        <TextField
+                          fullWidth
+                          type="number"
+                          label="Rate/km"
+                          value={vehicleForm.costPerKm}
+                          onChange={(event) => setVehicleForm((prev) => ({ ...prev, costPerKm: event.target.value }))}
+                          required
+                        />
                       </Grid>
-                      <Grid item xs={12} sm={6} md={3}>
-                        <Button type="submit" variant="contained" color={sidebarColor} fullWidth sx={{ height: 56 }} startIcon={<Add />}>
-                          Add to Fleet
+                      <Grid item xs={12} md={2}>
+                        <Button fullWidth variant="contained" color={sidebarColor} type="submit" sx={{ height: 56 }} startIcon={<Add />}>
+                          Add
                         </Button>
                       </Grid>
                     </Grid>
                   </Box>
                 </Paper>
 
-                {/* Fleet Grid */}
                 <Grid container spacing={3}>
-                  {vehicles.map((v) => (
-                    <Grid item xs={12} sm={6} md={4} key={v.id}>
+                  {vehicles.map((vehicle) => (
+                    <Grid item xs={12} sm={6} md={4} key={vehicle.id}>
                       <Card>
                         <CardContent>
                           <Stack direction="row" justifyContent="space-between" alignItems="start" sx={{ mb: 2 }}>
-                            <Stack direction="row" spacing={2} alignItems="center">
-                              <Avatar sx={{ bgcolor: v.available ? 'success.main' : 'grey.500' }}>
+                            <Stack direction="row" spacing={1.5} alignItems="center">
+                              <Avatar sx={{ bgcolor: vehicle.available ? 'success.main' : 'grey.500' }}>
                                 {isLarge ? <DirectionsCar /> : <TwoWheeler />}
                               </Avatar>
                               <Box>
-                                <Typography fontWeight="bold">{v.number}</Typography>
-                                <Typography variant="caption" color="text.secondary">{v.type}</Typography>
+                                <Typography fontWeight="bold">{vehicle.number}</Typography>
+                                <Typography variant="caption" color="text.secondary">{vehicle.type}</Typography>
                               </Box>
                             </Stack>
-                            <Chip label={v.status} color={v.available ? 'success' : 'default'} size="small" />
+                            <Chip size="small" label={vehicle.status} color={vehicle.available ? 'success' : 'default'} />
                           </Stack>
+
                           <Divider sx={{ mb: 2 }} />
+
                           <Stack spacing={1}>
                             <Stack direction="row" justifyContent="space-between">
                               <Typography variant="body2" color="text.secondary">Capacity</Typography>
-                              <Typography variant="body2" fontWeight="600">{v.capacity}</Typography>
+                              <Typography variant="body2" fontWeight="bold">{vehicle.capacity}</Typography>
                             </Stack>
                             <Stack direction="row" justifyContent="space-between">
                               <Typography variant="body2" color="text.secondary">Rate</Typography>
-                              <Typography variant="body2" fontWeight="600" color={`${sidebarColor}.main`}>₹{v.costPerKm}/km</Typography>
+                              <Typography variant="body2" fontWeight="bold">₹{vehicle.costPerKm}/km</Typography>
                             </Stack>
                           </Stack>
+
                           <Divider sx={{ my: 2 }} />
+
                           <Stack direction="row" justifyContent="space-between" alignItems="center">
-                            <Stack direction="row" spacing={1} alignItems="center">
+                            <Stack direction="row" alignItems="center" spacing={1}>
                               <Typography variant="body2">Available</Typography>
-                              <Switch checked={v.available} onChange={() => toggleVehicleAvailability(v.id)} color={sidebarColor} />
+                              <Switch
+                                color={sidebarColor}
+                                checked={vehicle.available}
+                                onChange={() => toggleVehicleAvailability(vehicle)}
+                              />
                             </Stack>
-                            <IconButton size="small" color="error" onClick={() => deleteVehicle(v.id)}>
+                            <IconButton color="error" onClick={() => deleteVehicle(vehicle.id)}>
                               <Delete />
                             </IconButton>
                           </Stack>
@@ -1306,185 +947,193 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
               </Box>
             )}
 
-            {/* ====== NOTIFICATIONS ====== */}
             {activeSection === 'notifications' && (
               <Box>
                 <Typography variant="h5" fontWeight="bold" gutterBottom>Notifications</Typography>
                 <Stack spacing={2}>
-                  {[
-                    { id: 1, title: 'New Order Waiting', message: `Order ORD20240006 — 300 kg Rice from Nasik to Pune needs ${isLarge ? 'transport' : 'last-mile delivery'}`, time: '5 min ago', type: 'warning', read: false },
-                    { id: 2, title: 'Job Completed', message: 'JOB001 has been successfully delivered and earnings credited.', time: '2 hours ago', type: 'success', read: true },
-                    { id: 3, title: 'Vehicle Due for Service', message: 'MH-12-AB-1234 is due for its routine maintenance check.', time: '1 day ago', type: 'info', read: true },
-                  ].map((n) => (
-                    <Card key={n.id} sx={{ bgcolor: n.read ? 'background.paper' : 'action.hover' }}>
+                  <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+                    {['all', 'unread', 'order', 'delivery', 'alert'].map((filter) => (
+                      <Button
+                        key={filter}
+                        size="small"
+                        variant={notificationFilter === filter ? 'contained' : 'outlined'}
+                        onClick={() => {
+                          setNotificationFilter(filter);
+                          setNotificationPage(1);
+                        }}
+                      >
+                        {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                      </Button>
+                    ))}
+                  </Stack>
+
+                  {notifications.map((entry) => (
+                    <Card
+                      key={entry.id}
+                      sx={{ bgcolor: entry.read ? 'background.paper' : 'action.hover', cursor: entry.read ? 'default' : 'pointer' }}
+                      onClick={() => !entry.read && markOneNotificationRead(entry.id)}
+                    >
                       <CardContent>
                         <Stack direction="row" spacing={2} alignItems="flex-start">
-                          <Avatar sx={{ bgcolor: n.type === 'warning' ? 'warning.main' : n.type === 'success' ? 'success.main' : 'info.main', width: 40, height: 40 }}>
-                            {n.type === 'warning' ? <HourglassTop /> : n.type === 'success' ? <CheckCircle /> : <Notifications />}
+                          <Avatar sx={{ bgcolor: entry.type === 'alert' ? 'warning.main' : entry.type === 'delivery' ? 'success.main' : 'info.main' }}>
+                            {entry.type === 'delivery' ? <LocalShipping /> : <Notifications />}
                           </Avatar>
                           <Box sx={{ flexGrow: 1 }}>
-                            <Stack direction="row" justifyContent="space-between">
-                              <Typography fontWeight={n.read ? 'normal' : 'bold'}>{n.title}</Typography>
-                              {!n.read && <Chip label="New" color="error" size="small" />}
+                            <Stack direction="row" justifyContent="space-between" alignItems="center">
+                              <Typography fontWeight={entry.read ? 500 : 700}>{entry.title}</Typography>
+                              {!entry.read && <Chip label="New" size="small" color="error" />}
                             </Stack>
-                            <Typography variant="body2" color="text.secondary">{n.message}</Typography>
-                            <Typography variant="caption" color="text.secondary">{n.time}</Typography>
+                            <Typography variant="body2" color="text.secondary">{entry.message}</Typography>
+                            <Typography variant="caption" color="text.secondary">{entry.time}</Typography>
                           </Box>
                         </Stack>
                       </CardContent>
                     </Card>
                   ))}
-                  <Button fullWidth variant="outlined" onClick={() => showMsg('All marked as read', 'success')}>
-                    Mark All as Read
-                  </Button>
+
+                  <Button variant="outlined" onClick={markAllNotificationsRead}>Mark all as read</Button>
+
+                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Typography variant="caption" color="text.secondary">Page {notificationPage} of {notificationTotalPages}</Typography>
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" variant="outlined" disabled={notificationPage <= 1} onClick={() => setNotificationPage((prev) => Math.max(1, prev - 1))}>Prev</Button>
+                      <Button size="small" variant="outlined" disabled={notificationPage >= notificationTotalPages} onClick={() => setNotificationPage((prev) => Math.min(notificationTotalPages, prev + 1))}>Next</Button>
+                    </Stack>
+                  </Stack>
                 </Stack>
               </Box>
             )}
 
-            {/* ====== PROFILE ====== */}
             {activeSection === 'profile' && (
               <Grid container spacing={3}>
                 <Grid item xs={12} md={4}>
                   <Paper sx={{ p: 3, textAlign: 'center' }}>
-                    <Avatar sx={{ width: 100, height: 100, mx: 'auto', mb: 2, bgcolor: `${sidebarColor}.main`, fontSize: '2.5rem' }}>
-                      {isLarge ? <LocalShipping sx={{ fontSize: 50 }} /> : <TwoWheeler sx={{ fontSize: 50 }} />}
+                    <Avatar sx={{ width: 92, height: 92, mx: 'auto', mb: 2, bgcolor: `${sidebarColor}.main` }}>
+                      {isLarge ? <DirectionsCar sx={{ fontSize: 42 }} /> : <TwoWheeler sx={{ fontSize: 42 }} />}
                     </Avatar>
-                    <Typography variant="h5" fontWeight="bold">{user?.name || 'Delivery Partner'}</Typography>
-                    <Typography color="text.secondary" gutterBottom>{user?.email || 'partner@farmkart.com'}</Typography>
-                    <Chip label={isLarge ? 'Large-Scale Partner' : 'Last-Mile Partner'} color={sidebarColor} icon={<CheckCircle />} sx={{ mb: 2 }} />
+                    <Typography variant="h6" fontWeight="bold">{profileForm.name || 'Delivery Partner'}</Typography>
+                    <Typography variant="body2" color="text.secondary">{profileForm.email}</Typography>
+                    <Chip sx={{ mt: 1.5 }} color={sidebarColor} label={isLarge ? 'Large-scale partner' : 'Last-mile partner'} />
+
                     <Divider sx={{ my: 2 }} />
-                    <Stack spacing={1.5}>
-                      {[
-                        { label: 'Fleet Size', value: vehicles.length },
-                        { label: 'Total Deliveries', value: stats.totalDeliveries },
-                        { label: 'Rating', value: `${stats.rating} ⭐` },
-                        { label: 'On-Time Rate', value: `${stats.onTimeRate}%` },
-                      ].map(item => (
-                        <Stack key={item.label} direction="row" justifyContent="space-between">
-                          <Typography variant="body2">{item.label}</Typography>
-                          <Typography variant="body2" fontWeight="bold">{item.value}</Typography>
-                        </Stack>
-                      ))}
+
+                    <Stack spacing={1}>
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography variant="body2">Fleet</Typography>
+                        <Typography variant="body2" fontWeight="bold">{stats.totalVehicles}</Typography>
+                      </Stack>
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography variant="body2">Active Deliveries</Typography>
+                        <Typography variant="body2" fontWeight="bold">{stats.activeDeliveries}</Typography>
+                      </Stack>
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography variant="body2">Completed</Typography>
+                        <Typography variant="body2" fontWeight="bold">{stats.completedDeliveries}</Typography>
+                      </Stack>
                     </Stack>
                   </Paper>
                 </Grid>
+
                 <Grid item xs={12} md={8}>
                   <Paper sx={{ p: 3 }}>
-                    <Typography variant="h6" fontWeight="bold" gutterBottom>Business Information</Typography>
-                    <Divider sx={{ mb: 3 }} />
+                    <Typography variant="h6" fontWeight="bold" gutterBottom>Delivery Agency Profile</Typography>
+                    <Divider sx={{ mb: 2 }} />
+
                     <Grid container spacing={2}>
-                      {[
-                        { label: 'Full Name', value: profileForm.name, name: 'name' },
-                        { label: 'Email', value: profileForm.email, name: 'email' },
-                        { label: 'Phone', value: profileForm.phone, name: 'phone' },
-                        { label: 'License Number', value: profileForm.licenseNumber, name: 'licenseNumber' },
-                        { label: 'Account Type', value: profileForm.accountType, name: 'accountType' },
-                        { label: 'Status', value: 'Active & Verified' },
-                      ].map(field => (
-                        <Grid item xs={12} sm={6} key={field.label}>
-                          <TextField fullWidth label={field.label} name={field.name} value={field.value} onChange={onProfileChange} disabled={field.label === 'Status'} />
-                        </Grid>
-                      ))}
+                      <Grid item xs={12} sm={6}>
+                        <TextField fullWidth name="name" label="Name" value={profileForm.name} onChange={onProfileChange} />
+                      </Grid>
+                      <Grid item xs={12} sm={6}>
+                        <TextField fullWidth name="email" label="Email" value={profileForm.email} onChange={onProfileChange} />
+                      </Grid>
+                      <Grid item xs={12} sm={6}>
+                        <TextField fullWidth name="phone" label="Phone" value={profileForm.phone} onChange={onProfileChange} />
+                      </Grid>
+                      <Grid item xs={12} sm={6}>
+                        <TextField fullWidth name="licenseNumber" label="License Number" value={profileForm.licenseNumber} onChange={onProfileChange} />
+                      </Grid>
+                      <Grid item xs={12} sm={6}>
+                        <TextField fullWidth name="accountType" label="Account Type" value={profileForm.accountType} onChange={onProfileChange} />
+                      </Grid>
+                      <Grid item xs={12} sm={6}>
+                        <TextField fullWidth label="Role" value={isLarge ? 'Delivery Large' : 'Delivery Small'} disabled />
+                      </Grid>
                       <Grid item xs={12}>
-                        <TextField fullWidth label="Address" name="address" value={profileForm.address} onChange={onProfileChange} multiline rows={2} />
-                        </Grid>
+                        <TextField fullWidth multiline rows={2} name="address" label="Address" value={profileForm.address} onChange={onProfileChange} />
+                      </Grid>
                       <Grid item xs={12}>
-                        <Button variant="contained" color={sidebarColor} size="large" onClick={handleProfileUpdate}>
-                          Update Profile
-                        </Button>
+                        <Button variant="contained" color={sidebarColor} onClick={handleProfileUpdate}>Update Profile</Button>
                       </Grid>
                     </Grid>
                   </Paper>
                 </Grid>
               </Grid>
             )}
-
           </Container>
         </Box>
       </Box>
 
-      {/* ── Assign Vehicle Dialog ── */}
-      <Dialog open={assignDialog.open} onClose={() => setAssignDialog({ open: false, job: null, selectedVehicle: '' })} maxWidth="sm" fullWidth>
-        <DialogTitle>
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <DirectionsCar color={sidebarColor} />
-            <Typography fontWeight="bold">Assign Vehicle for Job</Typography>
-          </Stack>
-        </DialogTitle>
+      <Dialog
+        open={assignDialog.open}
+        onClose={() => setAssignDialog({ open: false, order: null, selectedVehicleId: '' })}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Assign Fleet Vehicle</DialogTitle>
         <DialogContent>
-          {assignDialog.job && (
+          {assignDialog.order && (
             <Stack spacing={2} sx={{ mt: 1 }}>
-              <Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}>
-                <Typography variant="subtitle2" fontWeight="bold">{assignDialog.job.orderNumber}</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {assignDialog.job.from} → {assignDialog.job.to}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">{assignDialog.job.cargo}</Typography>
-                <Typography variant="h6" color="success.main" fontWeight="bold">₹{assignDialog.job.amount}</Typography>
-              </Paper>
+              <Alert severity="info">
+                {assignDialog.order.orderNumber}: {assignDialog.order.productSummary} (Qty {assignDialog.order.quantity})
+              </Alert>
 
-              <Typography variant="subtitle1" fontWeight="bold">Select Available Vehicle:</Typography>
-
-              {vehicles.filter(v => v.available).length === 0 ? (
-                <Alert severity="error">No vehicles available. Mark a vehicle as available in Fleet management.</Alert>
+              {vehicles.filter((vehicle) => vehicle.available).length === 0 ? (
+                <Alert severity="error">No available vehicles in your fleet.</Alert>
               ) : (
-                <Grid container spacing={2}>
-                  {vehicles.filter(v => v.available).map(v => (
-                    <Grid item xs={12} sm={6} key={v.id}>
-                      <Card
-                        variant="outlined"
-                        onClick={() => setAssignDialog(p => ({ ...p, selectedVehicle: v.id }))}
-                        sx={{
-                          cursor: 'pointer',
-                          borderColor: assignDialog.selectedVehicle === v.id ? `${sidebarColor}.main` : 'divider',
-                          borderWidth: assignDialog.selectedVehicle === v.id ? 2 : 1,
-                          bgcolor: assignDialog.selectedVehicle === v.id ? `${sidebarColor}.50` : 'background.paper',
-                          '&:hover': { boxShadow: 2 }
-                        }}
-                      >
-                        <CardContent sx={{ p: 2 }}>
-                          <Stack direction="row" alignItems="center" spacing={1}>
-                            <Avatar sx={{ bgcolor: `${sidebarColor}.main`, width: 36, height: 36 }}>
-                              {isLarge ? <DirectionsCar fontSize="small" /> : <TwoWheeler fontSize="small" />}
-                            </Avatar>
-                            <Box>
-                              <Typography fontWeight="bold" variant="body2">{v.number}</Typography>
-                              <Typography variant="caption" color="text.secondary">{v.type} • {v.capacity}</Typography>
-                              <br />
-                              <Typography variant="caption" color="success.main">₹{v.costPerKm}/km</Typography>
-                            </Box>
-                          </Stack>
-                        </CardContent>
-                      </Card>
-                    </Grid>
-                  ))}
-                </Grid>
+                <TextField
+                  select
+                  fullWidth
+                  label="Select Available Vehicle"
+                  value={assignDialog.selectedVehicleId}
+                  onChange={(event) => setAssignDialog((prev) => ({ ...prev, selectedVehicleId: event.target.value }))}
+                >
+                  {vehicles
+                    .filter((vehicle) => vehicle.available)
+                    .map((vehicle) => (
+                      <MenuItem key={vehicle.id} value={vehicle.id}>
+                        {vehicle.number} • {vehicle.type} • cap {vehicle.capacity}
+                      </MenuItem>
+                    ))}
+                </TextField>
               )}
             </Stack>
           )}
         </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setAssignDialog({ open: false, job: null, selectedVehicle: '' })}>Cancel</Button>
+        <DialogActions>
+          <Button onClick={() => setAssignDialog({ open: false, order: null, selectedVehicleId: '' })}>Cancel</Button>
           <Button
             variant="contained"
             color={sidebarColor}
-            onClick={confirmAcceptJob}
-            disabled={!assignDialog.selectedVehicle}
+            onClick={handleAcceptRequest}
+            disabled={!assignDialog.selectedVehicleId}
             startIcon={<CheckCircle />}
           >
-            Accept & Assign
+            Accept Request
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* ── Snackbar ── */}
       <Snackbar
         open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar(p => ({ ...p, open: false }))}
+        autoHideDuration={3500}
+        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
       >
-        <Alert onClose={() => setSnackbar(p => ({ ...p, open: false }))} severity={snackbar.severity} variant="filled">
+        <Alert
+          severity={snackbar.severity}
+          variant="filled"
+          onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
+        >
           {snackbar.message}
         </Alert>
       </Snackbar>
