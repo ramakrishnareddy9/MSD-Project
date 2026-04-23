@@ -108,6 +108,36 @@ const marketplaceRequestSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
+  communityContext: {
+    communityId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Community'
+    },
+    poolId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'CommunityPool'
+    },
+    contributorIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }]
+  },
+  delivery: {
+    requestedVehicleId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Vehicle'
+    },
+    requestedPartnerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    requestedAt: Date,
+    requestStatus: {
+      type: String,
+      enum: ['none', 'requested', 'accepted', 'rejected'],
+      default: 'none'
+    }
+  },
   farmerResponse: {
     offeredPrice: Number,
     message: String,

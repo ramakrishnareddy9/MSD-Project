@@ -3,6 +3,8 @@ import mongoose from 'mongoose';
 import Shipment from '../models/Shipment.model.js';
 import DeliveryTask from '../models/DeliveryTask.model.js';
 import Order from '../models/Order.model.js';
+import MarketplaceRequest from '../models/MarketplaceRequest.model.js';
+import CommunityPool from '../models/CommunityPool.model.js';
 import { notifyUsers } from '../utils/notification.util.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
@@ -532,9 +534,27 @@ router.patch('/tasks/:id/complete', authenticate, authorize('delivery', 'deliver
     
     await session.commitTransaction();
 
-    const order = await Order.findById(task.orderId).select('orderNumber buyerId sellerId');
+    const order = await Order.findById(task.orderId).select('orderNumber buyerId sellerId marketplaceRequestId');
     if (order) {
-      await notifyUsers([order.buyerId, order.sellerId, task.deliveryPartnerId], {
+      const targetUsers = [order.buyerId, order.sellerId, task.deliveryPartnerId];
+
+      if (order.marketplaceRequestId) {
+        const linkedRequest = await MarketplaceRequest.findById(order.marketplaceRequestId)
+          .select('requesterType communityContext.poolId communityContext.contributorIds');
+        if (linkedRequest?.requesterType === 'community') {
+          const contributorIds = linkedRequest.communityContext?.contributorIds || [];
+          targetUsers.push(...contributorIds);
+
+          if (linkedRequest.communityContext?.poolId) {
+            await CommunityPool.findByIdAndUpdate(linkedRequest.communityContext.poolId, {
+              status: 'delivered',
+              deliveredAt: new Date()
+            });
+          }
+        }
+      }
+
+      await notifyUsers(targetUsers, {
         title: 'Order Delivered',
         message: `Order ${order.orderNumber} has been delivered successfully.`,
         type: 'delivery',

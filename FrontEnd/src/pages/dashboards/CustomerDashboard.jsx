@@ -26,6 +26,15 @@ import ProfileDropdown from '../../Components/ProfileDropdown';
 import { authAPI, productAPI, cartAPI, wishlistAPI, orderAPI, communityAPI, userAPI, notificationAPI, marketplaceRequestAPI } from '../../services/api';
 
 const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1488459716781-6f03ee1b563b?w=800&h=600&fit=crop&q=80';
+const COMMUNITY_MIN_BULK_QTY = 50;
+
+const enforceCommunityMinBulkQty = (value) => {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized) || normalized <= 0) {
+    return COMMUNITY_MIN_BULK_QTY;
+  }
+  return Math.max(COMMUNITY_MIN_BULK_QTY, normalized);
+};
 
 const CustomerDashboard = () => {
   const navigate = useNavigate();
@@ -88,7 +97,7 @@ const CustomerDashboard = () => {
     inStock: (p.stockQuantity ?? p.stock ?? 0) > 0,
     discount: 0,
     description: p.description || 'Premium quality product',
-    minBulkQty: p.minBulkQty || p.minOrderQuantity || 50
+    minBulkQty: enforceCommunityMinBulkQty(p.minBulkQty || p.minOrderQuantity)
   });
 
   const normalizeCartItem = (item) => {
@@ -103,7 +112,7 @@ const CustomerDashboard = () => {
       farmer: product.ownerId?.name || product.seller?.name || item.farmer || 'Farm',
       discount: Number(item.discount || 0),
       image: product.image || product.images?.[0] || item.image || FALLBACK_IMAGE,
-      minBulkQty: product.minBulkQty || product.minOrderQuantity || item.minBulkQty || 50
+      minBulkQty: enforceCommunityMinBulkQty(product.minBulkQty || product.minOrderQuantity || item.minBulkQty)
     };
   };
 
@@ -201,10 +210,21 @@ const CustomerDashboard = () => {
             image: product.image || product.images?.[0] || FALLBACK_IMAGE
           },
           totalQty: Number(pool.totalQty || 0),
-          minBulkQty: Number(pool.minBulkQty || 50),
+          minBulkQty: enforceCommunityMinBulkQty(pool.minBulkQty),
           contributions: mappedContributions,
           status: pool.status || 'collecting',
-          assignedFarmer: pool.assignedFarmer?.name || ''
+          assignedFarmer: pool.assignedFarmer?.name || '',
+          assignedVehicle: pool.assignedVehicle
+            ? {
+                name: pool.assignedVehicle?.name || pool.assignedVehicle?.plateNumber || 'Vehicle',
+                type: pool.assignedVehicle?.type || '',
+                plateNumber: pool.assignedVehicle?.plateNumber || ''
+              }
+            : null,
+          assignedDeliveryPartner: pool.assignedDeliveryPartner?.name || '',
+          deliveryRequestStatus: pool.deliveryRequestStatus || 'none',
+          deliveryRequestedAt: pool.deliveryRequestedAt ? new Date(pool.deliveryRequestedAt) : null,
+          deliveredAt: pool.deliveredAt ? new Date(pool.deliveredAt) : null
         };
       });
     });
@@ -486,34 +506,6 @@ const CustomerDashboard = () => {
     }
   };
 
-  const createNegotiation = async (product) => {
-    const qty = Number(product.minBulkQty || 1);
-    const basePrice = Number(product.price || 0);
-    const offeredPrice = Number(window.prompt(`Enter your offer price per ${product.unit || 'kg'} (₹${basePrice} suggested)`, String(basePrice)));
-
-    if (!offeredPrice || Number.isNaN(offeredPrice) || offeredPrice <= 0) {
-      showSnackbar('Valid offered price is required', 'error');
-      return;
-    }
-
-    try {
-      await marketplaceRequestAPI.create({
-        productId: product.id,
-        cropName: product.name,
-        quantity: qty,
-        unit: product.unit || 'kg',
-        offeredPrice,
-        requesterType: 'customer',
-        location: profileForm.city || 'India',
-        notes: `Customer negotiation request for ${qty} ${product.unit || 'kg'}`
-      });
-      await refreshNegotiations();
-      showSnackbar('Negotiation request sent to farmer', 'success');
-    } catch (error) {
-      showSnackbar(error.message || 'Failed to create negotiation', 'error');
-    }
-  };
-
   const handleNegotiationAction = async (request, action) => {
     try {
       if (action === 'counter') {
@@ -592,7 +584,7 @@ const CustomerDashboard = () => {
           productId: item.id,
           qty,
           amount,
-          minBulkQty: product.minBulkQty || 50
+          minBulkQty: enforceCommunityMinBulkQty(product.minBulkQty)
         });
       }
 
@@ -896,7 +888,7 @@ const CustomerDashboard = () => {
             <Avatar sx={{ width: 24, height: 24, bgcolor: 'success.light' }}><Person sx={{ fontSize: 14 }} /></Avatar>
             <Typography variant="caption" color="text.secondary">{product.farmer}</Typography>
           </Stack>
-          <Chip label={`Min Bulk: ${product.minBulkQty || 50}${product.unit}`} size="small" variant="outlined" color="info" sx={{ mt: 1 }} />
+          <Chip label={`Min Bulk: ${enforceCommunityMinBulkQty(product.minBulkQty)}${product.unit}`} size="small" variant="outlined" color="info" sx={{ mt: 1 }} />
         </CardContent>
         <CardActions sx={{ px: 2, pb: 2, pt: 0 }}>
           <Box sx={{ width: '100%' }}>
@@ -924,16 +916,6 @@ const CustomerDashboard = () => {
                 Add
               </Button>
             </Stack>
-            <Button
-              variant="outlined"
-              color="warning"
-              size="small"
-              fullWidth
-              sx={{ textTransform: 'none' }}
-              onClick={() => createNegotiation(product)}
-            >
-              Negotiate Price
-            </Button>
           </Box>
         </CardActions>
       </Card>
@@ -1333,6 +1315,29 @@ const CustomerDashboard = () => {
                                   {poolItem.assignedFarmer && (
                                     <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
                                       🧑‍🌾 {poolItem.assignedFarmer}
+                                    </Typography>
+                                  )}
+                                  {poolItem.assignedVehicle && (
+                                    <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+                                      🚚 {poolItem.assignedVehicle.name}
+                                    </Typography>
+                                  )}
+                                  {poolItem.assignedDeliveryPartner && (
+                                    <Typography variant="caption" display="block" sx={{ mt: 0.25 }} color="text.secondary">
+                                      Partner: {poolItem.assignedDeliveryPartner}
+                                    </Typography>
+                                  )}
+                                  {poolItem.deliveryRequestStatus !== 'none' && (
+                                    <Chip
+                                      size="small"
+                                      sx={{ mt: 0.75 }}
+                                      label={poolItem.deliveryRequestStatus === 'requested' ? 'Delivery Requested' : poolItem.deliveryRequestStatus === 'accepted' ? 'Delivery Accepted' : poolItem.deliveryRequestStatus === 'rejected' ? 'Delivery Rejected' : poolItem.deliveryRequestStatus}
+                                      color={poolItem.deliveryRequestStatus === 'accepted' ? 'success' : poolItem.deliveryRequestStatus === 'rejected' ? 'error' : 'warning'}
+                                    />
+                                  )}
+                                  {poolItem.deliveredAt && (
+                                    <Typography variant="caption" display="block" sx={{ mt: 0.5 }} color="success.main">
+                                      Delivered: {new Date(poolItem.deliveredAt).toLocaleDateString('en-IN')}
                                     </Typography>
                                   )}
                                 </Grid>

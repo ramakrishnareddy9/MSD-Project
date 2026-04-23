@@ -1074,22 +1074,66 @@ const BusinessDashboard = () => {
                                 <Typography variant="caption" color="primary.main">₹{item.price}/kg</Typography>
                               </Grid>
                               <Grid item xs={12} sm={4}>
-                                <Stack direction="row" spacing={1} alignItems="center">
+                                <Stack
+                                  direction="row"
+                                  spacing={1}
+                                  alignItems="center"
+                                  sx={{
+                                    flexWrap: 'wrap',
+                                    rowGap: 1,
+                                    '& > *': { minHeight: 46 }
+                                  }}
+                                >
                                   <TextField
-                                    size="small" type="number" label="Qty (kg)"
+                                    size="small"
+                                    type="number"
+                                    label="Qty"
+                                    InputLabelProps={{ shrink: true }}
                                     id={`qty-${item.id}-${item.product}`}
                                     defaultValue={Math.min(item.stock, Number(marketplaceSearch.quantity) || item.stock)}
-                                    inputProps={{ min: 1, max: item.stock }}
-                                    sx={{ width: 90 }}
+                                    inputProps={{ min: 1, max: item.stock, step: 1 }}
+                                    sx={{
+                                      width: { xs: '100%', sm: 112 },
+                                      flex: { xs: '1 1 100%', sm: '0 0 112px' },
+                                      '& .MuiInputBase-root': {
+                                        height: 46,
+                                        borderRadius: 2
+                                      },
+                                      '& .MuiInputBase-input': {
+                                        textAlign: 'center',
+                                        fontWeight: 700,
+                                        fontSize: '1rem',
+                                        px: 1
+                                      }
+                                    }}
                                   />
                                   <Button
-                                    variant="contained" startIcon={<AddShoppingCart />} sx={{ flexGrow: 1 }}
+                                    variant="contained"
+                                    startIcon={<AddShoppingCart />}
+                                    sx={{
+                                      flex: '1 1 108px',
+                                      minWidth: 104,
+                                      height: 46,
+                                      fontWeight: 700,
+                                      whiteSpace: 'nowrap'
+                                    }}
                                     onClick={() => {
                                       const qty = document.getElementById(`qty-${item.id}-${item.product}`)?.value;
                                       handleAddToCart(item, qty);
                                     }}
                                   >Add</Button>
-                                  <Button variant="outlined" color="warning" onClick={() => handleCreateNegotiation(item)}>
+                                  <Button
+                                    variant="outlined"
+                                    color="warning"
+                                    sx={{
+                                      flex: '1 1 120px',
+                                      minWidth: 110,
+                                      height: 46,
+                                      fontWeight: 700,
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                    onClick={() => handleCreateNegotiation(item)}
+                                  >
                                     Negotiate
                                   </Button>
                                 </Stack>

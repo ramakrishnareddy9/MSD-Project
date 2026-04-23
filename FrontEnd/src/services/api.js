@@ -642,14 +642,59 @@ export const communityAPI = {
     return apiCall(`/communities/mine`);
   },
 
+  getMyAdmin: async () => {
+    return apiCall(`/communities/mine/admin`);
+  },
+
   join: async (id) => {
     return apiCall(`/communities/${id}/join`, {
       method: 'POST'
     });
   },
 
+  leave: async (id) => {
+    return apiCall(`/communities/${id}/leave`, {
+      method: 'POST'
+    });
+  },
+
+  transferOwnership: async (id, newAdminId) => {
+    return apiCall(`/communities/${id}/transfer-ownership`, {
+      method: 'POST',
+      body: JSON.stringify({ newAdminId })
+    });
+  },
+
+  delete: async (id) => {
+    return apiCall(`/communities/${id}`, {
+      method: 'DELETE'
+    });
+  },
+
+  getAnnouncements: async (communityId) => {
+    return apiCall(`/communities/${communityId}/announcements`);
+  },
+
+  createAnnouncement: async (communityId, announcementData) => {
+    return apiCall(`/communities/${communityId}/announcements`, {
+      method: 'POST',
+      body: JSON.stringify(announcementData)
+    });
+  },
+
   getPools: async (id) => {
     return apiCall(`/communities/${id}/pools`);
+  },
+
+  getPoolFarmers: async (communityId, poolId) => {
+    return apiCall(`/communities/${communityId}/pools/${poolId}/farmers`);
+  },
+
+  orderPool: async (communityId, poolId, farmerId, vehicleId) => {
+    return apiCall(`/communities/${communityId}/pools/${poolId}/order`, {
+      method: 'POST',
+      body: JSON.stringify({ farmerId, vehicleId })
+    });
   },
 
   contributeToCommunity: async (communityId, contributionData) => {

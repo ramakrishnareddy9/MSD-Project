@@ -39,7 +39,9 @@ const communityPoolSchema = new mongoose.Schema({
   },
   minBulkQty: {
     type: Number,
-    required: true
+    required: true,
+    default: 50,
+    min: 50
   },
   status: {
     type: String,
@@ -50,6 +52,25 @@ const communityPoolSchema = new mongoose.Schema({
   assignedFarmer: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  assignedVehicle: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Vehicle'
+  },
+  assignedDeliveryPartner: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  deliveryRequestedAt: {
+    type: Date
+  },
+  deliveryRequestStatus: {
+    type: String,
+    enum: ['none', 'requested', 'accepted', 'rejected'],
+    default: 'none'
+  },
+  deliveredAt: {
+    type: Date
   }
 }, {
   timestamps: true

@@ -5,6 +5,7 @@ import Product from '../models/Product.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
 import PriceAgreement from '../models/PriceAgreement.model.js';
 import MarketplaceRequest from '../models/MarketplaceRequest.model.js';
+import CommunityPool from '../models/CommunityPool.model.js';
 import Commission from '../models/Commission.model.js';
 import Vehicle from '../models/Vehicle.model.js';
 import User from '../models/User.model.js';
@@ -446,7 +447,23 @@ router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'deliv
     const normalizedStatus = String(status || '').toLowerCase();
     const isCancelled = normalizedStatus === 'cancelled' || normalizedStatus === 'canceled';
 
-    await notifyUsers([order.buyerId, order.sellerId], {
+    const notificationTargets = [order.buyerId, order.sellerId];
+    if (normalizedStatus === 'delivered' && order.marketplaceRequestId) {
+      const linkedRequest = await MarketplaceRequest.findById(order.marketplaceRequestId)
+        .select('requesterType communityContext.poolId communityContext.contributorIds');
+      if (linkedRequest?.requesterType === 'community') {
+        notificationTargets.push(...(linkedRequest.communityContext?.contributorIds || []));
+
+        if (linkedRequest.communityContext?.poolId) {
+          await CommunityPool.findByIdAndUpdate(linkedRequest.communityContext.poolId, {
+            status: 'delivered',
+            deliveredAt: new Date()
+          });
+        }
+      }
+    }
+
+    await notifyUsers(notificationTargets, {
       title: isCancelled ? 'Order Cancelled' : 'Order Status Updated',
       message: isCancelled
         ? `Order ${order.orderNumber} has been cancelled.`
@@ -540,6 +557,19 @@ router.patch('/:id/request-delivery', authenticate, validateObjectId('id'), asyn
     ];
 
     await order.save();
+
+    if (order.marketplaceRequestId) {
+      const linkedRequest = await MarketplaceRequest.findById(order.marketplaceRequestId)
+        .select('requesterType communityContext.poolId');
+      if (linkedRequest?.requesterType === 'community' && linkedRequest.communityContext?.poolId) {
+        await CommunityPool.findByIdAndUpdate(linkedRequest.communityContext.poolId, {
+          assignedVehicle: vehicle._id,
+          assignedDeliveryPartner: vehicle.owner?._id || vehicle.owner,
+          deliveryRequestedAt: new Date(),
+          deliveryRequestStatus: 'requested'
+        });
+      }
+    }
 
     const requestedPartnerId = vehicle.owner?._id || vehicle.owner;
     await notifyUsers([requestedPartnerId, order.buyerId, order.sellerId], {
@@ -684,6 +714,23 @@ router.patch('/:id/delivery-response', authenticate, validateObjectId('id'), asy
     ];
 
     await order.save();
+
+    if (order.marketplaceRequestId) {
+      const linkedRequest = await MarketplaceRequest.findById(order.marketplaceRequestId)
+        .select('requesterType communityContext.poolId');
+      if (linkedRequest?.requesterType === 'community' && linkedRequest.communityContext?.poolId) {
+        const update = normalizedAction === 'accepted'
+          ? {
+              assignedVehicle: resolvedVehicle?._id || order.delivery?.requestedVehicleId,
+              assignedDeliveryPartner: order.delivery?.requestedPartnerId,
+              deliveryRequestStatus: 'accepted'
+            }
+          : {
+              deliveryRequestStatus: 'rejected'
+            };
+        await CommunityPool.findByIdAndUpdate(linkedRequest.communityContext.poolId, update);
+      }
+    }
 
     await notifyUsers([order.buyerId, order.sellerId, order.delivery?.requestedPartnerId].filter(Boolean), {
       title: normalizedAction === 'accepted' ? 'Delivery Request Accepted' : 'Delivery Request Rejected',
