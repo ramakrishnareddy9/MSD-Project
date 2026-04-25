@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { PRODUCT_STATUSES, PRODUCT_UNITS } from '../constants/productEnums.js';
 
 const productSchema = new mongoose.Schema({
   ownerId: {
@@ -18,7 +19,7 @@ const productSchema = new mongoose.Schema({
   description: String,
   unit: {
     type: String,
-    enum: ['kg', 'liter', 'piece', 'dozen', 'quintal', 'gram', 'ml'],
+    enum: PRODUCT_UNITS,
     required: true
   },
   basePrice: {
@@ -43,7 +44,7 @@ const productSchema = new mongoose.Schema({
   tags: [String],
   status: {
     type: String,
-    enum: ['active', 'out_of_stock', 'discontinued'],
+    enum: PRODUCT_STATUSES,
     default: 'active'
   },
   minOrderQuantity: {
@@ -93,7 +94,7 @@ const productSchema = new mongoose.Schema({
 });
 
 // Indexes
-productSchema.index({ ownerId: 1, status: 1 });
+productSchema.index({ ownerId: 1, status: 1, createdAt: -1 });
 productSchema.index({ categoryId: 1, status: 1 });
 productSchema.index({ status: 1, averageRating: -1 });
 productSchema.index({ tags: 1 });

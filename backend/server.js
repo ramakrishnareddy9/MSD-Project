@@ -1,8 +1,10 @@
 import express from 'express';
+import { createServer } from 'http';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import compression from 'compression';
 
@@ -40,10 +42,12 @@ import {
 // Import services
 import { startRecurringOrderScheduler } from './services/recurringOrderScheduler.js';
 import { startInventoryCleanupScheduler } from './services/inventoryCleanupScheduler.js';
+import { initializeSocketServer } from './services/socket.service.js';
 
 dotenv.config();
 
 const app = express();
+const server = createServer(app);
 const PORT = process.env.PORT || 5000;
 
 // Trust proxy (for rate limiting behind reverse proxy)
@@ -51,6 +55,7 @@ app.set('trust proxy', 1);
 
 // Security Middleware (Per BACKEND_API_PROMPT lines 536-539)
 app.use(helmet()); // Security headers
+app.use(cookieParser()); // Parse cookies for httpOnly JWT auth
 app.use(setSecurityHeaders); // Additional security headers
 // CORS configuration
 const corsOptions = {
@@ -74,6 +79,8 @@ const corsOptions = {
   optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions)); // CORS configured for security
+
+initializeSocketServer(server, corsOptions.origin);
 
 // Compression middleware
 app.use(compression());
@@ -106,7 +113,14 @@ app.use('/api/auth', authLimiter);
 app.use('/api/', apiLimiter);
 
 // Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, res, buf) => {
+    if (buf && buf.length) {
+      req.rawBody = buf.toString('utf8');
+    }
+  }
+}));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Input sanitization (must be after body parsing)
@@ -173,7 +187,7 @@ app.use(errorLogger);
 // Global error handling middleware (Per BACKEND_API_PROMPT lines 484-514)
 app.use(errorHandler);
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 API available at http://localhost:${PORT}/api`);
   console.log(`🔒 Security: Helmet enabled, Rate limiting active`);

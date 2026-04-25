@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import { buildCanonicalAddress } from '../utils/address.util.js';
 
 const addressSchema = new mongoose.Schema({
   type: {
@@ -10,8 +11,8 @@ const addressSchema = new mongoose.Schema({
   line1: { type: String, required: true },
   line2: String,
   city: { type: String, required: true },
-  state: { type: String, required: true },
-  postalCode: { type: String, required: true },
+  state: { type: String, default: 'Unknown' },
+  postalCode: { type: String, default: '000000' },
   country: { type: String, default: 'India' },
   coordinates: {
     type: { type: String, enum: ['Point'], default: 'Point' },
@@ -41,13 +42,11 @@ const userSchema = new mongoose.Schema({
   farmName: String,
   totalLand: String,
   experience: String,
-  address: String,
   businessType: String,
   owner: String,
   gst: String,
   communityName: String,
   position: String,
-  city: String,
   licenseNumber: String,
   accountType: String,
   roles: [{
@@ -58,7 +57,7 @@ const userSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ['active', 'suspended', 'pending_verification'],
-    default: 'active'
+    default: 'pending_verification'
   },
   kycStatus: {
     type: String,
@@ -73,6 +72,11 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  passwordResetTokenHash: String,
+  passwordResetExpires: Date,
+  refreshTokenHash: String,  // SHA-256 hash of the current refresh token (for revocation)
+  emailOtpHash: String,      // SHA-256 hash of the 6-digit email verification OTP
+  emailOtpExpires: Date,     // OTP expiry (10-minute TTL)
   loyaltyPoints: {
     type: Number,
     default: 0
@@ -97,6 +101,25 @@ userSchema.index({ phone: 1 }, { unique: true });
 userSchema.index({ roles: 1, status: 1 });
 userSchema.index({ 'addresses.coordinates': '2dsphere' });
 
+userSchema.pre('validate', function(next) {
+  const hasStructuredAddress = Array.isArray(this.addresses) && this.addresses.length > 0;
+
+  // Build addresses[0] from registration input stored in $locals
+  if (!hasStructuredAddress && this.$locals?._registrationAddress) {
+    const { address, city } = this.$locals._registrationAddress;
+    if (address || city) {
+      this.addresses = [buildCanonicalAddress({
+        roles: this.roles || [],
+        address,
+        city,
+        country: 'India'
+      })];
+    }
+  }
+
+  next();
+});
+
 // Hash password before saving
 userSchema.pre('save', async function(next) {
   if (!this.isModified('passwordHash')) return next();
@@ -115,10 +138,11 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.passwordHash);
 };
 
-// Remove password from JSON output
+// Remove sensitive fields from JSON output
 userSchema.methods.toJSON = function() {
   const obj = this.toObject();
   delete obj.passwordHash;
+  delete obj.refreshTokenHash;
   return obj;
 };
 

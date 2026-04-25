@@ -10,11 +10,25 @@ import Commission from '../models/Commission.model.js';
 import Vehicle from '../models/Vehicle.model.js';
 import User from '../models/User.model.js';
 import { notifyUsers } from '../utils/notification.util.js';
+import { assertTransactionVerification } from '../utils/verification.util.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
 import { validateOrder, validateObjectId } from '../middleware/validation.middleware.js';
 
 const router = express.Router();
+
+const supportsMongoTransactions = () => {
+  if (process.env.DISABLE_MONGO_TRANSACTIONS === 'true') {
+    return false;
+  }
+
+  if (mongoose.connection.readyState !== 1) {
+    return false;
+  }
+
+  const topologyType = mongoose.connection.client?.topology?.description?.type;
+  return ['ReplicaSetWithPrimary', 'Sharded', 'LoadBalanced'].includes(topologyType);
+};
 
 // Get all orders (auth required - buyers see their own, sellers see received, admin sees all)
 router.get('/', authenticate, async (req, res) => {
@@ -99,15 +113,33 @@ router.get('/:id', authenticate, validateObjectId('id'), async (req, res) => {
 router.post('/', authenticate, (req, res, next) => {
   req.body.buyerId = req.user._id;
   next();
-}, validateOrder, async (req, res) => {
+}, validateOrder, (req, res, next) => {
+  const isAdmin = req.user.roles?.includes('admin');
+  const isB2BBuyer = req.user.roles?.some((role) => ['business', 'restaurant', 'travel_agency'].includes(role));
+
+  if (req.body.type === 'b2b' && !isAdmin && !isB2BBuyer) {
+    return res.status(403).json({
+      success: false,
+      message: 'Only business, restaurant, travel_agency, or admin users can create B2B orders'
+    });
+  }
+
+  next();
+}, async (req, res) => {
   let session = null;
-  const useTransaction = false;
+  const useTransaction = supportsMongoTransactions();
   let reservationToken = null;
   const reservedLotIds = [];
+
+  if (useTransaction) {
+    session = await mongoose.startSession();
+    session.startTransaction();
+  }
   
   try {
     const { type, sellerId, orderItems, deliveryAddress, marketplaceRequestId } = req.body;
     const buyerId = req.user._id;
+
     reservationToken = new mongoose.Types.ObjectId();
     let resolvedSellerId = sellerId || null;
     let resolvedPriceAgreementId = null;
@@ -117,7 +149,12 @@ router.post('/', authenticate, (req, res, next) => {
 
     let marketplaceRequest = null;
     if (marketplaceRequestId) {
-      marketplaceRequest = await MarketplaceRequest.findById(marketplaceRequestId).populate('productId', 'name ownerId');
+      const marketplaceRequestQuery = MarketplaceRequest.findById(marketplaceRequestId).populate('productId', 'name ownerId');
+      if (useTransaction) {
+        marketplaceRequestQuery.session(session);
+      }
+
+      marketplaceRequest = await marketplaceRequestQuery;
       if (!marketplaceRequest) {
         throw new Error('Linked negotiation request not found');
       }
@@ -203,24 +240,17 @@ router.post('/', authenticate, (req, res, next) => {
         }
       }
       
-      // Reserve inventory with timeout
-      const inventoryQuery = InventoryLot.findOne({
+      // Reserve inventory atomically
+      const inventory = await InventoryLot.reserveAvailableLot({
         productId: product._id,
-        $expr: { $gte: [{ $subtract: ['$quantity', '$reservedQuantity'] }, item.quantity] }
+        orderId: reservationToken,
+        quantity: item.quantity,
+        session: useTransaction ? session : null
       });
 
-      if (useTransaction) {
-        inventoryQuery.session(session);
-      }
-
-      const inventory = await inventoryQuery;
-      
       if (!inventory) {
         throw new Error(`Insufficient inventory for ${product.name}`);
       }
-      
-      // Reserve inventory (will auto-expire in 30 minutes)
-      await inventory.reserve(reservationToken, item.quantity);
       reservedLotIds.push(inventory._id);
       
       // Build processed item
@@ -251,6 +281,11 @@ router.post('/', authenticate, (req, res, next) => {
     // Calculate commission (lower for B2B)
     const commissionRate = type === 'b2b' ? 0.05 : 0.10; // 5% for B2B, 10% for B2C
     const commissionAmount = subtotal * commissionRate;
+
+    const verificationCheck = assertTransactionVerification(req.user, total, type);
+    if (!verificationCheck.ok) {
+      throw new Error(verificationCheck.message);
+    }
     
     // Create order
     const order = new Order({
@@ -360,7 +395,7 @@ router.post('/', authenticate, (req, res, next) => {
       }
     });
   } catch (error) {
-    if (reservationToken && reservedLotIds.length > 0) {
+    if (!useTransaction && reservationToken && reservedLotIds.length > 0) {
       // Roll back temporary reservations when order creation fails mid-way.
       for (const lotId of reservedLotIds) {
         const lot = await InventoryLot.findById(lotId);
@@ -370,7 +405,7 @@ router.post('/', authenticate, (req, res, next) => {
       }
     }
 
-    if (useTransaction) {
+    if (useTransaction && session) {
       await session.abortTransaction();
     }
     res.status(500).json({
@@ -765,11 +800,7 @@ router.patch('/:id/delivery-response', authenticate, validateObjectId('id'), asy
 // Update order (admin or owner only)
 router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
   try {
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { $set: req.body },
-      { new: true, runValidators: true }
-    );
+    const order = await Order.findById(req.params.id);
 
     if (!order) {
       return res.status(404).json({
@@ -777,6 +808,95 @@ router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
         message: 'Order not found'
       });
     }
+
+    const isAdmin = req.user.roles?.includes('admin');
+    const isOwner = String(order.buyerId) === String(req.user._id);
+
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update this order'
+      });
+    }
+
+    if (!isAdmin && order.status !== 'pending') {
+      return res.status(409).json({
+        success: false,
+        message: 'Only pending orders can be updated'
+      });
+    }
+
+    const protectedFields = [
+      'buyerId',
+      'sellerId',
+      'status',
+      'orderItems',
+      'subtotal',
+      'deliveryFee',
+      'tax',
+      'total',
+      'currency',
+      'paymentTerms',
+      'priceAgreementId',
+      'marketplaceRequestId',
+      'delivery',
+      'commission',
+      'statusHistory',
+      'createdAt',
+      'updatedAt',
+      'orderNumber'
+    ];
+    const attemptedProtectedFields = protectedFields.filter((field) => req.body[field] !== undefined);
+
+    if (attemptedProtectedFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Protected order fields cannot be updated through this endpoint',
+        fields: attemptedProtectedFields
+      });
+    }
+
+    const updateData = {};
+    if (req.body.deliveryAddress !== undefined) {
+      if (!req.body.deliveryAddress || typeof req.body.deliveryAddress !== 'object') {
+        return res.status(400).json({
+          success: false,
+          message: 'deliveryAddress must be an object'
+        });
+      }
+
+      updateData.deliveryAddress = {
+        line1: req.body.deliveryAddress.line1,
+        line2: req.body.deliveryAddress.line2,
+        city: req.body.deliveryAddress.city,
+        state: req.body.deliveryAddress.state,
+        postalCode: req.body.deliveryAddress.postalCode,
+        country: req.body.deliveryAddress.country,
+        coordinates: req.body.deliveryAddress.coordinates
+      };
+    }
+
+    if (req.body.notes !== undefined) {
+      updateData.notes = req.body.notes;
+    }
+
+    if (req.body.scheduledWindowStart !== undefined) {
+      updateData.scheduledWindowStart = req.body.scheduledWindowStart;
+    }
+
+    if (req.body.scheduledWindowEnd !== undefined) {
+      updateData.scheduledWindowEnd = req.body.scheduledWindowEnd;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No editable order fields were provided'
+      });
+    }
+
+    Object.assign(order, updateData);
+    await order.save();
 
     res.json({
       success: true,

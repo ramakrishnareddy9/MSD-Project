@@ -87,6 +87,15 @@ const Login = () => {
               >
                 {loading ? <CircularProgress size={24} color="inherit" /> : 'Sign In'}
               </Button>
+
+              <Button
+                variant="text"
+                fullWidth
+                onClick={() => navigate('/reset-password')}
+                sx={{ textTransform: 'none' }}
+              >
+                Forgot your password?
+              </Button>
             </Box>
           </CardContent>
         </Card>

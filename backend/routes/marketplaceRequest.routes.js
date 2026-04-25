@@ -3,6 +3,7 @@ import MarketplaceRequest from '../models/MarketplaceRequest.model.js';
 import Product from '../models/Product.model.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
+import { escapeRegex } from '../utils/regex.util.js';
 import { getCropByName, normalizeCropName } from '../constants/cropCatalog.js';
 
 const router = express.Router();
@@ -130,7 +131,7 @@ router.get('/', authenticate, async (req, res) => {
     }
 
     if (status) query.status = status;
-    if (cropName) query.cropName = { $regex: cropName, $options: 'i' };
+    if (cropName) query.cropName = { $regex: `^${escapeRegex(cropName)}$`, $options: 'i' };
 
     const requests = await MarketplaceRequest.find(query)
       .populate('requesterId', 'name email')
@@ -245,7 +246,7 @@ router.patch('/:id/respond', authenticate, authorize('farmer', 'admin'), async (
       _id: request.productId,
       ownerId: effectiveFarmerId,
       status: 'active',
-      name: { $regex: `^${request.cropName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }
+      name: { $regex: `^${escapeRegex(request.cropName)}$`, $options: 'i' }
     });
 
     if (!farmerHasCrop) {

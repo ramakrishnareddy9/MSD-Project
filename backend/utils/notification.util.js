@@ -1,4 +1,5 @@
 import Notification from '../models/Notification.model.js';
+import { emitRealtimeNotification } from '../services/socket.service.js';
 
 const toId = (value) => String(value || '').trim();
 
@@ -7,13 +8,23 @@ export const notifyUser = async ({ userId, title, message, type = 'system', rela
   if (!normalizedUserId || !title || !message) return null;
 
   try {
-    return await Notification.create({
+    const notification = await Notification.create({
       user: normalizedUserId,
       title,
       message,
       type,
       relatedId
     });
+
+    emitRealtimeNotification([normalizedUserId], {
+      ...notification.toObject(),
+      title,
+      message,
+      type,
+      relatedId
+    });
+
+    return notification;
   } catch (error) {
     // Best-effort notifications must not break business actions.
     if (process.env.NODE_ENV === 'development') {
@@ -36,7 +47,19 @@ export const notifyUsers = async (users = [], payload = {}) => {
   }));
 
   try {
-    return await Notification.insertMany(docs, { ordered: false });
+    const notifications = await Notification.insertMany(docs, { ordered: false });
+
+    notifications.forEach((notification) => {
+      emitRealtimeNotification([notification.user], {
+        ...notification.toObject(),
+        title: notification.title,
+        message: notification.message,
+        type: notification.type,
+        relatedId: notification.relatedId
+      });
+    });
+
+    return notifications;
   } catch (error) {
     if (process.env.NODE_ENV === 'development') {
       console.error('Bulk notification create failed:', error.message);

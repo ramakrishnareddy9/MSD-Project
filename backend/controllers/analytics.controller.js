@@ -5,6 +5,18 @@ import Product from '../models/Product.model.js';
 import Commission from '../models/Commission.model.js';
 import mongoose from 'mongoose';
 
+const canAccessUserMetrics = (requestUser, targetUserId) => {
+  if (!requestUser) {
+    return false;
+  }
+
+  if (requestUser.roles?.includes('admin')) {
+    return true;
+  }
+
+  return String(requestUser._id) === String(targetUserId);
+};
+
 // @desc    Get platform dashboard metrics
 // @route   GET /api/analytics/dashboard
 // @access  Admin only
@@ -15,8 +27,11 @@ export const getDashboardMetrics = async (req, res) => {
     const totalOrders = await Order.countDocuments();
     const totalProducts = await Product.countDocuments();
     
-    // Calculate total revenue (sum of all order totals)
+    // Calculate realized revenue from completed orders only.
     const revenueData = await Order.aggregate([
+      {
+        $match: { status: 'delivered' }
+      },
       {
         $group: {
           _id: null,
@@ -119,6 +134,13 @@ export const getDashboardMetrics = async (req, res) => {
 export const getUserMetrics = async (req, res) => {
   try {
     const userId = req.params.userId;
+
+    if (!canAccessUserMetrics(req.user, userId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not authorized to access this user metrics data'
+      });
+    }
     
     const user = await User.findById(userId);
     if (!user) {
@@ -226,8 +248,20 @@ export const getRevenueMetrics = async (req, res) => {
 export const getOrderAnalytics = async (req, res) => {
   try {
     const { sellerId } = req.query;
-    
-    const query = sellerId ? { sellerId: sellerId } : {};
+
+    const isAdmin = req.user.roles?.includes('admin');
+    const effectiveSellerId = sellerId || (isAdmin ? null : req.user._id);
+
+    if (!isAdmin && sellerId && String(sellerId) !== String(req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not authorized to access another seller\'s analytics'
+      });
+    }
+
+    const query = effectiveSellerId
+      ? { sellerId: new mongoose.Types.ObjectId(effectiveSellerId) }
+      : {};
     
     const ordersByStatus = await Order.aggregate([
       { $match: query },

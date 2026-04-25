@@ -16,6 +16,7 @@ import {
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
 import { authAPI, productAPI, orderAPI, inventoryAPI, analyticsAPI, deliveryAPI, categoryAPI, marketplaceRequestAPI, userAPI, notificationAPI } from '../../services/api';
+import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 
 const defaultFarmerData = {
   _id: '',
@@ -82,6 +83,13 @@ const FarmerDashboard = () => {
     address: '',
     totalLand: '',
     experience: ''
+  });
+
+  useRealtimeNotifications({
+    enabled: !loading,
+    onNotification: () => {
+      fetchNotifications(notificationPage, notificationFilter);
+    }
   });
 
   const safeFarmerData = {

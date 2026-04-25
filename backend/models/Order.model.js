@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import crypto from 'crypto';
 
 const orderItemSchema = new mongoose.Schema({
   productId: {
@@ -184,14 +185,14 @@ const orderSchema = new mongoose.Schema({
 orderSchema.index({ orderNumber: 1 }, { unique: true });
 orderSchema.index({ buyerId: 1, status: 1, createdAt: -1 });
 orderSchema.index({ sellerId: 1, status: 1, createdAt: -1 });
+orderSchema.index({ sellerId: 1, createdAt: -1 });
 orderSchema.index({ type: 1, status: 1 });
 orderSchema.index({ scheduledWindowStart: 1 });
 
 // Generate order number before validation so required constraint passes.
 orderSchema.pre('validate', function(next) {
   if (!this.orderNumber) {
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-    this.orderNumber = `ORD${Date.now()}${randomSuffix}`;
+    this.orderNumber = 'ORD' + crypto.randomUUID().replace(/-/g, '').substring(0, 12).toUpperCase();
   }
   next();
 });

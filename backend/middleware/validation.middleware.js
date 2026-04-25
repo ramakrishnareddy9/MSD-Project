@@ -1,4 +1,5 @@
 import { body, param, query, validationResult } from 'express-validator';
+import { PRODUCT_STATUSES, PRODUCT_UNITS } from '../constants/productEnums.js';
 
 /**
  * Request Validation Middleware
@@ -92,6 +93,40 @@ export const validateLogin = [
 ];
 
 /**
+ * Forgot Password Validation
+ */
+export const validateForgotPassword = [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Valid email is required'),
+
+  handleValidationErrors
+];
+
+/**
+ * Reset Password Validation
+ */
+export const validateResetPassword = [
+  body('token')
+    .trim()
+    .notEmpty()
+    .withMessage('Reset token is required'),
+
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters')
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+    .withMessage('Password must contain at least one lowercase letter, one uppercase letter, and one number'),
+
+  body('confirmPassword')
+    .custom((value, { req }) => value === req.body.password)
+    .withMessage('Passwords do not match'),
+
+  handleValidationErrors
+];
+
+/**
  * Product Creation/Update Validation
  */
 export const validateProduct = [
@@ -119,12 +154,12 @@ export const validateProduct = [
     .withMessage('Base price must be a positive number'),
   
   body('unit')
-    .isIn(['kg', 'g', 'liter', 'ml', 'piece', 'dozen', 'bag', 'box'])
+    .isIn(PRODUCT_UNITS)
     .withMessage('Invalid unit'),
   
   body('status')
     .optional()
-    .isIn(['active', 'out_of_stock', 'discontinued', 'pending_approval'])
+    .isIn(PRODUCT_STATUSES)
     .withMessage('Invalid status'),
   
   handleValidationErrors
@@ -158,10 +193,6 @@ export const validateOrder = [
   body('orderItems.*.quantity')
     .isInt({ min: 1 })
     .withMessage('Quantity must be at least 1'),
-  
-  body('orderItems.*.unitPrice')
-    .isFloat({ min: 0 })
-    .withMessage('Unit price must be a positive number'),
   
   body('total')
     .optional()

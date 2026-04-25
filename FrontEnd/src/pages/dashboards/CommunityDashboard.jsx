@@ -17,6 +17,7 @@ import {
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
 import { authAPI, communityAPI, userAPI, notificationAPI, vehicleAPI } from '../../services/api';
+import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 
 const CommunityDashboard = () => {
   const navigate = useNavigate();
@@ -73,6 +74,18 @@ const CommunityDashboard = () => {
     position: '',
     phone: '',
     email: ''
+  });
+
+  useRealtimeNotifications({
+    enabled: !loading,
+    onNotification: (payload) => {
+      fetchNotifications(notificationPage, notificationFilter);
+
+      if (['order', 'delivery', 'system'].includes(payload?.type)) {
+        refreshCommunityPools(communityId);
+        refreshAnnouncements(communityId);
+      }
+    }
   });
   const safeCommunityData = {
     ...(communityData || {}),

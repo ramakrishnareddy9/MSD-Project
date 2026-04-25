@@ -17,38 +17,27 @@ export const AuthProvider = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Check if user is already logged in (from localStorage)
-    const savedUser = localStorage.getItem('farmkart_user');
-    if (savedUser) {
-      try {
-        const parsed = JSON.parse(savedUser);
-        setUser(parsed);
-        // Optionally verify token with backend
-        verifyToken(parsed.token);
-      } catch {
-        setUser(null);
-        localStorage.removeItem('farmkart_user');
-      }
-    }
-    setIsLoading(false);
+    // On mount, check if the user has a valid session by calling /auth/me.
+    // The httpOnly cookie is sent automatically by the browser.
+    checkSession();
   }, []);
 
-  const verifyToken = async (token) => {
+  const checkSession = async () => {
     try {
       const response = await authAPI.getCurrentUser();
-      if (response.success) {
-        const nextUser = {
-          ...(response.data.user || {}),
-          token,
+      if (response.success && response.data?.user) {
+        setUser({
+          ...response.data.user,
           role: getPrimaryRole(response.data.user)
-        };
-        setUser((prev) => ({ ...(prev || {}), ...nextUser }));
+        });
+      } else {
+        setUser(null);
       }
-    } catch (error) {
-      if (process.env.NODE_ENV === 'development' && error?.status !== 401) {
-        console.error('Token verification failed:', error);
-      }
-      logout();
+    } catch {
+      // 401 or network error — user is not logged in
+      setUser(null);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -59,12 +48,12 @@ export const AuthProvider = ({ children }) => {
       if (response.success) {
         const userData = {
           ...response.data.user,
-          token: response.data.token,
           role: getPrimaryRole(response.data.user)
         };
         
+        // Only store user profile in React state — no token, no localStorage.
+        // The httpOnly cookie was set by the server.
         setUser(userData);
-        localStorage.setItem('farmkart_user', JSON.stringify(userData));
         return { success: true, role: userData.role, user: userData };
       }
       
@@ -88,12 +77,11 @@ export const AuthProvider = ({ children }) => {
       if (response.success) {
         const newUser = {
           ...response.data.user,
-          token: response.data.token,
           role: getPrimaryRole(response.data.user)
         };
         
+        // Only store user profile in React state — no token, no localStorage.
         setUser(newUser);
-        localStorage.setItem('farmkart_user', JSON.stringify(newUser));
         return { success: true, user: newUser };
       }
       
@@ -107,22 +95,20 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      // Tell the server to clear the httpOnly cookie
+      await authAPI.logout();
+    } catch {
+      // Even if the API call fails, clear local state
+    }
     setUser(null);
-    localStorage.removeItem('farmkart_user');
   };
 
   const updateUser = (patch) => {
     setUser((prev) => {
-      const next = { ...(prev || {}), ...(patch || {}) };
-      try { 
-        localStorage.setItem('farmkart_user', JSON.stringify(next)); 
-      } catch (error) {
-        if (process.env.NODE_ENV === 'development') {
-          console.error('Failed to update user in localStorage:', error);
-        }
-      }
-      return next;
+      if (!prev) return patch;
+      return { ...prev, ...(patch || {}) };
     });
   };
 

@@ -3,7 +3,7 @@ import Product from '../models/Product.model.js';
 import User from '../models/User.model.js';
 
 const ensureFarmerProduct = async (productId) => {
-  const product = await Product.findById(productId).select('ownerId status stockQuantity');
+  const product = await Product.findById(productId).select('ownerId status stockQuantity name');
   if (!product || product.status !== 'active') {
     return { ok: false, message: 'Product not found or unavailable', product: null };
   }
@@ -16,6 +16,21 @@ const ensureFarmerProduct = async (productId) => {
   }
 
   return { ok: true, message: '', product };
+};
+
+const normalizeQty = (qty) => {
+  const parsedQty = Number(qty);
+  return Number.isFinite(parsedQty) && parsedQty > 0 ? parsedQty : 1;
+};
+
+const getCartItemQty = (cart, productId) => {
+  const item = cart?.items?.find((cartItem) => String(cartItem.product) === String(productId));
+  return Number(item?.qty || 0);
+};
+
+const canFitInStock = (product, requestedQty) => {
+  const availableQty = Number(product?.stockQuantity || 0);
+  return requestedQty <= availableQty;
 };
 
 // @desc    Get user cart
@@ -44,6 +59,7 @@ export const getCart = async (req, res) => {
 export const addItemToCart = async (req, res) => {
   try {
     const { productId, qty } = req.body;
+    const requestedQty = normalizeQty(qty);
 
     const productCheck = await ensureFarmerProduct(productId);
     if (!productCheck.ok) {
@@ -57,11 +73,20 @@ export const addItemToCart = async (req, res) => {
     }
 
     const itemIndex = cart.items.findIndex(item => item.product.toString() === productId);
+    const existingQty = getCartItemQty(cart, productId);
+    const nextQty = existingQty + requestedQty;
+
+    if (!canFitInStock(productCheck.product, nextQty)) {
+      return res.status(400).json({
+        success: false,
+        message: `Only ${Number(productCheck.product.stockQuantity || 0)} ${productCheck.product.name || 'units'} available in stock`
+      });
+    }
 
     if (itemIndex > -1) {
-      cart.items[itemIndex].qty += Number(qty) || 1;
+      cart.items[itemIndex].qty = nextQty;
     } else {
-      cart.items.push({ product: productId, qty: Number(qty) || 1 });
+      cart.items.push({ product: productId, qty: requestedQty });
     }
 
     await cart.save();
@@ -85,6 +110,7 @@ export const updateCartItem = async (req, res) => {
   try {
     const { qty } = req.body;
     const { productId } = req.params;
+    const requestedQty = normalizeQty(qty);
 
     const cart = await Cart.findOne({ user: req.user._id });
     
@@ -95,7 +121,19 @@ export const updateCartItem = async (req, res) => {
     const itemIndex = cart.items.findIndex(item => item.product.toString() === productId);
 
     if (itemIndex > -1) {
-      cart.items[itemIndex].qty = Number(qty);
+      const productCheck = await ensureFarmerProduct(productId);
+      if (!productCheck.ok) {
+        return res.status(400).json({ success: false, message: productCheck.message });
+      }
+
+      if (!canFitInStock(productCheck.product, requestedQty)) {
+        return res.status(400).json({
+          success: false,
+          message: `Only ${Number(productCheck.product.stockQuantity || 0)} ${productCheck.product.name || 'units'} available in stock`
+        });
+      }
+
+      cart.items[itemIndex].qty = requestedQty;
       if (cart.items[itemIndex].qty <= 0) {
         cart.items.splice(itemIndex, 1);
       }

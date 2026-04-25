@@ -39,6 +39,62 @@ router.get('/', authenticate, authorize('admin'), async (req, res) => {
   }
 });
 
+// Update verification state (admin only)
+router.patch('/:id/verification', authenticate, authorize('admin'), validateObjectId('id'), async (req, res) => {
+  try {
+    const { emailVerified, phoneVerified, kycStatus, status } = req.body;
+
+    const updatePayload = {};
+
+    if (typeof emailVerified === 'boolean') {
+      updatePayload.emailVerified = emailVerified;
+    }
+
+    if (typeof phoneVerified === 'boolean') {
+      updatePayload.phoneVerified = phoneVerified;
+    }
+
+    if (typeof kycStatus === 'string' && ['not_started', 'pending', 'verified', 'rejected'].includes(kycStatus)) {
+      updatePayload.kycStatus = kycStatus;
+    }
+
+    if (typeof status === 'string' && ['active', 'suspended', 'pending_verification'].includes(status)) {
+      updatePayload.status = status;
+    }
+
+    if (!Object.keys(updatePayload).length) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid verification fields provided'
+      });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { $set: updatePayload },
+      { new: true, runValidators: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Verification status updated successfully',
+      data: { user }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
 // Get user by ID (admin or self)
 router.get('/:id', authenticate, validateObjectId('id'), async (req, res) => {
   try {
@@ -87,7 +143,7 @@ router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
     }
 
     const allowedSelfFields = [
-      'name', 'email', 'phone', 'address', 'city',
+      'name', 'email', 'phone', 'addresses',
       'farmName', 'totalLand', 'experience',
       'businessType', 'owner', 'gst',
       'communityName', 'position',

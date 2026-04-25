@@ -22,7 +22,7 @@ const paymentSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'processing', 'success', 'failed', 'refunded', 'cancelled'],
+    enum: ['pending', 'processing', 'success', 'failed', 'partial_refunded', 'refunded', 'cancelled'],
     default: 'pending'
   },
   gateway: {
@@ -37,13 +37,39 @@ const paymentSchema = new mongoose.Schema({
   gatewayPaymentId: String,
   paidAt: Date,
   failedAt: Date,
+  refundedAmount: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
+  remainingAmount: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
   refundedAt: Date,
   refundAmount: {
     type: Number,
     min: 0
   },
   refundReason: String,
+  refundHistory: [{
+    amount: {
+      type: Number,
+      min: 0,
+      required: true
+    },
+    reason: String,
+    refundedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   failureReason: String,
+  idempotencyKey: {
+    type: String,
+    index: true
+  },
   metadata: {
     cardLast4: String,
     cardBrand: String,
@@ -66,6 +92,7 @@ const paymentSchema = new mongoose.Schema({
 // Indexes
 paymentSchema.index({ orderId: 1 });
 paymentSchema.index({ transactionId: 1 }, { unique: true, sparse: true });
+paymentSchema.index({ idempotencyKey: 1 }, { unique: true, sparse: true });
 paymentSchema.index({ status: 1, createdAt: -1 });
 paymentSchema.index({ method: 1, status: 1 });
 
@@ -80,6 +107,8 @@ paymentSchema.methods.markSuccess = function(transactionData) {
   this.paidAt = new Date();
   this.transactionId = transactionData.transactionId;
   this.gatewayPaymentId = transactionData.paymentId;
+  this.refundedAmount = 0;
+  this.remainingAmount = this.amount;
   if (transactionData.metadata) {
     this.metadata = { ...this.metadata, ...transactionData.metadata };
   }
@@ -96,13 +125,52 @@ paymentSchema.methods.markFailed = function(reason) {
 
 // Method to process refund
 paymentSchema.methods.processRefund = function(amount, reason) {
-  if (this.status !== 'success') {
-    throw new Error('Can only refund successful payments');
+  if (!['success', 'partial_refunded'].includes(this.status)) {
+    throw new Error('Can only refund successful or partially refunded payments');
   }
-  this.status = 'refunded';
+
+  const requestedAmount = amount == null || amount === '' ? null : Number(amount);
+  const currentRefundedAmount = Number(this.refundedAmount || 0);
+  const currentRemainingAmount = Number(
+    this.remainingAmount != null
+      ? this.remainingAmount
+      : Math.max(Number(this.amount || 0) - currentRefundedAmount, 0)
+  );
+
+  if (currentRemainingAmount <= 0 || this.status === 'refunded') {
+    throw new Error('Payment has already been fully refunded');
+  }
+
+  const refundAmount = requestedAmount == null ? currentRemainingAmount : requestedAmount;
+
+  if (!Number.isFinite(refundAmount) || refundAmount <= 0) {
+    throw new Error('Refund amount must be a positive number');
+  }
+
+  if (refundAmount > currentRemainingAmount) {
+    throw new Error(`Refund amount cannot exceed remaining refundable balance of ${currentRemainingAmount}`);
+  }
+
+  const nextRefundedAmount = currentRefundedAmount + refundAmount;
+  const nextRemainingAmount = Math.max(Number(this.amount || 0) - nextRefundedAmount, 0);
+
+  this.status = nextRemainingAmount === 0 ? 'refunded' : 'partial_refunded';
   this.refundedAt = new Date();
-  this.refundAmount = amount || this.amount;
+  this.refundAmount = refundAmount;
+  this.refundedAmount = nextRefundedAmount;
+  this.remainingAmount = nextRemainingAmount;
   this.refundReason = reason;
+
+  if (!Array.isArray(this.refundHistory)) {
+    this.refundHistory = [];
+  }
+
+  this.refundHistory.push({
+    amount: refundAmount,
+    reason,
+    refundedAt: this.refundedAt
+  });
+
   return this.save();
 };
 

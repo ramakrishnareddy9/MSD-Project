@@ -60,6 +60,7 @@ import {
 import ProfileDropdown from '../../Components/ProfileDropdown';
 import { authAPI, notificationAPI, orderAPI, userAPI, vehicleAPI } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 
 const VEHICLE_TYPES_LARGE = ['Truck', 'Van', 'Car', 'Other'];
 const VEHICLE_TYPES_SMALL = ['Bike', 'Scooter', 'Bicycle', 'Van', 'Other'];
@@ -148,6 +149,17 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
     licenseNumber: '',
     accountType: '',
     address: ''
+  });
+
+  useRealtimeNotifications({
+    enabled: !loading,
+    onNotification: (payload) => {
+      fetchNotifications(notificationPage, notificationFilter);
+
+      if (['order', 'delivery'].includes(payload?.type)) {
+        refreshAll();
+      }
+    }
   });
 
   const [assignDialog, setAssignDialog] = useState({

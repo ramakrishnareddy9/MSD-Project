@@ -3,8 +3,7 @@ import User from '../models/User.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
 import Location from '../models/Location.model.js';
 import { CROP_CATALOG, getCropByName } from '../constants/cropCatalog.js';
-
-const DEFAULT_COORDINATES = [78.4867, 17.3850];
+import { getCoordinatesForCity, isCanonicalAddressCoordinate } from '../utils/address.util.js';
 
 const resolveAddress = (owner) => {
   const primaryAddress = owner?.addresses?.[0];
@@ -15,17 +14,19 @@ const resolveAddress = (owner) => {
       city: primaryAddress.city,
       state: primaryAddress.state,
       postalCode: primaryAddress.postalCode,
-      country: primaryAddress.country || 'India'
+      country: primaryAddress.country || 'India',
+      coordinates: primaryAddress.coordinates?.coordinates || null
     };
   }
 
   return {
-    line1: owner?.address || 'Auto-generated farm location',
+    line1: 'Auto-generated farm location',
     line2: '',
-    city: owner?.city || 'Hyderabad',
+    city: 'Hyderabad',
     state: 'TS',
     postalCode: '500001',
-    country: 'India'
+    country: 'India',
+    coordinates: getCoordinatesForCity('Hyderabad')
   };
 };
 
@@ -35,7 +36,7 @@ const ensureOwnerLocation = async (ownerId) => {
     return location;
   }
 
-  const owner = await User.findById(ownerId).select('name address city addresses');
+  const owner = await User.findById(ownerId).select('name addresses');
   const address = resolveAddress(owner);
 
   location = await Location.create({
@@ -45,7 +46,9 @@ const ensureOwnerLocation = async (ownerId) => {
     address,
     coordinates: {
       type: 'Point',
-      coordinates: DEFAULT_COORDINATES
+      coordinates: isCanonicalAddressCoordinate(address.coordinates)
+        ? address.coordinates
+        : getCoordinatesForCity(address.city)
     },
     status: 'active'
   });
@@ -134,10 +137,7 @@ export const getAllProducts = async (req, res) => {
     }
     if (tags) query.tags = { $in: tags.split(',') };
     if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
-      ];
+      query.$text = { $search: String(search).trim().slice(0, 100) };
     }
 
     const products = await Product.find(query)

@@ -1,24 +1,42 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.model.js';
 
+const ACCESS_COOKIE_NAME = 'farmkart_token';
+
+/**
+ * Extract the short-lived access token from the request.
+ * Priority: httpOnly cookie > Authorization header.
+ * This lets the browser handle auth automatically via cookies while
+ * keeping backward compatibility with "Bearer <token>" for non-browser clients.
+ */
+const extractAccessToken = (req) => {
+  // 1. Try httpOnly cookie first (set by auth.controller.js)
+  if (req.cookies && req.cookies[ACCESS_COOKIE_NAME]) {
+    return req.cookies[ACCESS_COOKIE_NAME];
+  }
+
+  // 2. Fall back to Authorization header (for Postman / external clients)
+  const authHeader = req.headers.authorization || '';
+  const parts = authHeader.split(' ').filter(Boolean);
+
+  if (parts.length === 2 && parts[0].toLowerCase() === 'bearer') {
+    return parts[1];
+  } else if (parts.length === 1 && parts[0]) {
+    return parts[0];
+  }
+
+  return null;
+};
+
 /**
  * Authentication Middleware
- * Verifies JWT token and attaches user to request object
- * Per BACKEND_API_PROMPT.md lines 342-355
+ * Verifies the short-lived access token and attaches user to request object.
+ * When the access token has expired the frontend is expected to silently call
+ * POST /auth/refresh (which uses the refresh cookie) to obtain a new one.
  */
 export const authenticate = async (req, res, next) => {
   try {
-    // Extract token from Authorization header.
-    // Accept both "Bearer <token>" and raw token to tolerate client differences.
-    const authHeader = req.headers.authorization || '';
-    const parts = authHeader.split(' ').filter(Boolean);
-    let token = null;
-
-    if (parts.length === 2 && parts[0].toLowerCase() === 'bearer') {
-      token = parts[1];
-    } else if (parts.length === 1 && parts[0]) {
-      token = parts[0];
-    }
+    const token = extractAccessToken(req);
     
     if (!token) {
       return res.status(401).json({
@@ -30,6 +48,15 @@ export const authenticate = async (req, res, next) => {
 
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Ensure this is an access token, not a refresh token
+    if (decoded.type && decoded.type !== 'access') {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid token type',
+        message: 'Invalid token type'
+      });
+    }
     
     // Find user and exclude password
     const user = await User.findById(decoded.userId).select('-passwordHash');
@@ -86,22 +113,16 @@ export const authenticate = async (req, res, next) => {
  */
 export const optionalAuth = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization || '';
-    const parts = authHeader.split(' ').filter(Boolean);
-    let token = null;
-
-    if (parts.length === 2 && parts[0].toLowerCase() === 'bearer') {
-      token = parts[1];
-    } else if (parts.length === 1 && parts[0]) {
-      token = parts[0];
-    }
+    const token = extractAccessToken(req);
     
     if (token) {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded.userId).select('-passwordHash');
-      
-      if (user && user.status === 'active') {
-        req.user = user;
+      if (!decoded.type || decoded.type === 'access') {
+        const user = await User.findById(decoded.userId).select('-passwordHash');
+        
+        if (user && user.status === 'active') {
+          req.user = user;
+        }
       }
     }
     

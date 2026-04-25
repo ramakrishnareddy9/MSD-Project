@@ -68,6 +68,9 @@ function FarmKartLanding() {
                 </>
               ) : (
                 <>
+                  <button className="px-5 py-2.5 bg-white text-green-700 font-semibold rounded-lg border border-green-200 hover:bg-green-50 transition-all duration-200" onClick={() => navigate('/reset-password')}>
+                    Forgot password?
+                  </button>
                   <button className="px-6 py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 transition-all duration-200" onClick={() => navigate('/login')}>
                     Log in
                   </button>
@@ -96,6 +99,9 @@ function FarmKartLanding() {
               <div className="flex flex-wrap gap-4">
                 <button className="px-8 py-4 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transform hover:scale-105 transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2" onClick={handleGetStarted}>
                   Get Started <FaArrowRight />
+                </button>
+                <button className="px-8 py-4 bg-white text-green-700 font-semibold rounded-lg border-2 border-green-600 hover:bg-green-50 transition-all duration-200" onClick={() => navigate('/reset-password')}>
+                  Forgot password?
                 </button>
                 <button className="px-8 py-4 bg-white text-green-600 font-semibold rounded-lg border-2 border-green-600 hover:bg-green-50 transition-all duration-200 flex items-center gap-2" onClick={() => window.open('https://www.youtube.com/watch?v=dQw4w9WgXcQ', '_blank')}>
                   <FaPlay /> Watch Demo

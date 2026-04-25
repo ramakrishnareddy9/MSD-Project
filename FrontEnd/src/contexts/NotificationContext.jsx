@@ -1,5 +1,7 @@
-import { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { Snackbar, Alert } from '@mui/material';
+import { useAuth } from './AuthContext';
+import { connectSocket, disconnectSocket, SOCKET_EVENTS } from '../services/socket';
 
 const NotificationContext = createContext();
 
@@ -12,6 +14,7 @@ export const useNotification = () => {
 };
 
 export const NotificationProvider = ({ children }) => {
+  const { user, isAuthenticated, isLoading } = useAuth();
   const [notification, setNotification] = useState({
     open: false,
     message: '',
@@ -27,6 +30,42 @@ export const NotificationProvider = ({ children }) => {
       duration
     });
   }, []);
+
+  useEffect(() => {
+    if (isLoading || !isAuthenticated) {
+      disconnectSocket();
+      return undefined;
+    }
+
+    const socket = connectSocket();
+
+    const handleRealtimeNotification = (payload = {}) => {
+      const severityMap = {
+        success: 'success',
+        info: 'info',
+        warning: 'warning',
+        alert: 'warning',
+        error: 'error',
+        order: 'info',
+        delivery: 'info',
+        message: 'info',
+        system: 'info',
+        community: 'info'
+      };
+
+      const title = payload.title ? `${payload.title}: ` : '';
+      showNotification(`${title}${payload.message || 'You have a new notification'}`, severityMap[payload.type] || 'info');
+    };
+
+    socket.on(SOCKET_EVENTS.NOTIFICATION_NEW, handleRealtimeNotification);
+
+    return () => {
+      socket.off(SOCKET_EVENTS.NOTIFICATION_NEW, handleRealtimeNotification);
+      if (!isAuthenticated) {
+        disconnectSocket();
+      }
+    };
+  }, [isAuthenticated, isLoading, showNotification]);
 
   const showSuccess = useCallback((message) => {
     showNotification(message, 'success');
@@ -54,7 +93,8 @@ export const NotificationProvider = ({ children }) => {
     showError,
     showWarning,
     showInfo,
-    hideNotification
+    hideNotification,
+    currentUserId: user?._id || null
   };
 
   return (

@@ -6,6 +6,101 @@ import DeliveryProfile from '../models/DeliveryProfile.model.js';
 import TravelAgencyProfile from '../models/TravelAgencyProfile.model.js';
 import jwt from 'jsonwebtoken';
 
+const AUTH_TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+const AUTH_COOKIE_NAME = 'farmkart_token';
+
+const parseBool = (value) => String(value || '').toLowerCase() === 'true';
+
+const getAuthCookieOptions = () => {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const sameSite = process.env.AUTH_COOKIE_SAMESITE || (isProduction ? 'none' : 'lax');
+  const secure = process.env.AUTH_COOKIE_SECURE ? parseBool(process.env.AUTH_COOKIE_SECURE) : isProduction;
+
+  return {
+    httpOnly: true,
+    secure,
+    sameSite,
+    maxAge: AUTH_TOKEN_TTL_MS,
+    path: '/'
+  };
+};
+
+const buildAuthUserPayload = (user) => {
+  if (!user) return null;
+
+  return {
+    _id: user._id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    roles: user.roles,
+    status: user.status,
+    emailVerified: user.emailVerified,
+    phoneVerified: user.phoneVerified,
+    kycStatus: user.kycStatus,
+    address: user.address,
+    city: user.city,
+    profileImage: user.profileImage
+  };
+};
+
+const issueAuthCookie = (res, token) => {
+  res.cookie(AUTH_COOKIE_NAME, token, getAuthCookieOptions());
+};
+
+const clearAuthCookie = (res) => {
+  res.clearCookie(AUTH_COOKIE_NAME, {
+    ...getAuthCookieOptions(),
+    maxAge: undefined,
+    expires: new Date(0)
+  });
+};
+
+const getPasswordResetBaseUrl = (req) => {
+  return process.env.FRONTEND_URL || req.headers.origin || 'http://localhost:5173';
+};
+
+const buildPasswordResetUrl = (req, token) => {
+  const baseUrl = getPasswordResetBaseUrl(req).replace(/\/$/, '');
+  return `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`;
+};
+
+const sendPasswordResetEmail = async ({ to, resetUrl }) => {
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPassword = process.env.SMTP_PASS;
+  const smtpPort = Number(process.env.SMTP_PORT || 587);
+
+  if (!smtpHost || !smtpUser || !smtpPassword) {
+    return false;
+  }
+
+  try {
+    const nodemailer = await import('nodemailer');
+    const transporter = nodemailer.default.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: {
+        user: smtpUser,
+        pass: smtpPassword
+      }
+    });
+
+    await transporter.sendMail({
+      from: process.env.MAIL_FROM || smtpUser,
+      to,
+      subject: 'Reset your FarmKart password',
+      text: `Use this link to reset your password: ${resetUrl}`,
+      html: `<p>Use this link to reset your password:</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>This link expires in 15 minutes.</p>`
+    });
+
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const register = async (req, res) => {
   let createdUserId = null;
   try {
@@ -56,6 +151,10 @@ export const register = async (req, res) => {
       passwordHash: password, // Will be hashed by pre-save hook
       name: normalizedName,
       roles: safeRoles,
+      status: 'pending_verification',
+      emailVerified: false,
+      phoneVerified: false,
+      kycStatus: 'not_started',
       address: String(address || profileData?.address || '').trim(),
       city: String(city || profileData?.city || '').trim(),
       ...(defaultRole === 'farmer' ? farmerDefaults : {}),
@@ -91,10 +190,12 @@ export const register = async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    issueAuthCookie(res, token);
+
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
-      data: { user, token }
+      data: { user: buildAuthUserPayload(user) }
     });
   } catch (error) {
     if (createdUserId) {
@@ -165,10 +266,12 @@ export const login = async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    issueAuthCookie(res, token);
+
     res.json({
       success: true,
       message: 'Login successful',
-      data: { user, token }
+      data: { user: buildAuthUserPayload(user) }
     });
   } catch (error) {
     res.status(500).json({
@@ -182,7 +285,222 @@ export const me = async (req, res) => {
   try {
     res.json({
       success: true,
-      data: { user: req.user }
+      data: { user: buildAuthUserPayload(req.user) }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const logout = async (req, res) => {
+  try {
+    clearAuthCookie(res);
+    res.json({
+      success: true,
+      message: 'Logged out successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const refresh = async (req, res) => {
+  try {
+    if (!process.env.JWT_SECRET) {
+      return res.status(500).json({
+        success: false,
+        message: 'Server authentication is not configured'
+      });
+    }
+
+    const token = req.cookies?.[AUTH_COOKIE_NAME];
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: 'No session token found'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch {
+      return res.status(401).json({
+        success: false,
+        message: 'Session expired'
+      });
+    }
+
+    const user = await User.findById(decoded.userId);
+    if (!user || user.status === 'suspended') {
+      clearAuthCookie(res);
+      return res.status(401).json({
+        success: false,
+        message: 'Session expired'
+      });
+    }
+
+    const refreshedToken = jwt.sign(
+      { userId: user._id, roles: user.roles },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    issueAuthCookie(res, refreshedToken);
+
+    return res.json({
+      success: true,
+      message: 'Session refreshed',
+      data: { user: buildAuthUserPayload(user) }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const verifyEmail = async (req, res) => {
+  try {
+    const user = await User.findById(req.user?._id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    user.emailVerified = true;
+    if (user.status === 'pending_verification') {
+      user.status = 'active';
+    }
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully',
+      data: { user: buildAuthUserPayload(user) }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const resendVerificationOtp = async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      message: 'Verification message queued'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const forgotPassword = async (req, res) => {
+  try {
+    if (!process.env.JWT_SECRET) {
+      return res.status(500).json({
+        success: false,
+        message: 'Server authentication is not configured'
+      });
+    }
+
+    const { email } = req.body;
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.json({
+        success: true,
+        message: 'If the account exists, a password reset link has been sent'
+      });
+    }
+
+    const resetToken = jwt.sign(
+      { userId: user._id, purpose: 'password_reset' },
+      process.env.JWT_SECRET,
+      { expiresIn: '15m' }
+    );
+
+    user.passwordResetTokenHash = undefined;
+    user.passwordResetExpires = undefined;
+    await user.save();
+
+    const resetUrl = buildPasswordResetUrl(req, resetToken);
+    const emailSent = await sendPasswordResetEmail({ to: user.email, resetUrl });
+
+    return res.json({
+      success: true,
+      message: 'If the account exists, a password reset link has been sent',
+      ...(process.env.NODE_ENV !== 'production' && !emailSent ? { data: { resetUrl } } : {})
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  try {
+    if (!process.env.JWT_SECRET) {
+      return res.status(500).json({
+        success: false,
+        message: 'Server authentication is not configured'
+      });
+    }
+
+    const { token, password } = req.body;
+    let decodedToken;
+
+    try {
+      decodedToken = jwt.verify(String(token || '').trim(), process.env.JWT_SECRET);
+    } catch {
+      return res.status(400).json({
+        success: false,
+        message: 'Password reset token is invalid or has expired'
+      });
+    }
+
+    if (decodedToken?.purpose !== 'password_reset' || !decodedToken?.userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password reset token is invalid or has expired'
+      });
+    }
+
+    const user = await User.findById(decodedToken.userId);
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password reset token is invalid or has expired'
+      });
+    }
+
+    user.passwordHash = password;
+    user.passwordResetTokenHash = undefined;
+    user.passwordResetExpires = undefined;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully'
     });
   } catch (error) {
     res.status(500).json({

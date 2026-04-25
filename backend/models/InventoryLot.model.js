@@ -76,28 +76,43 @@ inventoryLotSchema.virtual('availableQuantity').get(function() {
 });
 
 // Methods
-inventoryLotSchema.methods.reserve = async function(orderId, quantity) {
-  if (this.availableQuantity < quantity) {
-    throw new Error('Insufficient inventory available');
-  }
-  
-  // Clean up expired reservations first
-  await this.cleanupExpiredReservations();
-  
-  // Add new reservation
-  this.reservations.push({
-    orderId,
-    quantity,
-    reservedAt: new Date(),
-    expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
-    status: 'active'
-  });
-  
-  this.reservedQuantity += quantity;
-  return this.save();
+inventoryLotSchema.statics.reserveAvailableLot = async function({ productId, orderId, quantity, session = null }) {
+  return this.findOneAndUpdate(
+    {
+      productId,
+      $expr: { $gte: [{ $subtract: ['$quantity', '$reservedQuantity'] }, quantity] }
+    },
+    {
+      $inc: { reservedQuantity: quantity },
+      $push: {
+        reservations: {
+          orderId,
+          quantity,
+          reservedAt: new Date(),
+          expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+          status: 'active'
+        }
+      }
+    },
+    {
+      new: true,
+      session,
+      sort: { createdAt: 1 },
+      runValidators: true
+    }
+  );
 };
 
-inventoryLotSchema.methods.confirmReservation = async function(orderId) {
+inventoryLotSchema.methods.reserve = async function(orderId, quantity, options = {}) {
+  return this.constructor.reserveAvailableLot({
+    productId: this.productId,
+    orderId,
+    quantity,
+    session: options?.session || null
+  });
+};
+
+inventoryLotSchema.methods.confirmReservation = async function(orderId, options = {}) {
   const reservation = this.reservations.find(
     r => r.orderId.toString() === orderId.toString() && r.status === 'active'
   );
@@ -107,10 +122,10 @@ inventoryLotSchema.methods.confirmReservation = async function(orderId) {
   }
   
   reservation.status = 'confirmed';
-  return this.save();
+  return this.save(options?.session ? { session: options.session } : undefined);
 };
 
-inventoryLotSchema.methods.cancelReservation = async function(orderId) {
+inventoryLotSchema.methods.cancelReservation = async function(orderId, options = {}) {
   const reservation = this.reservations.find(
     r => r.orderId.toString() === orderId.toString() && r.status === 'active'
   );
@@ -118,11 +133,11 @@ inventoryLotSchema.methods.cancelReservation = async function(orderId) {
   if (reservation) {
     reservation.status = 'cancelled';
     this.reservedQuantity -= reservation.quantity;
-    return this.save();
+    return this.save(options?.session ? { session: options.session } : undefined);
   }
 };
 
-inventoryLotSchema.methods.cleanupExpiredReservations = async function() {
+inventoryLotSchema.methods.cleanupExpiredReservations = async function(options = {}) {
   const now = new Date();
   let freedQuantity = 0;
   
@@ -135,7 +150,7 @@ inventoryLotSchema.methods.cleanupExpiredReservations = async function() {
   
   if (freedQuantity > 0) {
     this.reservedQuantity -= freedQuantity;
-    return this.save();
+    return this.save(options?.session ? { session: options.session } : undefined);
   }
 };
 

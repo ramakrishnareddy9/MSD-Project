@@ -1,13 +1,74 @@
 import express from 'express';
+import crypto from 'crypto';
 import Payment from '../models/Payment.model.js';
 import Order from '../models/Order.model.js';
+import Commission from '../models/Commission.model.js';
 import MarketplaceRequest from '../models/MarketplaceRequest.model.js';
 import { notifyUsers } from '../utils/notification.util.js';
+import { assertTransactionVerification } from '../utils/verification.util.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
 import { validateObjectId } from '../middleware/validation.middleware.js';
 
 const router = express.Router();
+
+const verifyRazorpaySignature = (payload, signature) => {
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+
+  if (!secret) {
+    throw new Error('Razorpay webhook secret is not configured');
+  }
+
+  if (!payload || !signature) {
+    return false;
+  }
+
+  const expectedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(payload)
+    .digest('hex');
+
+  const expectedBuffer = Buffer.from(expectedSignature);
+  const providedBuffer = Buffer.from(String(signature));
+
+  if (expectedBuffer.length !== providedBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+};
+
+const finalizeSuccessfulPayment = async ({ payment, transactionId, paymentId, metadata, updatedBy }) => {
+  await payment.markSuccess({ transactionId, paymentId, metadata });
+
+  const updatedOrder = await Order.findByIdAndUpdate(payment.orderId, {
+    status: 'confirmed',
+    $push: {
+      statusHistory: {
+        status: 'confirmed',
+        timestamp: new Date(),
+        updatedBy,
+        notes: 'Payment received'
+      }
+    }
+  }, { new: true });
+
+  const commission = await Commission.findOne({ orderId: payment.orderId });
+  if (commission && commission.status === 'pending') {
+    await commission.markCollected();
+  }
+
+  if (updatedOrder) {
+    await notifyUsers([updatedOrder.buyerId, updatedOrder.sellerId], {
+      title: 'Payment Successful',
+      message: `Payment received for order ${updatedOrder.orderNumber}. Order is now confirmed.`,
+      type: 'payment',
+      relatedId: updatedOrder._id
+    });
+  }
+
+  return updatedOrder;
+};
 
 // Get all payments (admin only, or user's own payments)
 router.get('/', authenticate, async (req, res) => {
@@ -151,9 +212,26 @@ router.get('/:id', authenticate, validateObjectId('id'), async (req, res) => {
 });
 
 // Create payment (authenticated users)
+// Expects an `Idempotency-Key` header (client-generated UUID) to prevent
+// duplicate charge attempts caused by network retries or double-clicks.
 router.post('/', authenticate, async (req, res) => {
   try {
     const { orderId, amount, method, gateway } = req.body;
+    const idempotencyKey = (req.headers['idempotency-key'] || '').trim() || null;
+
+    // ── Idempotency check ──────────────────────────────────────────────
+    // If the client re-sends the same key, return the existing payment
+    // instead of creating a duplicate.
+    if (idempotencyKey) {
+      const existingByKey = await Payment.findOne({ idempotencyKey });
+      if (existingByKey) {
+        return res.status(200).json({
+          success: true,
+          message: 'Payment already created (idempotent)',
+          data: { payment: existingByKey }
+        });
+      }
+    }
 
     // Verify order exists and user is the buyer
     const order = await Order.findById(orderId);
@@ -193,7 +271,15 @@ router.post('/', authenticate, async (req, res) => {
       }
     }
 
-    // Check if payment already exists for this order
+    const verificationCheck = assertTransactionVerification(req.user, order.total, order.type);
+    if (!verificationCheck.ok) {
+      return res.status(403).json({
+        success: false,
+        message: verificationCheck.message
+      });
+    }
+
+    // Check if a non-failed payment already exists for this order
     const existingPayment = await Payment.findOne({ orderId, status: { $in: ['success', 'processing'] } });
     if (existingPayment) {
       return res.status(400).json({
@@ -207,10 +293,29 @@ router.post('/', authenticate, async (req, res) => {
       amount: amount || order.total,
       method,
       gateway,
-      currency: order.currency || 'INR'
+      currency: order.currency || 'INR',
+      ...(idempotencyKey ? { idempotencyKey } : {})
     });
 
-    await payment.save();
+    try {
+      await payment.save();
+    } catch (saveErr) {
+      // ── Race-condition safety net ─────────────────────────────────────
+      // If two identical requests slip past the findOne check above,
+      // the unique index on idempotencyKey will reject the second insert.
+      // Return the first record instead of an error.
+      if (saveErr?.code === 11000 && idempotencyKey) {
+        const racedPayment = await Payment.findOne({ idempotencyKey });
+        if (racedPayment) {
+          return res.status(200).json({
+            success: true,
+            message: 'Payment already created (idempotent)',
+            data: { payment: racedPayment }
+          });
+        }
+      }
+      throw saveErr;
+    }
 
     await notifyUsers([order.buyerId, order.sellerId], {
       title: 'Payment Initiated',
@@ -232,8 +337,8 @@ router.post('/', authenticate, async (req, res) => {
   }
 });
 
-// Mark payment as success (admin or payment gateway callback)
-router.patch('/:id/success', authenticate, validateObjectId('id'), async (req, res) => {
+// Mark payment as success (admin only)
+router.patch('/:id/success', authenticate, authorize('admin'), validateObjectId('id'), async (req, res) => {
   try {
     const payment = await Payment.findById(req.params.id);
     
@@ -246,33 +351,13 @@ router.patch('/:id/success', authenticate, validateObjectId('id'), async (req, r
 
     const { transactionId, paymentId, metadata } = req.body;
 
-    await payment.markSuccess({
+    const updatedOrder = await finalizeSuccessfulPayment({
+      payment,
       transactionId,
       paymentId,
-      metadata
+      metadata,
+      updatedBy: req.user._id
     });
-
-    // Update order status to confirmed
-    const updatedOrder = await Order.findByIdAndUpdate(payment.orderId, {
-      status: 'confirmed',
-      $push: {
-        statusHistory: {
-          status: 'confirmed',
-          timestamp: new Date(),
-          updatedBy: req.user._id,
-          notes: 'Payment received'
-        }
-      }
-    }, { new: true });
-
-    if (updatedOrder) {
-      await notifyUsers([updatedOrder.buyerId, updatedOrder.sellerId], {
-        title: 'Payment Successful',
-        message: `Payment received for order ${updatedOrder.orderNumber}. Order is now confirmed.`,
-        type: 'payment',
-        relatedId: updatedOrder._id
-      });
-    }
 
     res.json({
       success: true,
@@ -281,6 +366,72 @@ router.patch('/:id/success', authenticate, validateObjectId('id'), async (req, r
     });
   } catch (error) {
     res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// Razorpay webhook - verified gateway callback only
+router.post('/webhook/razorpay', async (req, res) => {
+  try {
+    const signature = req.headers['x-razorpay-signature'];
+    const rawBody = req.rawBody || '';
+
+    if (!verifyRazorpaySignature(rawBody, signature)) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid Razorpay signature'
+      });
+    }
+
+    const event = req.body;
+    const paymentEntity = event?.payload?.payment?.entity;
+
+    if (!paymentEntity?.notes?.paymentId && !paymentEntity?.order_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid webhook payload'
+      });
+    }
+
+    const payment = await Payment.findOne({
+      $or: [
+        { _id: paymentEntity.notes?.paymentId },
+        { gatewayOrderId: paymentEntity.order_id },
+        { transactionId: paymentEntity.id }
+      ]
+    });
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payment not found'
+      });
+    }
+
+    if (payment.status === 'success') {
+      return res.json({ success: true, message: 'Payment already processed' });
+    }
+
+    await finalizeSuccessfulPayment({
+      payment,
+      transactionId: paymentEntity.id,
+      paymentId: paymentEntity.id,
+      metadata: {
+        gateway: 'razorpay',
+        event: event?.event,
+        gatewayOrderId: paymentEntity.order_id
+      },
+      updatedBy: payment.orderId
+    });
+
+    return res.json({
+      success: true,
+      message: 'Payment webhook processed successfully'
+    });
+  } catch (error) {
+    return res.status(500).json({
       success: false,
       message: error.message
     });
@@ -354,11 +505,13 @@ router.post('/:id/refund', authenticate, authorize('admin'), validateObjectId('i
 
     res.json({
       success: true,
-      message: 'Refund processed successfully',
+      message: payment.status === 'refunded' ? 'Refund processed successfully' : 'Partial refund processed successfully',
       data: { payment }
     });
   } catch (error) {
-    res.status(500).json({
+    const statusCode = /refund|balance|successful or partially refunded/i.test(error.message) ? 400 : 500;
+
+    res.status(statusCode).json({
       success: false,
       message: error.message
     });

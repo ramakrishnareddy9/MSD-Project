@@ -30,6 +30,7 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { getDashboardPath } from '../utils/roleRouting';
+import { authAPI } from '../services/api';
 
 const AuthPage = () => {
   const location = useLocation();
@@ -41,6 +42,7 @@ const AuthPage = () => {
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   
   // Login Form State
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
@@ -132,6 +134,7 @@ const AuthPage = () => {
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     setLoading(true);
     
     try {
@@ -154,6 +157,7 @@ const AuthPage = () => {
   const handleRegister = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
 
     if (registerForm.password.length < 8) {
       setError('Password must be at least 8 characters');
@@ -191,16 +195,28 @@ const AuthPage = () => {
     }
   };
 
-  const handleForgetPassword = (e) => {
+  const handleForgetPassword = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setError('');
-    
-    setTimeout(() => {
+    setSuccess('');
+    setLoading(true);
+
+    try {
+      const response = await authAPI.forgotPassword(forgetForm.email.trim());
+
+      if (response.success) {
+        setSuccess(response.message || 'Password reset link sent to your email');
+        setForgetForm({ email: '' });
+        setActiveTab('Login');
+        return;
+      }
+
+      setError(response.message || 'Unable to send password reset link');
+    } catch (err) {
+      setError(err.message || 'Unable to send password reset link');
+    } finally {
       setLoading(false);
-      alert('Password reset link sent to your email!');
-      setActiveTab('Login');
-    }, 1500);
+    }
   };
 
   return (
@@ -286,6 +302,12 @@ const AuthPage = () => {
               {error}
             </Alert>
           )}
+
+              {success && (
+                <Alert severity="success" className="mb-6">
+                  {success}
+                </Alert>
+              )}
 
           {/* Login Form */}
           {activeTab === 'Login' && (
@@ -836,10 +858,10 @@ const AuthPage = () => {
             <div>
               <div className="mb-6">
                 <Typography variant="h4" className="font-bold text-gray-800 mb-2">
-                  Reset Password
+                  Forgot Password
                 </Typography>
                 <Typography variant="body2" className="text-gray-600">
-                  Enter your email to receive reset instructions
+                  Enter your email and we will send a reset link
                 </Typography>
               </div>
 
@@ -874,7 +896,7 @@ const AuthPage = () => {
                 onClick={handleForgetPassword}
                 fullWidth
                 variant="contained"
-                disabled={loading}
+                disabled={loading || !forgetForm.email}
                 sx={{
                   backgroundColor: '#22c55e',
                   borderRadius: '8px',

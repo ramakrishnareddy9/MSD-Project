@@ -19,6 +19,7 @@ import {
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
 import { productAPI, orderAPI, inventoryAPI, analyticsAPI, authAPI, vehicleAPI, userAPI, notificationAPI, marketplaceRequestAPI } from '../../services/api';
+import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 
 // ─── fallback seed data (used when backend is offline) ─────────────────────────
 const SEED_ORDERS = [
@@ -101,6 +102,18 @@ const BusinessDashboard = () => {
   const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState({ data: true, products: false, orders: false, fleet: false });
   const [negotiations, setNegotiations] = useState([]);
+
+  useRealtimeNotifications({
+    enabled: !loading.data,
+    onNotification: (payload) => {
+      fetchNotifications(notificationPage, notificationFilter);
+
+      if (['order', 'delivery'].includes(payload?.type)) {
+        fetchOrders();
+        fetchInventory();
+      }
+    }
+  });
 
   // ── UI state ────────────────────────────────────────────────────────────────
   const [activeSection, setActiveSection] = useState('overview');

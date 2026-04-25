@@ -4,35 +4,60 @@ const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
   'http://localhost:5000/api';
 
-// Helper function to get auth token
-const getAuthToken = () => {
-  const user = localStorage.getItem('farmkart_user');
-  if (user) {
-    try {
-      const parsed = JSON.parse(user);
-      return parsed.token;
-    } catch {
-      return null;
-    }
+// ─── Silent refresh state ──────────────────────────────────────────────────────
+// Prevents infinite refresh loops and deduplicates concurrent refresh attempts.
+let isRefreshing = false;
+let refreshPromise = null;
+
+/**
+ * Attempt a silent token refresh by calling POST /auth/refresh.
+ * The refresh cookie is sent automatically by the browser.
+ * Returns true if refresh succeeded, false otherwise.
+ */
+const attemptSilentRefresh = async () => {
+  // If a refresh is already in-flight, piggyback on it
+  if (isRefreshing && refreshPromise) {
+    return refreshPromise;
   }
-  return null;
+
+  isRefreshing = true;
+  refreshPromise = (async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      return response.ok;
+    } catch {
+      return false;
+    } finally {
+      isRefreshing = false;
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
 };
 
-// Helper function for API calls
-const apiCall = async (endpoint, options = {}) => {
-  const token = getAuthToken();
+// ─── Core API helper ───────────────────────────────────────────────────────────
+/**
+ * Make an API call with automatic silent refresh on 401.
+ * When the access token expires (15 min), the first 401 triggers a
+ * POST /auth/refresh using the long-lived refresh cookie. If refresh
+ * succeeds the original request is retried exactly once.
+ */
+const apiCall = async (endpoint, options = {}, _isRetry = false) => {
   const headers = {
     'Content-Type': 'application/json',
     ...options.headers
   };
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
   const config = {
     ...options,
-    headers
+    headers,
+    // Send httpOnly cookies automatically with every request
+    credentials: 'include'
   };
 
   try {
@@ -45,6 +70,21 @@ const apiCall = async (endpoint, options = {}) => {
     }
 
     if (!response.ok) {
+      // On 401, attempt a silent refresh once (skip for auth endpoints to avoid loops)
+      if (
+        response.status === 401 &&
+        !_isRetry &&
+        !endpoint.startsWith('/auth/refresh') &&
+        !endpoint.startsWith('/auth/login') &&
+        !endpoint.startsWith('/auth/register')
+      ) {
+        const refreshed = await attemptSilentRefresh();
+        if (refreshed) {
+          // Retry the original request with the new access token cookie
+          return apiCall(endpoint, options, true);
+        }
+      }
+
       const error = new Error(data?.message || 'API request failed');
       error.status = response.status;
       error.endpoint = endpoint;
@@ -54,7 +94,9 @@ const apiCall = async (endpoint, options = {}) => {
 
     return data;
   } catch (error) {
-    console.error('API Error:', error);
+    if (import.meta.env.DEV) {
+      console.error('API Error:', error);
+    }
     throw error;
   }
 };
@@ -75,8 +117,34 @@ export const authAPI = {
     });
   },
 
+  forgotPassword: async (email) => {
+    return apiCall('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email })
+    });
+  },
+
+  resetPassword: async (token, password, confirmPassword) => {
+    return apiCall('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, password, confirmPassword })
+    });
+  },
+
   getCurrentUser: async () => {
     return apiCall('/auth/me');
+  },
+
+  refresh: async () => {
+    return apiCall('/auth/refresh', {
+      method: 'POST'
+    });
+  },
+
+  logout: async () => {
+    return apiCall('/auth/logout', {
+      method: 'POST'
+    });
   }
 };
 
@@ -346,6 +414,9 @@ export const paymentAPI = {
   create: async (paymentData) => {
     return apiCall('/payments', {
       method: 'POST',
+      headers: {
+        'Idempotency-Key': crypto.randomUUID()
+      },
       body: JSON.stringify(paymentData)
     });
   },

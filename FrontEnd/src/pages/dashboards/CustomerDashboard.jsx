@@ -24,6 +24,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import ProfileDropdown from '../../Components/ProfileDropdown';
 import { authAPI, productAPI, cartAPI, wishlistAPI, orderAPI, communityAPI, userAPI, notificationAPI, marketplaceRequestAPI } from '../../services/api';
+import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 
 const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1488459716781-6f03ee1b563b?w=800&h=600&fit=crop&q=80';
 const COMMUNITY_MIN_BULK_QTY = 50;
@@ -82,6 +83,17 @@ const CustomerDashboard = () => {
     phone: '',
     city: '',
     address: ''
+  });
+
+  useRealtimeNotifications({
+    enabled: !loading,
+    onNotification: (payload) => {
+      fetchNotifications(notificationPage, notificationFilter);
+
+      if (['order', 'delivery', 'community'].includes(payload?.type)) {
+        refreshCommunities(user?._id);
+      }
+    }
   });
 
   const normalizeProduct = (p) => ({

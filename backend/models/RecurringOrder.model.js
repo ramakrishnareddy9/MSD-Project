@@ -154,6 +154,7 @@ const recurringOrderSchema = new mongoose.Schema({
 
 // Indexes for efficient queries
 recurringOrderSchema.index({ buyerId: 1, status: 1 });
+recurringOrderSchema.index({ status: 1, 'schedule.nextRunAt': 1 });
 recurringOrderSchema.index({ 'schedule.nextRunAt': 1, status: 1 }); // For scheduler
 recurringOrderSchema.index({ type: 1, status: 1 });
 

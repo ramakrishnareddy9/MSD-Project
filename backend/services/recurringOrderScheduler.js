@@ -55,7 +55,7 @@ async function processRecurringOrder(recurringOrder) {
       // Check inventory availability
       const inventory = await InventoryLot.findOne({
         productId: product._id,
-        $expr: { $gt: [{ $subtract: ['$quantity', '$reservedQuantity'] }, template.quantity] }
+        $expr: { $gte: [{ $subtract: ['$quantity', '$reservedQuantity'] }, template.quantity] }
       }).session(session);
       
       if (!inventory) {

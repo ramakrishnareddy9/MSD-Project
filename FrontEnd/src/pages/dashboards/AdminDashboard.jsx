@@ -15,6 +15,7 @@ import {
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
 import { analyticsAPI, userAPI, orderAPI, notificationAPI } from '../../services/api';
+import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 
 const AdminDashboard = () => {
   const [activeSection, setActiveSection] = useState('overview');
@@ -45,6 +46,13 @@ const AdminDashboard = () => {
 
   const [users, setUsers] = useState([]);
   const [recentOrders, setRecentOrders] = useState([]);
+
+  useRealtimeNotifications({
+    enabled: !loading,
+    onNotification: () => {
+      fetchNotifications(notificationPage, notificationFilter);
+    }
+  });
 
   // Fetch metrics from API
   useEffect(() => {

@@ -85,7 +85,7 @@ Important: this seed mode does NOT create an admin account.
 
 ## Quick Tip
 If login fails, you are likely using credentials from a different seed mode.
-Re-seed with your target command and retry.
+Re-seed with your target command and retry. For `npm run seed:local`, use the `@farmkart.local` accounts and `password123`; for `npm run seed` or `npm run seed:json`, use the corresponding `@farmkart.com` accounts and passwords listed above.
 
 ## Current Local DB Status (verified)
 - MongoDB in use: `mongodb://127.0.0.1:27017/farmkart`
