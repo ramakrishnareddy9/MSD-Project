@@ -34,14 +34,6 @@ const restaurantProfileSchema = new mongoose.Schema({
     enum: ['prepaid', 'net_7', 'net_15', 'net_30'],
     default: 'prepaid'
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
 }, {
   timestamps: true
 });

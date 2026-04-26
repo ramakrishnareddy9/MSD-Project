@@ -97,6 +97,17 @@ router.get('/:id', authenticate, validateObjectId('id'), async (req, res) => {
       });
     }
 
+    const isAdmin = req.user.roles?.includes('admin');
+    const isBuyer = String(order.buyerId?._id || order.buyerId) === String(req.user._id);
+    const isSeller = String(order.sellerId?._id || order.sellerId) === String(req.user._id);
+
+    if (!isAdmin && !isBuyer && !isSeller) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: You can only access orders where you are the buyer or seller'
+      });
+    }
+
     res.json({
       success: true,
       data: { order }

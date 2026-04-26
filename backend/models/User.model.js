@@ -39,16 +39,6 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  farmName: String,
-  totalLand: String,
-  experience: String,
-  businessType: String,
-  owner: String,
-  gst: String,
-  communityName: String,
-  position: String,
-  licenseNumber: String,
-  accountType: String,
   roles: [{
     type: String,
     enum: ['customer', 'farmer', 'business', 'travel_agency', 'restaurant', 'delivery', 'delivery_large', 'delivery_small', 'admin'],
@@ -83,14 +73,6 @@ const userSchema = new mongoose.Schema({
   },
   addresses: [addressSchema],
   profileImage: String,
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
 }, {
   timestamps: true
 });

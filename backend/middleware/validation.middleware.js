@@ -62,7 +62,7 @@ export const validateRegister = [
   
   body('roles.*')
     .optional()
-    .isIn(['customer', 'farmer', 'business', 'travel_agency', 'restaurant', 'delivery', 'delivery_large', 'delivery_small', 'admin'])
+    .isIn(['customer', 'farmer', 'business', 'travel_agency', 'restaurant', 'delivery', 'delivery_large', 'delivery_small'])
     .withMessage('Invalid role'),
 
   body('roles')
@@ -122,6 +122,18 @@ export const validateResetPassword = [
   body('confirmPassword')
     .custom((value, { req }) => value === req.body.password)
     .withMessage('Passwords do not match'),
+
+  handleValidationErrors
+];
+
+/**
+ * Email Verification OTP Validation
+ */
+export const validateVerifyEmailOtp = [
+  body('otp')
+    .trim()
+    .matches(/^\d{6}$/)
+    .withMessage('OTP must be a 6-digit code'),
 
   handleValidationErrors
 ];

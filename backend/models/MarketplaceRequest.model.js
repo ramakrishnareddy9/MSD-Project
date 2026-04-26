@@ -150,6 +150,7 @@ const marketplaceRequestSchema = new mongoose.Schema({
 marketplaceRequestSchema.index({ cropName: 1, status: 1, createdAt: -1 });
 marketplaceRequestSchema.index({ requesterId: 1, status: 1, createdAt: -1 });
 marketplaceRequestSchema.index({ matchedFarmerId: 1, status: 1, createdAt: -1 });
+marketplaceRequestSchema.index({ status: 1, createdAt: -1 });
 
 marketplaceRequestSchema.pre('validate', function(next) {
   if (!this.requestNumber) {

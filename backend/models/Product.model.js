@@ -79,14 +79,6 @@ const productSchema = new mongoose.Schema({
     min: 0,
     max: 100
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -96,6 +88,7 @@ const productSchema = new mongoose.Schema({
 // Indexes
 productSchema.index({ ownerId: 1, status: 1, createdAt: -1 });
 productSchema.index({ categoryId: 1, status: 1 });
+productSchema.index({ categoryId: 1, status: 1, basePrice: 1 });
 productSchema.index({ status: 1, averageRating: -1 });
 productSchema.index({ tags: 1 });
 productSchema.index({ name: 'text', description: 'text' });

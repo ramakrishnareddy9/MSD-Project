@@ -6,6 +6,19 @@ import Product from '../models/Product.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
 import User from '../models/User.model.js';
 
+const supportsMongoTransactions = () => {
+  if (process.env.DISABLE_MONGO_TRANSACTIONS === 'true') {
+    return false;
+  }
+
+  if (mongoose.connection.readyState !== 1) {
+    return false;
+  }
+
+  const topologyType = mongoose.connection.client?.topology?.description?.type;
+  return ['ReplicaSetWithPrimary', 'Sharded', 'LoadBalanced'].includes(topologyType);
+};
+
 /**
  * Recurring Order Scheduler Service
  * Polls due schedules and generates Orders atomically with inventory reservation
@@ -17,14 +30,25 @@ import User from '../models/User.model.js';
  * Creates an Order from the recurring template
  */
 async function processRecurringOrder(recurringOrder) {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  const useTransaction = supportsMongoTransactions();
+  let session = null;
+  const reservationToken = new mongoose.Types.ObjectId();
+  const reservedLotIds = [];
+
+  if (useTransaction) {
+    session = await mongoose.startSession();
+    session.startTransaction();
+  }
   
   try {
     console.log(`Processing recurring order: ${recurringOrder._id}`);
     
     // Optionally fetch buyer (not required for address anymore)
-    const buyer = await User.findById(recurringOrder.buyerId).session(session);
+    const buyerQuery = User.findById(recurringOrder.buyerId);
+    if (useTransaction) {
+      buyerQuery.session(session);
+    }
+    const buyer = await buyerQuery;
     if (!buyer) throw new Error('Buyer not found');
     
     // Use delivery address snapshot stored on recurring order
@@ -40,8 +64,11 @@ async function processRecurringOrder(recurringOrder) {
     
     for (const template of recurringOrder.itemsTemplate) {
       // Get current product details
-      const product = await Product.findById(template.productId)
-        .session(session);
+      const productQuery = Product.findById(template.productId);
+      if (useTransaction) {
+        productQuery.session(session);
+      }
+      const product = await productQuery;
       
       if (!product || product.status !== 'active') {
         throw new Error(`Product ${template.productId} is not available`);
@@ -52,19 +79,18 @@ async function processRecurringOrder(recurringOrder) {
         throw new Error(`Product ${product.name} price exceeds maximum (₹${template.maxPrice})`);
       }
       
-      // Check inventory availability
-      const inventory = await InventoryLot.findOne({
+      // Reserve inventory atomically (works with and without transactions)
+      const inventory = await InventoryLot.reserveAvailableLot({
         productId: product._id,
-        $expr: { $gte: [{ $subtract: ['$quantity', '$reservedQuantity'] }, template.quantity] }
-      }).session(session);
-      
+        orderId: reservationToken,
+        quantity: template.quantity,
+        session: useTransaction ? session : null
+      });
+
       if (!inventory) {
         throw new Error(`Insufficient inventory for ${product.name}`);
       }
-      
-      // Reserve inventory
-      inventory.reservedQuantity += template.quantity;
-      await inventory.save({ session });
+      reservedLotIds.push(inventory._id);
       
       // Set seller ID (assuming all products from same farmer)
       if (!sellerId) {
@@ -115,21 +141,62 @@ async function processRecurringOrder(recurringOrder) {
       notes: `Auto-generated from recurring order ${recurringOrder._id}`
     });
     
-    await order.save({ session });
+    if (useTransaction) {
+      await order.save({ session });
+    } else {
+      await order.save();
+    }
+
+    // Replace temporary reservation token with real order ID.
+    for (const item of orderItems) {
+      const updateOptions = {
+        arrayFilters: [{ 'elem.status': 'active', 'elem.orderId': reservationToken }]
+      };
+
+      if (useTransaction) {
+        updateOptions.session = session;
+      }
+
+      await InventoryLot.findByIdAndUpdate(
+        item.lotId,
+        {
+          $set: {
+            'reservations.$[elem].orderId': order._id
+          }
+        },
+        updateOptions
+      );
+    }
     
+    if (useTransaction && session) {
+      await session.commitTransaction();
+    }
+
     // Record success and advance schedule
     await recurringOrder.recordSuccess(order._id);
-    
-    // Commit transaction
-    await session.commitTransaction();
     
     console.log(`✅ Successfully created order ${order.orderNumber} from recurring order ${recurringOrder._id}`);
     
     return { success: true, orderId: order._id };
     
   } catch (error) {
-    // Rollback transaction
-    await session.abortTransaction();
+    if (!useTransaction && reservedLotIds.length > 0) {
+      // Compensating rollback for standalone MongoDB without transactions.
+      for (const lotId of reservedLotIds) {
+        try {
+          const lot = await InventoryLot.findById(lotId);
+          if (lot) {
+            await lot.cancelReservation(reservationToken);
+          }
+        } catch (rollbackError) {
+          console.error(`Failed to rollback reservation for lot ${lotId}:`, rollbackError.message);
+        }
+      }
+    }
+
+    if (useTransaction && session) {
+      await session.abortTransaction();
+    }
     console.error(`❌ Failed to process recurring order ${recurringOrder._id}:`, error.message);
     
     // Record failure
@@ -137,7 +204,9 @@ async function processRecurringOrder(recurringOrder) {
     
     return { success: false, error: error.message };
   } finally {
-    session.endSession();
+    if (session) {
+      session.endSession();
+    }
   }
 }
 

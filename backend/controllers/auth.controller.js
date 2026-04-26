@@ -5,9 +5,11 @@ import RestaurantProfile from '../models/RestaurantProfile.model.js';
 import DeliveryProfile from '../models/DeliveryProfile.model.js';
 import TravelAgencyProfile from '../models/TravelAgencyProfile.model.js';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 
 const AUTH_TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const AUTH_COOKIE_NAME = 'farmkart_token';
+const EMAIL_OTP_TTL_MS = 1000 * 60 * 10;
 
 const parseBool = (value) => String(value || '').toLowerCase() === 'true';
 
@@ -65,6 +67,26 @@ const buildPasswordResetUrl = (req, token) => {
   return `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`;
 };
 
+const generateSixDigitOtp = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+
+const hashOtp = (otp) => crypto.createHash('sha256').update(String(otp)).digest('hex');
+
+const createEmailOtpPayload = () => {
+  const otp = generateSixDigitOtp();
+  return {
+    otp,
+    otpHash: hashOtp(otp),
+    otpExpires: new Date(Date.now() + EMAIL_OTP_TTL_MS)
+  };
+};
+
+const isOtpHashMatch = (submittedOtp, storedHash) => {
+  const submittedHash = hashOtp(submittedOtp);
+  if (!storedHash || submittedHash.length !== storedHash.length) return false;
+
+  return crypto.timingSafeEqual(Buffer.from(submittedHash, 'hex'), Buffer.from(storedHash, 'hex'));
+};
+
 const sendPasswordResetEmail = async ({ to, resetUrl }) => {
   const smtpHost = process.env.SMTP_HOST;
   const smtpUser = process.env.SMTP_USER;
@@ -101,6 +123,71 @@ const sendPasswordResetEmail = async ({ to, resetUrl }) => {
   }
 };
 
+const sendVerificationOtpEmail = async ({ to, otp }) => {
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPassword = process.env.SMTP_PASS;
+  const smtpPort = Number(process.env.SMTP_PORT || 587);
+
+  if (!smtpHost || !smtpUser || !smtpPassword) {
+    return false;
+  }
+
+  try {
+    const nodemailer = await import('nodemailer');
+    const transporter = nodemailer.default.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: {
+        user: smtpUser,
+        pass: smtpPassword
+      }
+    });
+
+    await transporter.sendMail({
+      from: process.env.MAIL_FROM || smtpUser,
+      to,
+      subject: 'Verify your FarmKart email',
+      text: `Your FarmKart verification code is ${otp}. This code expires in 10 minutes.`,
+      html: `<p>Your FarmKart verification code is <strong>${otp}</strong>.</p><p>This code expires in 10 minutes.</p>`
+    });
+
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const sendVerificationOtpSms = async ({ to, otp }) => {
+  const smsWebhookUrl = process.env.SMS_WEBHOOK_URL;
+  if (!smsWebhookUrl || !to) {
+    return false;
+  }
+
+  const smsToken = process.env.SMS_WEBHOOK_TOKEN;
+
+  try {
+    const response = await fetch(smsWebhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(smsToken ? { Authorization: `Bearer ${smsToken}` } : {})
+      },
+      body: JSON.stringify({
+        to,
+        otp,
+        purpose: 'email_verification',
+        message: `Your FarmKart verification code is ${otp}. It expires in 10 minutes.`
+      })
+    });
+
+    return response.ok;
+  } catch {
+    return false;
+  }
+};
+
 export const register = async (req, res) => {
   let createdUserId = null;
   try {
@@ -117,6 +204,13 @@ export const register = async (req, res) => {
     const normalizedName = String(name || '').trim();
     const safeRoles = Array.isArray(roles) && roles.length > 0 ? [...new Set(roles)] : ['customer'];
 
+    if (safeRoles.includes('admin')) {
+      return res.status(403).json({
+        success: false,
+        message: 'Admin role cannot be assigned during public registration'
+      });
+    }
+
     // Check if user exists
     const existingUser = await User.findOne({ $or: [{ email: normalizedEmail }, { phone: normalizedPhone }] });
     if (existingUser) {
@@ -125,24 +219,6 @@ export const register = async (req, res) => {
         message: 'User with this email or phone already exists'
       });
     }
-
-    const defaultRole = safeRoles[0] || 'customer';
-    const farmerDefaults = {
-      farmName: profileData?.farmer?.farmName || `${normalizedName}'s Farm`,
-      totalLand: profileData?.farmer?.totalLand || '',
-      experience: profileData?.farmer?.experience || ''
-    };
-    const businessDefaults = {
-      businessType: profileData?.business?.businessType || 'Business',
-      owner: profileData?.business?.owner || normalizedName,
-      gst: profileData?.business?.gst || profileData?.business?.gstNumber || ''
-    };
-    const restaurantDefaults = {
-      businessType: profileData?.restaurant?.businessType || 'Restaurant'
-    };
-    const deliveryDefaults = {
-      accountType: safeRoles.includes('delivery_large') ? 'Large-Scale Transporter' : safeRoles.includes('delivery_small') ? 'Last-Mile Delivery' : ''
-    };
 
     // Create user
     const user = new User({
@@ -157,30 +233,76 @@ export const register = async (req, res) => {
       kycStatus: 'not_started',
       address: String(address || profileData?.address || '').trim(),
       city: String(city || profileData?.city || '').trim(),
-      ...(defaultRole === 'farmer' ? farmerDefaults : {}),
-      ...(defaultRole === 'business' ? businessDefaults : {}),
-      ...(defaultRole === 'restaurant' ? restaurantDefaults : {}),
-      ...((defaultRole === 'delivery_large' || defaultRole === 'delivery_small') ? deliveryDefaults : {})
     });
+
+    const { otp, otpHash, otpExpires } = createEmailOtpPayload();
+    user.emailOtpHash = otpHash;
+    user.emailOtpExpires = otpExpires;
 
     await user.save();
     createdUserId = user._id;
 
-    // Create profile based on role
-    if (safeRoles.length > 0) {
-      for (const role of safeRoles) {
-        if (role === 'farmer' && profileData?.farmer) {
-          await new FarmerProfile({ userId: user._id, ...profileData.farmer }).save();
-        } else if (role === 'business' && profileData?.business) {
-          await new BusinessProfile({ userId: user._id, ...profileData.business }).save();
-        } else if (role === 'restaurant' && profileData?.restaurant) {
-          await new RestaurantProfile({ userId: user._id, ...profileData.restaurant }).save();
-        } else if (role === 'travel_agency' && profileData?.travelAgency) {
-          await new TravelAgencyProfile({ userId: user._id, ...profileData.travelAgency }).save();
-        } else if ((role === 'delivery_large' || role === 'delivery_small') && profileData?.delivery) {
-          await new DeliveryProfile({ userId: user._id, ...profileData.delivery }).save();
-        }
-      }
+    // Create role-specific profiles (authoritative source for role data).
+    if (safeRoles.includes('farmer')) {
+      const farmerInput = profileData?.farmer || {};
+      const parsedFarmSize = Number(farmerInput.farmSize ?? farmerInput.totalLand);
+      await new FarmerProfile({
+        userId: user._id,
+        ...farmerInput,
+        farmName: farmerInput.farmName || `${normalizedName}'s Farm`,
+        farmSize: Number.isFinite(parsedFarmSize) && parsedFarmSize > 0 ? parsedFarmSize : 1
+      }).save();
+    }
+
+    if (safeRoles.includes('business')) {
+      const businessInput = profileData?.business || {};
+      const normalizedCompanyType = String(businessInput.companyType || businessInput.businessType || 'retailer').toLowerCase();
+      const allowedCompanyTypes = ['wholesaler', 'processor', 'manufacturer', 'retailer'];
+      await new BusinessProfile({
+        userId: user._id,
+        ...businessInput,
+        companyName: businessInput.companyName || `${normalizedName} Business`,
+        companyType: allowedCompanyTypes.includes(normalizedCompanyType) ? normalizedCompanyType : 'retailer',
+        gstNumber: businessInput.gstNumber || businessInput.gst || undefined
+      }).save();
+    }
+
+    if (safeRoles.includes('restaurant')) {
+      const restaurantInput = profileData?.restaurant || {};
+      await new RestaurantProfile({
+        userId: user._id,
+        ...restaurantInput,
+        restaurantName: restaurantInput.restaurantName || `${normalizedName} Restaurant`
+      }).save();
+    }
+
+    if (safeRoles.includes('travel_agency')) {
+      const travelAgencyInput = profileData?.travelAgency || {};
+      await new TravelAgencyProfile({
+        userId: user._id,
+        ...travelAgencyInput,
+        agencyName: travelAgencyInput.agencyName || `${normalizedName} Travels`
+      }).save();
+    }
+
+    if (safeRoles.some((role) => role === 'delivery_large' || role === 'delivery_small')) {
+      const deliveryInput = profileData?.delivery || {};
+      const normalizedScale = String(deliveryInput.scale || (safeRoles.includes('delivery_large') ? 'large' : 'small')).toLowerCase();
+      await new DeliveryProfile({
+        userId: user._id,
+        ...deliveryInput,
+        companyName: deliveryInput.companyName || `${normalizedName} Logistics`,
+        scale: normalizedScale === 'large' ? 'large' : 'small'
+      }).save();
+    }
+
+    const [emailOtpSent, smsOtpSent] = await Promise.all([
+      sendVerificationOtpEmail({ to: user.email, otp }),
+      sendVerificationOtpSms({ to: user.phone, otp })
+    ]);
+
+    if (!emailOtpSent && !smsOtpSent && process.env.NODE_ENV === 'production') {
+      throw new Error('Unable to send email verification OTP at this time. Please try again later.');
     }
 
     // Generate token
@@ -194,8 +316,11 @@ export const register = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'User registered successfully',
-      data: { user: buildAuthUserPayload(user) }
+      message: 'User registered successfully. Please verify your email using the OTP sent to your inbox.',
+      data: {
+        user: buildAuthUserPayload(user),
+        ...(process.env.NODE_ENV !== 'production' ? { verificationOtp: otp, otpExpiresAt: user.emailOtpExpires } : {})
+      }
     });
   } catch (error) {
     if (createdUserId) {
@@ -369,6 +494,7 @@ export const refresh = async (req, res) => {
 
 export const verifyEmail = async (req, res) => {
   try {
+    const otp = String(req.body?.otp || '').trim();
     const user = await User.findById(req.user?._id);
     if (!user) {
       return res.status(404).json({
@@ -377,7 +503,32 @@ export const verifyEmail = async (req, res) => {
       });
     }
 
+    if (user.emailVerified) {
+      return res.json({
+        success: true,
+        message: 'Email is already verified',
+        data: { user: buildAuthUserPayload(user) }
+      });
+    }
+
+    if (!/^\d{6}$/.test(otp)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired OTP'
+      });
+    }
+
+    const isOtpExpired = !user.emailOtpExpires || new Date() > user.emailOtpExpires;
+    if (!user.emailOtpHash || isOtpExpired || !isOtpHashMatch(otp, user.emailOtpHash)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired OTP'
+      });
+    }
+
     user.emailVerified = true;
+    user.emailOtpHash = undefined;
+    user.emailOtpExpires = undefined;
     if (user.status === 'pending_verification') {
       user.status = 'active';
     }
@@ -398,9 +549,42 @@ export const verifyEmail = async (req, res) => {
 
 export const resendVerificationOtp = async (req, res) => {
   try {
+    const user = await User.findById(req.user?._id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (user.emailVerified) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is already verified'
+      });
+    }
+
+    const { otp, otpHash, otpExpires } = createEmailOtpPayload();
+    user.emailOtpHash = otpHash;
+    user.emailOtpExpires = otpExpires;
+    await user.save();
+
+    const [emailOtpSent, smsOtpSent] = await Promise.all([
+      sendVerificationOtpEmail({ to: user.email, otp }),
+      sendVerificationOtpSms({ to: user.phone, otp })
+    ]);
+
+    if (!emailOtpSent && !smsOtpSent && process.env.NODE_ENV === 'production') {
+      return res.status(500).json({
+        success: false,
+        message: 'Unable to send email verification OTP at this time. Please try again later.'
+      });
+    }
+
     res.json({
       success: true,
-      message: 'Verification message queued'
+      message: 'Verification OTP sent successfully',
+      ...(process.env.NODE_ENV !== 'production' ? { data: { verificationOtp: otp, otpExpiresAt: user.emailOtpExpires } } : {})
     });
   } catch (error) {
     res.status(500).json({

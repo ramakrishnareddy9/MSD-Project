@@ -37,14 +37,6 @@ const farmerProfileSchema = new mongoose.Schema({
   languages: [String],
   experience: Number, // years
   specialization: [String], // crops they specialize in
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
 }, {
   timestamps: true
 });

@@ -18,14 +18,6 @@ const travelAgencyProfileSchema = new mongoose.Schema({
     enum: ['prepaid', 'net_7', 'net_15', 'net_30'],
     default: 'net_15'
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
 }, {
   timestamps: true
 });

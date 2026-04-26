@@ -169,14 +169,6 @@ const orderSchema = new mongoose.Schema({
     },
     notes: String
   }],
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
 }, {
   timestamps: true
 });
@@ -186,6 +178,7 @@ orderSchema.index({ orderNumber: 1 }, { unique: true });
 orderSchema.index({ buyerId: 1, status: 1, createdAt: -1 });
 orderSchema.index({ sellerId: 1, status: 1, createdAt: -1 });
 orderSchema.index({ sellerId: 1, createdAt: -1 });
+orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ type: 1, status: 1 });
 orderSchema.index({ scheduledWindowStart: 1 });
 

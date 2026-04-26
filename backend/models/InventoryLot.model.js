@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
 
+const Product = mongoose.models.Product;
+
 const inventoryLotSchema = new mongoose.Schema({
   productId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -53,14 +55,6 @@ const inventoryLotSchema = new mongoose.Schema({
     default: 'A'
   },
   storageCondition: String,
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
 }, {
   timestamps: true
 });
@@ -76,6 +70,57 @@ inventoryLotSchema.virtual('availableQuantity').get(function() {
 });
 
 // Methods
+inventoryLotSchema.statics.getAvailableQuantityForProduct = async function(productId, session = null) {
+  const productObjectId = typeof productId === 'string'
+    ? new mongoose.Types.ObjectId(productId)
+    : productId;
+
+  const pipeline = [
+    { $match: { productId: productObjectId } },
+    {
+      $project: {
+        available: {
+          $max: [
+            { $subtract: ['$quantity', '$reservedQuantity'] },
+            0
+          ]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: '$productId',
+        totalAvailable: { $sum: '$available' }
+      }
+    }
+  ];
+
+  const aggregation = this.aggregate(pipeline);
+  if (session) {
+    aggregation.session(session);
+  }
+
+  const [result] = await aggregation;
+  return Number(result?.totalAvailable || 0);
+};
+
+inventoryLotSchema.statics.syncProductStockQuantity = async function(productId, session = null) {
+  if (!productId) return;
+
+  const ProductModel = Product || mongoose.model('Product');
+  const availableQuantity = await this.getAvailableQuantityForProduct(productId, session);
+  const updateQuery = ProductModel.updateOne(
+    { _id: productId },
+    { $set: { stockQuantity: availableQuantity } }
+  );
+
+  if (session) {
+    updateQuery.session(session);
+  }
+
+  await updateQuery;
+};
+
 inventoryLotSchema.statics.reserveAvailableLot = async function({ productId, orderId, quantity, session = null }) {
   return this.findOneAndUpdate(
     {
@@ -164,6 +209,32 @@ inventoryLotSchema.statics.cleanupAllExpiredReservations = async function() {
   const promises = lots.map(lot => lot.cleanupExpiredReservations());
   return Promise.all(promises);
 };
+
+inventoryLotSchema.post('save', async function() {
+  const session = this.$session ? this.$session() : null;
+  await this.constructor.syncProductStockQuantity(this.productId, session);
+});
+
+inventoryLotSchema.post('findOneAndUpdate', async function(doc) {
+  if (!doc) return;
+  const session = this.getOptions ? this.getOptions().session : null;
+  await doc.constructor.syncProductStockQuantity(doc.productId, session);
+});
+
+inventoryLotSchema.post('findOneAndDelete', async function(doc) {
+  if (!doc) return;
+  const session = this.getOptions ? this.getOptions().session : null;
+  await doc.constructor.syncProductStockQuantity(doc.productId, session);
+});
+
+inventoryLotSchema.post('insertMany', async function(docs) {
+  if (!Array.isArray(docs) || docs.length === 0) return;
+  const uniqueProductIds = [...new Set(docs.map((doc) => String(doc.productId)))];
+
+  for (const productId of uniqueProductIds) {
+    await this.syncProductStockQuantity(productId);
+  }
+});
 
 const InventoryLot = mongoose.model('InventoryLot', inventoryLotSchema);
 

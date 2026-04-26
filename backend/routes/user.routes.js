@@ -143,11 +143,7 @@ router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
     }
 
     const allowedSelfFields = [
-      'name', 'email', 'phone', 'addresses',
-      'farmName', 'totalLand', 'experience',
-      'businessType', 'owner', 'gst',
-      'communityName', 'position',
-      'licenseNumber', 'accountType'
+      'name', 'email', 'phone', 'addresses'
     ];
 
     const updatePayload = isAdmin

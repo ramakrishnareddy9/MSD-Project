@@ -95,14 +95,6 @@ const priceAgreementSchema = new mongoose.Schema({
   approvedAt: Date,
   rejectedAt: Date,
   rejectionReason: String,
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
 }, {
   timestamps: true
 });

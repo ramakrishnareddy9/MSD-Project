@@ -85,6 +85,43 @@ Default URLs:
 - Frontend: `http://localhost:5173`
 - Backend: `http://localhost:5000`
 
+## Auth OTP Delivery Configuration
+
+Email verification OTPs are generated as 6-digit codes, stored as SHA-256 hashes, and sent through configured delivery channels.
+
+### Email Channel (SMTP)
+
+Set these backend environment variables to enable OTP delivery by email:
+
+- `SMTP_HOST`: SMTP server host
+- `SMTP_PORT`: SMTP port (usually `587` or `465`)
+- `SMTP_USER`: SMTP username
+- `SMTP_PASS`: SMTP password
+- `MAIL_FROM`: Optional sender address (falls back to `SMTP_USER`)
+
+### Optional SMS Channel (Webhook)
+
+Set these backend environment variables to enable OTP delivery by SMS via webhook:
+
+- `SMS_WEBHOOK_URL`: HTTPS endpoint that dispatches SMS
+- `SMS_WEBHOOK_TOKEN`: Optional bearer token sent as `Authorization: Bearer <token>`
+
+Webhook request body sent by backend:
+
+```json
+{
+	"to": "+911234567890",
+	"otp": "123456",
+	"purpose": "email_verification",
+	"message": "Your FarmKart verification code is 123456. It expires in 10 minutes."
+}
+```
+
+### Production Behavior
+
+- In production, registration/resend OTP will fail if neither email nor SMS delivery succeeds.
+- In non-production, the API response can include `verificationOtp` for local testing.
+
 ## Quick Troubleshooting
 
 - `ERR_CONNECTION_REFUSED` on frontend usually means backend is not running or not reachable.

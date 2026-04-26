@@ -38,20 +38,13 @@ const reviewSchema = new mongoose.Schema({
     enum: ['published', 'flagged', 'removed'],
     default: 'published'
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
 }, {
   timestamps: true
 });
 
 // Indexes
 reviewSchema.index({ productId: 1, status: 1, createdAt: -1 });
+reviewSchema.index({ productId: 1, createdAt: -1 });
 reviewSchema.index({ userId: 1, createdAt: -1 });
 reviewSchema.index({ userId: 1, orderId: 1 }, { unique: true }); // Prevent duplicate reviews per order
 

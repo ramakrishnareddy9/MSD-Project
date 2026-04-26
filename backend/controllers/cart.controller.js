@@ -1,21 +1,24 @@
 import Cart from '../models/Cart.model.js';
 import Product from '../models/Product.model.js';
+import InventoryLot from '../models/InventoryLot.model.js';
 import User from '../models/User.model.js';
 
 const ensureFarmerProduct = async (productId) => {
-  const product = await Product.findById(productId).select('ownerId status stockQuantity name');
+  const product = await Product.findById(productId).select('ownerId status name');
   if (!product || product.status !== 'active') {
-    return { ok: false, message: 'Product not found or unavailable', product: null };
+    return { ok: false, message: 'Product not found or unavailable', product: null, availableQty: 0 };
   }
 
   const owner = await User.findById(product.ownerId).select('roles status');
   const isFarmerOwner = owner?.roles?.includes('farmer');
 
   if (!isFarmerOwner || owner?.status !== 'active') {
-    return { ok: false, message: 'Only crops grown by active farmers can be added to cart', product: null };
+    return { ok: false, message: 'Only crops grown by active farmers can be added to cart', product: null, availableQty: 0 };
   }
 
-  return { ok: true, message: '', product };
+  const availableQty = await InventoryLot.getAvailableQuantityForProduct(product._id);
+
+  return { ok: true, message: '', product, availableQty };
 };
 
 const normalizeQty = (qty) => {
@@ -28,9 +31,9 @@ const getCartItemQty = (cart, productId) => {
   return Number(item?.qty || 0);
 };
 
-const canFitInStock = (product, requestedQty) => {
-  const availableQty = Number(product?.stockQuantity || 0);
-  return requestedQty <= availableQty;
+const canFitInStock = (availableQty, requestedQty) => {
+  const normalizedAvailableQty = Number(availableQty || 0);
+  return requestedQty <= normalizedAvailableQty;
 };
 
 // @desc    Get user cart
@@ -76,10 +79,10 @@ export const addItemToCart = async (req, res) => {
     const existingQty = getCartItemQty(cart, productId);
     const nextQty = existingQty + requestedQty;
 
-    if (!canFitInStock(productCheck.product, nextQty)) {
+    if (!canFitInStock(productCheck.availableQty, nextQty)) {
       return res.status(400).json({
         success: false,
-        message: `Only ${Number(productCheck.product.stockQuantity || 0)} ${productCheck.product.name || 'units'} available in stock`
+        message: `Only ${Number(productCheck.availableQty || 0)} ${productCheck.product.name || 'units'} available in stock`
       });
     }
 
@@ -126,10 +129,10 @@ export const updateCartItem = async (req, res) => {
         return res.status(400).json({ success: false, message: productCheck.message });
       }
 
-      if (!canFitInStock(productCheck.product, requestedQty)) {
+      if (!canFitInStock(productCheck.availableQty, requestedQty)) {
         return res.status(400).json({
           success: false,
-          message: `Only ${Number(productCheck.product.stockQuantity || 0)} ${productCheck.product.name || 'units'} available in stock`
+          message: `Only ${Number(productCheck.availableQty || 0)} ${productCheck.product.name || 'units'} available in stock`
         });
       }
 

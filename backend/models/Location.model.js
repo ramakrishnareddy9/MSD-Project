@@ -40,14 +40,6 @@ const locationSchema = new mongoose.Schema({
     enum: ['active', 'inactive', 'maintenance'],
     default: 'active'
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
 }, {
   timestamps: true
 });
