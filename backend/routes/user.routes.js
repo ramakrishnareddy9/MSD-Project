@@ -178,10 +178,10 @@ router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
   }
 });
 
-// Delete user (admin only)
+// Delete user (admin only) — soft delete for compliance & audit trail
 router.delete('/:id', authenticate, authorize('admin'), validateObjectId('id'), async (req, res) => {
   try {
-    const user = await User.findByIdAndDelete(req.params.id);
+    const user = await User.findById(req.params.id);
 
     if (!user) {
       return res.status(404).json({
@@ -189,6 +189,8 @@ router.delete('/:id', authenticate, authorize('admin'), validateObjectId('id'), 
         message: 'User not found'
       });
     }
+
+    await user.softDelete();
 
     res.json({
       success: true,

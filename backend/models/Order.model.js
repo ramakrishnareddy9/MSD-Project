@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import crypto from 'crypto';
+import { softDeletePlugin } from '../utils/softDelete.plugin.js';
 
 const orderItemSchema = new mongoose.Schema({
   productId: {
@@ -172,6 +173,9 @@ const orderSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+// Soft-delete support
+orderSchema.plugin(softDeletePlugin);
 
 // Indexes
 orderSchema.index({ orderNumber: 1 }, { unique: true });

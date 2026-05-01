@@ -312,8 +312,13 @@ export const deleteProduct = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Forbidden: Only the owner or admin can delete this product' });
     }
 
-    await InventoryLot.deleteMany({ productId: product._id });
-    await product.deleteOne();
+    // Soft-delete associated inventory lots
+    await InventoryLot.updateMany(
+      { productId: product._id },
+      { $set: { isDeleted: true, deletedAt: new Date() } }
+    );
+
+    await product.softDelete();
     res.json({ success: true, message: 'Product deleted successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

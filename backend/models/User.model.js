@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { buildCanonicalAddress } from '../utils/address.util.js';
+import { softDeletePlugin } from '../utils/softDelete.plugin.js';
 
 const addressSchema = new mongoose.Schema({
   type: {
@@ -76,6 +77,9 @@ const userSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+// Soft-delete support
+userSchema.plugin(softDeletePlugin);
 
 // Indexes
 userSchema.index({ email: 1 }, { unique: true });

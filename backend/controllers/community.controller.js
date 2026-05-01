@@ -25,10 +25,10 @@ const buildPoolFarmerProductsQuery = (poolProduct) => {
   return query;
 };
 
-// Create a new community
+// ─── Create a new community ──────────────────────────────────────────
 export const createCommunity = async (req, res) => {
   try {
-    const { name, description, discount } = req.body;
+    const { name, description, discount, type, maxMembers, rules } = req.body;
 
     if (!name || !description) {
       return res.status(400).json({
@@ -42,7 +42,11 @@ export const createCommunity = async (req, res) => {
       description: description.trim(),
       admin: req.user._id,
       members: [{ user: req.user._id }],
-      discount: typeof discount === 'number' ? discount : 10
+      discount: typeof discount === 'number' ? discount : 10,
+      type: type || 'other',
+      maxMembers: typeof maxMembers === 'number' && maxMembers >= 2 ? maxMembers : 100,
+      rules: rules || '',
+      status: 'active'
     }).save();
 
     await community.populate('admin', 'name email');
@@ -58,10 +62,10 @@ export const createCommunity = async (req, res) => {
   }
 };
 
-// Get all communities available to user
+// ─── Get all communities available to user ───────────────────────────
 export const getAllCommunities = async (req, res) => {
   try {
-    const communities = await Community.find()
+    const communities = await Community.find({ status: 'active' })
       .populate('admin', 'name email')
       .populate('members.user', 'name email');
     res.json({ success: true, data: { communities } });
@@ -70,7 +74,7 @@ export const getAllCommunities = async (req, res) => {
   }
 };
 
-// Get communities user has joined
+// ─── Get communities user has joined ─────────────────────────────────
 export const getMyCommunities = async (req, res) => {
   try {
     const communities = await Community.find({ 'members.user': req.user._id })
@@ -82,7 +86,7 @@ export const getMyCommunities = async (req, res) => {
   }
 };
 
-// Get communities managed by the current user
+// ─── Get communities managed by the current user ─────────────────────
 export const getMyAdminCommunities = async (req, res) => {
   try {
     const communities = await Community.find({ admin: req.user._id })
@@ -95,14 +99,19 @@ export const getMyAdminCommunities = async (req, res) => {
   }
 };
 
-// Join a community
+// ─── Join a community (direct — adds join request for admin approval) ─
 export const joinCommunity = async (req, res) => {
   try {
+    const { message } = req.body;
     const community = await Community.findById(req.params.id);
     if (!community) {
       return res.status(404).json({ success: false, message: 'Community not found' });
     }
-    
+
+    if (community.status !== 'active') {
+      return res.status(400).json({ success: false, message: 'This community is not accepting new members' });
+    }
+
     // Check if already a member
     const isMember = community.members.some(
       m => m.user.toString() === req.user._id.toString()
@@ -111,16 +120,192 @@ export const joinCommunity = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Already a member' });
     }
 
-    community.members.push({ user: req.user._id });
+    // Check max members
+    if (community.members.length >= community.maxMembers) {
+      return res.status(400).json({ success: false, message: 'Community has reached its maximum member capacity' });
+    }
+
+    // Check if already has a pending request
+    const hasPendingRequest = community.joinRequests.some(
+      jr => jr.user.toString() === req.user._id.toString() && jr.status === 'pending'
+    );
+    if (hasPendingRequest) {
+      return res.status(400).json({ success: false, message: 'You already have a pending join request' });
+    }
+
+    community.joinRequests.push({
+      user: req.user._id,
+      message: message || '',
+      status: 'pending'
+    });
     await community.save();
-    
-    res.json({ success: true, message: 'Joined community', data: { community } });
+
+    // Notify community admin
+    await notifyUser({
+      userId: community.admin,
+      title: 'New join request',
+      message: `${req.user.name || 'A user'} wants to join ${community.name}.`,
+      type: 'alert',
+      relatedId: community._id
+    });
+
+    res.json({ success: true, message: 'Join request submitted. Awaiting admin approval.', data: { community } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Leave a community
+// ─── Join by invite code (direct add, no approval needed) ────────────
+export const joinByInviteCode = async (req, res) => {
+  try {
+    const { inviteCode } = req.body;
+
+    if (!inviteCode) {
+      return res.status(400).json({ success: false, message: 'Invite code is required' });
+    }
+
+    const community = await Community.findOne({ inviteCode: inviteCode.trim() });
+    if (!community) {
+      return res.status(404).json({ success: false, message: 'Invalid invite code' });
+    }
+
+    if (community.status !== 'active') {
+      return res.status(400).json({ success: false, message: 'This community is not accepting new members' });
+    }
+
+    const isMember = community.members.some(
+      m => m.user.toString() === req.user._id.toString()
+    );
+    if (isMember) {
+      return res.status(400).json({ success: false, message: 'Already a member' });
+    }
+
+    if (community.members.length >= community.maxMembers) {
+      return res.status(400).json({ success: false, message: 'Community has reached its maximum member capacity' });
+    }
+
+    community.members.push({ user: req.user._id });
+    await community.save();
+
+    await community.populate('admin', 'name email');
+    await community.populate('members.user', 'name email');
+
+    // Notify admin
+    await notifyUser({
+      userId: community.admin,
+      title: 'New member joined',
+      message: `${req.user.name || 'A user'} joined ${community.name} via invite code.`,
+      type: 'alert',
+      relatedId: community._id
+    });
+
+    res.json({ success: true, message: 'Joined community successfully', data: { community } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ─── Lookup community by invite code ─────────────────────────────────
+export const getCommunityByInviteCode = async (req, res) => {
+  try {
+    const community = await Community.findOne({ inviteCode: req.params.code, status: 'active' })
+      .populate('admin', 'name email')
+      .select('name description type admin members.length discount maxMembers');
+
+    if (!community) {
+      return res.status(404).json({ success: false, message: 'Community not found or inactive' });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        community: {
+          _id: community._id,
+          name: community.name,
+          description: community.description,
+          type: community.type,
+          admin: community.admin,
+          memberCount: community.members?.length || 0,
+          maxMembers: community.maxMembers,
+          discount: community.discount
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ─── Review a join request (admin only) ──────────────────────────────
+export const reviewJoinRequest = async (req, res) => {
+  try {
+    const { action } = req.body; // 'approve' or 'reject'
+
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ success: false, message: 'Action must be "approve" or "reject"' });
+    }
+
+    const community = await Community.findById(req.params.id);
+    if (!community) {
+      return res.status(404).json({ success: false, message: 'Community not found' });
+    }
+
+    if (community.admin.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Only community admin can review join requests' });
+    }
+
+    const joinRequest = community.joinRequests.id(req.params.requestId);
+    if (!joinRequest) {
+      return res.status(404).json({ success: false, message: 'Join request not found' });
+    }
+
+    if (joinRequest.status !== 'pending') {
+      return res.status(400).json({ success: false, message: `Join request already ${joinRequest.status}` });
+    }
+
+    joinRequest.reviewedAt = new Date();
+    joinRequest.reviewedBy = req.user._id;
+
+    if (action === 'approve') {
+      if (community.members.length >= community.maxMembers) {
+        return res.status(400).json({ success: false, message: 'Community has reached its maximum member capacity' });
+      }
+
+      joinRequest.status = 'approved';
+      community.members.push({ user: joinRequest.user });
+
+      await notifyUser({
+        userId: joinRequest.user,
+        title: 'Join request approved',
+        message: `Your request to join ${community.name} has been approved!`,
+        type: 'system',
+        relatedId: community._id
+      });
+    } else {
+      joinRequest.status = 'rejected';
+
+      await notifyUser({
+        userId: joinRequest.user,
+        title: 'Join request rejected',
+        message: `Your request to join ${community.name} has been rejected.`,
+        type: 'system',
+        relatedId: community._id
+      });
+    }
+
+    await community.save();
+
+    res.json({
+      success: true,
+      message: `Join request ${action}d successfully`,
+      data: { joinRequest }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ─── Leave a community ──────────────────────────────────────────────
 export const leaveCommunity = async (req, res) => {
   try {
     const community = await Community.findById(req.params.id);
@@ -152,11 +337,9 @@ export const leaveCommunity = async (req, res) => {
         });
       }
 
-      await Promise.all([
-        CommunityPool.deleteMany({ community: community._id }),
-        ChatMessage.deleteMany({ community: community._id }),
-        Community.findByIdAndDelete(community._id)
-      ]);
+      // Soft-delete the community and related data
+      await CommunityPool.softDeleteMany({ community: community._id });
+      await community.softDelete();
 
       await notifyUser({
         userId: req.user._id,
@@ -189,7 +372,7 @@ export const leaveCommunity = async (req, res) => {
   }
 };
 
-// Transfer community ownership
+// ─── Transfer community ownership ───────────────────────────────────
 export const transferOwnership = async (req, res) => {
   try {
     const { newAdminId } = req.body;
@@ -253,7 +436,7 @@ export const transferOwnership = async (req, res) => {
   }
 };
 
-// Delete a community
+// ─── Delete a community (soft-delete) ────────────────────────────────
 export const deleteCommunity = async (req, res) => {
   try {
     const community = await Community.findById(req.params.id);
@@ -275,12 +458,9 @@ export const deleteCommunity = async (req, res) => {
       relatedId: community._id
     });
 
-    await Promise.all([
-      CommunityPool.deleteMany({ community: community._id }),
-      ChatMessage.deleteMany({ community: community._id }),
-      CommunityAnnouncement.deleteMany({ community: community._id }),
-      Community.findByIdAndDelete(community._id)
-    ]);
+    // Soft-delete community and related pools
+    await CommunityPool.softDeleteMany({ community: community._id });
+    await community.softDelete();
 
     return res.json({ success: true, message: 'Community deleted successfully' });
   } catch (error) {
@@ -288,7 +468,7 @@ export const deleteCommunity = async (req, res) => {
   }
 };
 
-// Get announcements for a community (members only)
+// ─── Get announcements for a community (members only) ────────────────
 export const getCommunityAnnouncements = async (req, res) => {
   try {
     const community = await Community.findById(req.params.id);
@@ -315,7 +495,7 @@ export const getCommunityAnnouncements = async (req, res) => {
   }
 };
 
-// Create announcement (community admin only)
+// ─── Create announcement (community admin only) ─────────────────────
 export const createCommunityAnnouncement = async (req, res) => {
   try {
     const { title, message, type = 'info', notifyMembers = true } = req.body;
@@ -368,7 +548,7 @@ export const createCommunityAnnouncement = async (req, res) => {
   }
 };
 
-// Get pools for a community
+// ─── Get pools for a community ──────────────────────────────────────
 export const getCommunityPools = async (req, res) => {
   try {
     const pools = await CommunityPool.find({ community: req.params.id })
@@ -406,7 +586,7 @@ export const getCommunityPools = async (req, res) => {
   }
 };
 
-// List eligible farmers for a community pool (members only)
+// ─── List eligible farmers for a community pool (members only) ──────
 export const getPoolFarmers = async (req, res) => {
   try {
     const community = await Community.findById(req.params.id);
@@ -486,7 +666,7 @@ export const getPoolFarmers = async (req, res) => {
   }
 };
 
-// Contribute to a pool
+// ─── Contribute to a pool ───────────────────────────────────────────
 export const contributeToPool = async (req, res) => {
   try {
     const { qty, amount } = req.body;
@@ -526,7 +706,7 @@ export const contributeToPool = async (req, res) => {
   }
 };
 
-// Contribute to a pool by community + product (upsert pool if missing)
+// ─── Contribute to a pool by community + product (upsert pool if missing)
 export const contributeToCommunityPool = async (req, res) => {
   try {
     const { productId, qty, amount, minBulkQty } = req.body;
@@ -606,18 +786,28 @@ export const contributeToCommunityPool = async (req, res) => {
   }
 };
 
-// Place bulk order from community pool to farmer (admin only)
+// ─── Place a bulk order from a pool with a selected farmer ────────────────
 export const orderPoolFromFarmer = async (req, res) => {
   try {
-    const { farmerId, vehicleId } = req.body || {};
+    const { farmerId, vehicleId } = req.body;
 
-    const community = await Community.findById(req.params.id);
+    if (!farmerId) {
+      return res.status(400).json({
+        success: false,
+        message: 'farmerId is required'
+      });
+    }
+
+    const community = await Community.findById(req.params.id).select('admin members name');
     if (!community) {
       return res.status(404).json({ success: false, message: 'Community not found' });
     }
 
     if (community.admin.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ success: false, message: 'Only community admin can place bulk orders' });
+      return res.status(403).json({
+        success: false,
+        message: 'Only community admin can place pool orders'
+      });
     }
 
     const pool = await CommunityPool.findOne({
@@ -629,23 +819,18 @@ export const orderPoolFromFarmer = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Community pool not found' });
     }
 
-    if (pool.status === 'ordered' || pool.status === 'delivered' || pool.status === 'allocated') {
-      return res.status(400).json({ success: false, message: `Pool is already in ${pool.status} state` });
-    }
-
-    if (Number(pool.minBulkQty || 0) < COMMUNITY_MIN_BULK_QTY) {
-      pool.minBulkQty = COMMUNITY_MIN_BULK_QTY;
-    }
-
-    if (pool.totalQty < pool.minBulkQty) {
+    if (pool.status !== 'ready') {
       return res.status(400).json({
         success: false,
-        message: 'Pool has not reached minimum bulk quantity yet'
+        message: 'Pool is not ready for ordering yet'
       });
     }
 
-    if (!vehicleId) {
-      return res.status(400).json({ success: false, message: 'vehicleId is required for community bulk order delivery' });
+    if (Number(pool.totalQty || 0) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Pool has no quantity to order'
+      });
     }
 
     const productQuery = buildPoolFarmerProductsQuery(pool.product);
@@ -653,182 +838,180 @@ export const orderPoolFromFarmer = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Pool product is invalid' });
     }
 
-    const candidateProducts = await Product.find(productQuery)
-      .populate('ownerId', 'name email phone roles status')
-      .sort({ basePrice: 1, createdAt: -1 });
+    const farmerProduct = await Product.findOne({
+      ...productQuery,
+      ownerId: farmerId
+    }).populate('ownerId', 'name email');
 
-    const eligibleProducts = candidateProducts.filter((product) => {
-      const owner = product.ownerId;
-      return owner && owner.status === 'active' && owner.roles?.includes('farmer');
-    });
-
-    if (!eligibleProducts.length) {
-      return res.status(400).json({ success: false, message: 'No eligible farmers found for this community pool order' });
+    if (!farmerProduct) {
+      return res.status(400).json({
+        success: false,
+        message: 'Selected farmer does not have an active matching product'
+      });
     }
 
-    let product = null;
-
-    if (farmerId) {
-      product = eligibleProducts.find(
-        (candidate) => String(candidate.ownerId?._id || candidate.ownerId) === String(farmerId)
-      );
-
-      if (!product) {
-        return res.status(400).json({ success: false, message: 'Selected farmer is not eligible for this pool product' });
+    let vehicle = null;
+    if (vehicleId) {
+      vehicle = await Vehicle.findById(vehicleId).populate('owner', 'name email');
+      if (!vehicle) {
+        return res.status(404).json({ success: false, message: 'Vehicle not found' });
       }
-    } else if (eligibleProducts.length === 1) {
-      product = eligibleProducts[0];
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: 'Multiple farmers are available. Please select a farmer before placing this order.'
-      });
+      if (vehicle.status !== 'Available') {
+        return res.status(400).json({
+          success: false,
+          message: 'Selected vehicle is not available'
+        });
+      }
     }
 
-    const ownerRoles = product.ownerId?.roles || [];
-    if (!ownerRoles.includes('farmer')) {
-      return res.status(400).json({ success: false, message: 'Bulk order can be placed only with a farmer-owned crop product' });
-    }
+    const contributorIds = (pool.contributions || []).map((entry) => entry.member);
 
-    const vehicle = await Vehicle.findById(vehicleId).populate('owner', 'roles status name email');
-    if (!vehicle) {
-      return res.status(404).json({ success: false, message: 'Selected delivery vehicle was not found' });
-    }
-
-    const vehicleOwnerRoles = vehicle.owner?.roles || [];
-    const isDeliveryPartnerVehicle = vehicleOwnerRoles.some((role) => ['delivery', 'delivery_large', 'delivery_small'].includes(role));
-    const isOwnerActive = vehicle.owner?.status === 'active';
-    if (!isDeliveryPartnerVehicle || !isOwnerActive) {
-      return res.status(400).json({ success: false, message: 'Selected vehicle must belong to an active delivery partner' });
-    }
-
-    if (vehicle.status !== 'Available') {
-      return res.status(400).json({ success: false, message: 'Selected delivery vehicle is not currently available' });
-    }
-
-    if (Number(vehicle.capacity || 0) < Number(pool.totalQty || 0)) {
-      return res.status(400).json({
-        success: false,
-        message: `Selected vehicle capacity (${Number(vehicle.capacity || 0)} kg) is less than pool quantity (${Number(pool.totalQty || 0)} kg)`
-      });
-    }
-
-    const totalAmount = (pool.contributions || []).reduce((sum, c) => sum + Number(c.amount || 0), 0);
-    const contributorIds = [
-      ...new Set(
-        (pool.contributions || [])
-          .map((contribution) => String(contribution.member || '').trim())
-          .filter(Boolean)
-      )
-    ];
-    const offeredPrice = pool.totalQty > 0
-      ? Number((totalAmount / pool.totalQty).toFixed(2))
-      : Number(product.basePrice ?? product.price ?? 0);
-
-    const marketplaceRequest = await MarketplaceRequest.create({
+    const request = await MarketplaceRequest.create({
       requesterId: req.user._id,
-      requesterRole: req.user.roles?.[0] || 'community',
+      requesterRole: 'community',
       requesterType: 'community',
-      productId: product._id,
-      cropName: product.name,
-      quantity: Number(pool.totalQty),
-      unit: product.unit || 'kg',
-      offeredPrice,
-      currentOfferPrice: offeredPrice,
+      cropName: farmerProduct.name,
+      productId: farmerProduct._id,
+      quantity: Number(pool.totalQty || 0),
+      unit: farmerProduct.unit || 'kg',
+      offeredPrice: Number(farmerProduct.basePrice || 0),
+      currentOfferPrice: Number(farmerProduct.basePrice || 0),
       lastOfferedBy: 'buyer',
       buyerAccepted: true,
       farmerAccepted: false,
-      negotiationHistory: [{
-        offeredBy: 'buyer',
-        price: offeredPrice,
-        message: `Community bulk order placed for ${pool.totalQty} ${product.unit || 'kg'}`
-      }],
-      location: 'India',
-      notes: `Community ${community.name} bulk order from pool ${pool._id}`,
       status: 'open',
-      matchedFarmerId: product.ownerId?._id || product.ownerId,
+      matchedFarmerId: farmerId,
       communityContext: {
         communityId: community._id,
         poolId: pool._id,
         contributorIds
       },
       delivery: {
-        requestedVehicleId: vehicle._id,
-        requestedPartnerId: vehicle.owner?._id || vehicle.owner,
-        requestedAt: new Date(),
-        requestStatus: 'requested'
-      }
+        requestedVehicleId: vehicle ? vehicle._id : undefined,
+        requestedPartnerId: vehicle?.owner?._id,
+        requestedAt: vehicle ? new Date() : undefined,
+        requestStatus: vehicle ? 'requested' : 'none'
+      },
+      notes: `Community bulk order from ${community.name}`
     });
 
     pool.status = 'ordered';
-    pool.assignedFarmer = product.ownerId?._id || product.ownerId;
-    pool.assignedVehicle = vehicle._id;
-    pool.assignedDeliveryPartner = vehicle.owner?._id || vehicle.owner;
-    pool.deliveryRequestedAt = new Date();
-    pool.deliveryRequestStatus = 'requested';
-    pool.deliveredAt = undefined;
+    pool.assignedFarmer = farmerId;
+    if (vehicle) {
+      pool.assignedVehicle = vehicle._id;
+      pool.assignedDeliveryPartner = vehicle.owner?._id;
+      pool.deliveryRequestedAt = new Date();
+      pool.deliveryRequestStatus = 'requested';
+    }
     await pool.save();
-    await pool.populate('assignedFarmer', 'name email');
 
-    await Promise.all([
-      notifyUser({
-        userId: product.ownerId?._id || product.ownerId,
-        title: 'New community bulk order',
-        message: `${community.name} placed a bulk order for ${product.name} (${pool.totalQty} ${product.unit || 'kg'}).`,
-        type: 'order',
-        relatedId: marketplaceRequest._id
-      }),
-      notifyUsers((community.members || []).map((member) => member.user), {
-        title: 'Bulk order placed',
-        message: `Community admin placed a bulk order to farmer for ${product.name} and requested vehicle ${vehicle.name}.`,
-        type: 'order',
-        relatedId: marketplaceRequest._id
-      }),
-      notifyUser({
-        userId: vehicle.owner?._id || vehicle.owner,
-        title: 'Community delivery vehicle requested',
-        message: `${community.name} requested your vehicle ${vehicle.name} for ${product.name} (${pool.totalQty} ${product.unit || 'kg'}).`,
-        type: 'delivery',
-        relatedId: marketplaceRequest._id
-      })
-    ]);
+    await notifyUser({
+      userId: farmerId,
+      title: 'New community pool order',
+      message: `${community.name} placed a bulk order for ${farmerProduct.name}.`,
+      type: 'order',
+      relatedId: request._id
+    });
+
+    if (vehicle?.owner?._id) {
+      await notifyUser({
+        userId: vehicle.owner._id,
+        title: 'Vehicle assigned for delivery',
+        message: `Your vehicle ${vehicle.name || vehicle.plateNumber || ''} has been requested for a community delivery.`,
+        type: 'alert',
+        relatedId: request._id
+      });
+    }
+
+    await pool.populate('assignedFarmer', 'name email phone');
+    await pool.populate('assignedVehicle', 'name type capacity status plateNumber');
 
     return res.json({
       success: true,
-      message: 'Bulk order has been sent to farmer successfully',
-      data: { pool, request: marketplaceRequest }
+      message: 'Bulk order sent to farmer successfully',
+      data: {
+        pool,
+        request
+      }
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Get community chat
+// ─── Get chat messages for a community ─────────────────────────────────────
 export const getCommunityChat = async (req, res) => {
   try {
+    const community = await Community.findById(req.params.id).select('admin members');
+    if (!community) {
+      return res.status(404).json({ success: false, message: 'Community not found' });
+    }
+
+    const currentUserId = req.user._id.toString();
+    const isAdmin = community.admin.toString() === currentUserId;
+    const isMember = (community.members || []).some(
+      (member) => member.user.toString() === currentUserId
+    );
+
+    if (!isAdmin && !isMember) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not a member of this community'
+      });
+    }
+
     const messages = await ChatMessage.find({ community: req.params.id })
-      .populate('sender', 'name')
-      .sort('createdAt');
-    res.json({ success: true, data: { messages } });
+      .populate('sender', 'name email')
+      .sort({ createdAt: 1 })
+      .limit(200);
+
+    return res.json({ success: true, data: { messages } });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Send chat message
+// ─── Send a chat message to a community ────────────────────────────────────
 export const sendChatMessage = async (req, res) => {
   try {
     const { message } = req.body;
-    const msg = new ChatMessage({
-      community: req.params.id,
+
+    if (!message || !String(message).trim()) {
+      return res.status(400).json({ success: false, message: 'Message is required' });
+    }
+
+    const community = await Community.findById(req.params.id).select('admin members');
+    if (!community) {
+      return res.status(404).json({ success: false, message: 'Community not found' });
+    }
+
+    const currentUserId = req.user._id.toString();
+    const isAdmin = community.admin.toString() === currentUserId;
+    const isMember = (community.members || []).some(
+      (member) => member.user.toString() === currentUserId
+    );
+
+    if (!isAdmin && !isMember) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not a member of this community'
+      });
+    }
+
+    const chatMessage = await ChatMessage.create({
+      community: community._id,
       sender: req.user._id,
-      message
+      message: String(message).trim()
     });
-    await msg.save();
-    await msg.populate('sender', 'name');
-    
-    res.json({ success: true, data: { message: msg } });
+
+    await chatMessage.populate('sender', 'name email');
+
+    return res.status(201).json({
+      success: true,
+      message: 'Message sent successfully',
+      data: { message: chatMessage }
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

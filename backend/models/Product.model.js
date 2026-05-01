@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { PRODUCT_STATUSES, PRODUCT_UNITS } from '../constants/productEnums.js';
+import { softDeletePlugin } from '../utils/softDelete.plugin.js';
 
 const productSchema = new mongoose.Schema({
   ownerId: {
@@ -84,6 +85,9 @@ const productSchema = new mongoose.Schema({
   toJSON: { virtuals: true },
   toObject: { virtuals: true }
 });
+
+// Soft-delete support
+productSchema.plugin(softDeletePlugin);
 
 // Indexes
 productSchema.index({ ownerId: 1, status: 1, createdAt: -1 });
