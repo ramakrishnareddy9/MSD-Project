@@ -165,4 +165,22 @@ marketplaceRequestSchema.pre('validate', function(next) {
 
 const MarketplaceRequest = mongoose.model('MarketplaceRequest', marketplaceRequestSchema);
 
+/**
+ * Issue 12 - Validate state transition
+ * Ensures valid state transitions to prevent invalid workflows
+ */
+MarketplaceRequest.prototype.canTransitionTo = function(newStatus) {
+  const validTransitions = {
+    'open': ['countered', 'declined'],
+    'countered': ['open', 'accepted', 'declined'],
+    'accepted': ['fulfilled', 'cancelled'],
+    'declined': [],
+    'fulfilled': ['cancelled'],
+    'cancelled': []
+  };
+  
+  const allowed = validTransitions[this.status] || [];
+  return allowed.includes(newStatus);
+};
+
 export default MarketplaceRequest;

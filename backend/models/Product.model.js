@@ -48,6 +48,11 @@ const productSchema = new mongoose.Schema({
     enum: PRODUCT_STATUSES,
     default: 'active'
   },
+  stockQuantity: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   minOrderQuantity: {
     type: Number,
     default: 1

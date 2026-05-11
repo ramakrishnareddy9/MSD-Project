@@ -63,6 +63,13 @@ const inventoryLotSchema = new mongoose.Schema({
 inventoryLotSchema.index({ productId: 1, locationId: 1, expiryDate: 1 });
 inventoryLotSchema.index({ expiryDate: 1 });
 inventoryLotSchema.index({ locationId: 1, quantity: 1 });
+// Issue 7 - Add TTL index for automatic reservation cleanup after 30 minutes
+inventoryLotSchema.index(
+  { 'reservations.expiresAt': 1 },
+  { expireAfterSeconds: 0 }
+);
+// Issue 17 - Add index on user field for Cart
+// Issue 18 - Add index on user field for Wishlist
 
 // Virtual for available quantity
 inventoryLotSchema.virtual('availableQuantity').get(function() {

@@ -246,6 +246,57 @@ export const validateReview = [
 ];
 
 /**
+ * Order Validation
+ * Issue 26 - Add delivery address validation
+ * Issue 27 - Validate cart items before checkout
+ */
+export const validateOrder = [
+  body('type')
+    .isIn(['b2c', 'b2b'])
+    .withMessage('Order type must be b2c or b2b'),
+  
+  body('orderItems')
+    .isArray({ min: 1 })
+    .withMessage('Order must have at least one item'),
+  
+  body('orderItems.*.productId')
+    .notEmpty()
+    .withMessage('Product ID is required for each item'),
+  
+  body('orderItems.*.quantity')
+    .isInt({ min: 1 })
+    .withMessage('Quantity must be at least 1'),
+  
+  // Issue 26 - Validate delivery address completely
+  body('deliveryAddress.line1')
+    .trim()
+    .notEmpty()
+    .withMessage('Address line 1 is required'),
+  
+  body('deliveryAddress.city')
+    .trim()
+    .notEmpty()
+    .withMessage('City is required'),
+  
+  body('deliveryAddress.state')
+    .trim()
+    .notEmpty()
+    .withMessage('State is required'),
+  
+  body('deliveryAddress.postalCode')
+    .trim()
+    .matches(/^\\d{5,6}$/)
+    .withMessage('Postal code must be 5-6 digits'),
+  
+  body('deliveryAddress.country')
+    .trim()
+    .notEmpty()
+    .withMessage('Country is required'),
+  
+  handleValidationErrors
+];
+
+/**
  * MongoDB ObjectId Validation (for params)
  */
 export const validateObjectId = (paramName = 'id') => [

@@ -161,7 +161,7 @@ commissionSchema.statics.getSettlementSummary = async function(sellerId, cycleId
   return this.aggregate([
     {
       $match: {
-        sellerId: mongoose.Types.ObjectId(sellerId),
+        sellerId: new mongoose.Types.ObjectId(sellerId),
         'settlement.cycleId': cycleId
       }
     },

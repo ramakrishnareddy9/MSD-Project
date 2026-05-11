@@ -184,7 +184,7 @@ orderSchema.index({ sellerId: 1, status: 1, createdAt: -1 });
 orderSchema.index({ sellerId: 1, createdAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ type: 1, status: 1 });
-orderSchema.index({ scheduledWindowStart: 1 });
+orderSchema.index({ paymentTerms: 1, status: 1 }); // Issue 19 - Add index for payment terms queries
 
 // Generate order number before validation so required constraint passes.
 orderSchema.pre('validate', function(next) {

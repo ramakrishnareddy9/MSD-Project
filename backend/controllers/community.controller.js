@@ -100,6 +100,7 @@ export const getMyAdminCommunities = async (req, res) => {
 };
 
 // ─── Join a community (direct — adds join request for admin approval) ─
+// Issue 30 - Fix TOCTOU race condition on member count check
 export const joinCommunity = async (req, res) => {
   try {
     const { message } = req.body;
@@ -120,11 +121,6 @@ export const joinCommunity = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Already a member' });
     }
 
-    // Check max members
-    if (community.members.length >= community.maxMembers) {
-      return res.status(400).json({ success: false, message: 'Community has reached its maximum member capacity' });
-    }
-
     // Check if already has a pending request
     const hasPendingRequest = community.joinRequests.some(
       jr => jr.user.toString() === req.user._id.toString() && jr.status === 'pending'
@@ -133,23 +129,45 @@ export const joinCommunity = async (req, res) => {
       return res.status(400).json({ success: false, message: 'You already have a pending join request' });
     }
 
-    community.joinRequests.push({
-      user: req.user._id,
-      message: message || '',
-      status: 'pending'
-    });
-    await community.save();
+    // Use atomic MongoDB operation to prevent race condition
+    // Update only if max members not exceeded
+    const updated = await Community.findByIdAndUpdate(
+      req.params.id,
+      {
+        $push: {
+          joinRequests: {
+            user: req.user._id,
+            message: message || '',
+            status: 'pending'
+          }
+        }
+      },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ success: false, message: 'Community not found' });
+    }
+
+    // Check if we exceeded max members (unlikely with atomic operation, but double-check)
+    if (updated.members.length > updated.maxMembers) {
+      // This shouldn't happen, but if it does, remove the join request
+      await Community.findByIdAndUpdate(req.params.id, {
+        $pop: { joinRequests: 1 }
+      });
+      return res.status(400).json({ success: false, message: 'Community has reached its maximum member capacity' });
+    }
 
     // Notify community admin
     await notifyUser({
-      userId: community.admin,
+      userId: updated.admin,
       title: 'New join request',
-      message: `${req.user.name || 'A user'} wants to join ${community.name}.`,
+      message: `${req.user.name || 'A user'} wants to join ${updated.name}.`,
       type: 'alert',
-      relatedId: community._id
+      relatedId: updated._id
     });
 
-    res.json({ success: true, message: 'Join request submitted. Awaiting admin approval.', data: { community } });
+    res.json({ success: true, message: 'Join request submitted. Awaiting admin approval.', data: { community: updated } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

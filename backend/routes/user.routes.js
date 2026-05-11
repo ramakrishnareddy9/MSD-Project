@@ -142,15 +142,23 @@ router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
       });
     }
 
+    // Issue 38 - Prevent privilege escalation: Users cannot self-update roles or verification status
     const allowedSelfFields = [
       'name', 'email', 'phone', 'addresses'
     ];
+    const forbiddenFields = ['roles', 'emailVerified', 'phoneVerified', 'kycStatus', 'status'];
 
-    const updatePayload = isAdmin
+    // Issue 38 - Prevent privilege escalation
+    let updatePayload = isAdmin
       ? req.body
       : Object.fromEntries(
           Object.entries(req.body || {}).filter(([key]) => allowedSelfFields.includes(key))
         );
+    
+    // Extra safety: even if admin flag somehow bypassed, block role updates for self
+    if (isSelf) {
+      forbiddenFields.forEach(field => delete updatePayload[field]);
+    }
 
     const user = await User.findByIdAndUpdate(
       req.params.id,

@@ -185,6 +185,95 @@ export const removeItemFromCart = async (req, res) => {
   }
 };
 
+// @desc    Validate cart before checkout
+// @route   POST /api/cart/validate
+// @access  Private
+// Issue 27 - Pre-validate all cart items before checkout
+export const validateCartBeforeCheckout = async (req, res) => {
+  try {
+    const cart = await Cart.findOne({ user: req.user._id }).populate({
+      path: 'items.product',
+      select: 'name status ownerId categoryId basePrice'
+    });
+
+    if (!cart || cart.items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cart is empty'
+      });
+    }
+
+    // Validate each item
+    const validation = {
+      valid: true,
+      errors: [],
+      items: []
+    };
+
+    for (const item of cart.items) {
+      const product = item.product;
+
+      // Check product exists and is active
+      if (!product || product.status !== 'active') {
+        validation.valid = false;
+        validation.errors.push({
+          productId: item.product?._id || 'unknown',
+          message: `Product is no longer available`
+        });
+        continue;
+      }
+
+      // Check inventory
+      const availableQty = await InventoryLot.getAvailableQuantityForProduct(product._id);
+      if (item.qty > availableQty) {
+        validation.valid = false;
+        validation.errors.push({
+          productId: product._id,
+          productName: product.name,
+          message: `Insufficient inventory. Available: ${availableQty}, Requested: ${item.qty}`
+        });
+        continue;
+      }
+
+      // Check seller is active farmer
+      const owner = await User.findById(product.ownerId).select('roles status');
+      if (!owner?.roles?.includes('farmer') || owner?.status !== 'active') {
+        validation.valid = false;
+        validation.errors.push({
+          productId: product._id,
+          productName: product.name,
+          message: `Product seller is no longer available`
+        });
+        continue;
+      }
+
+      validation.items.push({
+        productId: product._id,
+        productName: product.name,
+        quantity: item.qty,
+        unitPrice: product.basePrice,
+        totalPrice: item.qty * product.basePrice
+      });
+    }
+
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cart validation failed',
+        errors: validation.errors
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Cart validated successfully',
+      data: validation
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // @desc    Clear cart
 // @route   DELETE /api/cart
 // @access  Private

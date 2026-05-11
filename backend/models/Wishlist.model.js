@@ -5,7 +5,8 @@ const wishlistSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true,
-    unique: true
+    unique: true,
+    index: true  // Issue 18 - Add index for faster user lookups
   },
   products: [{
     type: mongoose.Schema.Types.ObjectId,

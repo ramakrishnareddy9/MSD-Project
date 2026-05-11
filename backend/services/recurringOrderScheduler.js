@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import mongoose from 'mongoose';
 import RecurringOrder from '../models/RecurringOrder.model.js';
 import Order from '../models/Order.model.js';
+import Commission from '../models/Commission.model.js';
 import Product from '../models/Product.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
 import User from '../models/User.model.js';
@@ -166,6 +167,36 @@ async function processRecurringOrder(recurringOrder) {
         },
         updateOptions
       );
+    }
+
+    // Issue 8, 11 - Create commission record for recurring order (matching manual orders)
+    const commissionRate = recurringOrder.type === 'b2b' ? 0.05 : 0.10;
+    const commissionAmount = subtotal * commissionRate;
+
+    const commission = new Commission({
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+      sellerId: sellerId,
+      sellerType: 'farmer',
+      orderAmount: subtotal,
+      commissionRate,
+      commissionAmount,
+      sellerPayout: subtotal - commissionAmount,
+      status: 'pending',
+      metadata: {
+        orderType: recurringOrder.type,
+        productCount: orderItems.length,
+        deliveryFee,
+        region: deliveryAddress?.state,
+        isRecurringOrder: true,
+        recurringOrderId: recurringOrder._id
+      }
+    });
+
+    if (useTransaction) {
+      await commission.save({ session });
+    } else {
+      await commission.save();
     }
     
     if (useTransaction && session) {
