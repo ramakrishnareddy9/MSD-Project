@@ -8,12 +8,15 @@ import MarketplaceRequest from '../models/MarketplaceRequest.model.js';
 import CommunityPool from '../models/CommunityPool.model.js';
 import Commission from '../models/Commission.model.js';
 import Vehicle from '../models/Vehicle.model.js';
+import DeliveryTask from '../models/DeliveryTask.model.js';
 import User from '../models/User.model.js';
 import { notifyUsers } from '../utils/notification.util.js';
 import { assertTransactionVerification } from '../utils/verification.util.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
 import { validateOrder, validateObjectId } from '../middleware/validation.middleware.js';
+import { validateTransition, getAllowedTransitions, getTransitionMetadata, createTransitionAuditLog } from '../utils/orderStateMachine.util.js';
+import { safeAtomicDeliveryAcceptance, atomicDeliveryStatusUpdate, createDeliveryAuditLog } from '../utils/deliveryAtomicLocking.util.js';
 
 const router = express.Router();
 
@@ -48,6 +51,7 @@ router.get('/', authenticate, async (req, res) => {
       query.$or = [{ buyerId: req.user._id }, { sellerId: req.user._id }];
       if (isDeliveryUser) {
         query.$or.push({ 'delivery.requestedPartnerId': req.user._id });
+        query.$or.push({ 'delivery.requestedPartnerId': null, 'delivery.requestStatus': 'requested' });
       }
     }
     if (type) query.type = type;
@@ -430,44 +434,74 @@ router.post('/', authenticate, (req, res, next) => {
   }
 });
 
-// Update order status (farmer, delivery, admin only)
-router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'delivery_large', 'delivery_small', 'admin'), validateObjectId('id'), async (req, res) => {
+// Update order status (with finite state machine validation)
+// Only authorized roles can transition to specific statuses
+// Issue: Order State Transition Violations - FIXED with FSM
+router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'delivery_large', 'delivery_small', 'admin', 'customer'), validateObjectId('id'), async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status: newStatus, reason } = req.body;
 
-    const order = await Order.findById(req.params.id);
-
-    if (!order) {
-      return res.status(404).json({
+    // Validate status is provided
+    if (!newStatus) {
+      return res.status(400).json({
         success: false,
-        message: 'Order not found'
+        error: 'Order status is required',
+        code: 'MISSING_STATUS'
       });
     }
 
+    // Get current order
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+        code: 'ORDER_NOT_FOUND'
+      });
+    }
+
+    const currentStatus = order.status;
+    const normalizedNewStatus = String(newStatus).toLowerCase();
+
+    // CRITICAL: Validate state transition using finite state machine
+    const transitionValidation = validateTransition(currentStatus, normalizedNewStatus, {
+      userRole: req.user.roles?.[0] // Use primary role for validation
+    });
+
+    if (!transitionValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: transitionValidation.error,
+        code: transitionValidation.code,
+        allowedTransitions: transitionValidation.allowedTransitions || getAllowedTransitions(currentStatus),
+        currentStatus,
+        attemptedStatus: normalizedNewStatus
+      });
+    }
+
+    // Additional role-based checks
     const isAdmin = req.user.roles?.includes('admin');
     const isDeliveryUser = req.user.roles?.some((role) => ['delivery', 'delivery_large', 'delivery_small'].includes(role));
 
+    // Delivery partners must have accepted delivery assignment
     if (!isAdmin && isDeliveryUser) {
       const assignedToPartner = String(order.delivery?.requestedPartnerId || '') === String(req.user._id);
       const requestAccepted = order.delivery?.requestStatus === 'accepted';
       if (!assignedToPartner || !requestAccepted) {
         return res.status(403).json({
           success: false,
-          message: 'Delivery partner can only update status for accepted delivery assignments'
-        });
-      }
-
-      if (!['shipped', 'delivered'].includes(String(status))) {
-        return res.status(400).json({
-          success: false,
-          message: 'Delivery partner can only update status to shipped or delivered'
+          message: 'Delivery partner can only update status for accepted delivery assignments',
+          code: 'DELIVERY_NOT_ASSIGNED'
         });
       }
     }
 
+    // ✅ FSM validation passed - proceed with status update
     const previousStatus = order.status;
-    order.status = status;
-    if (String(status) === 'delivered') {
+    order.status = normalizedNewStatus;
+
+    // Handle status-specific side effects
+    if (normalizedNewStatus === 'delivered') {
       order.delivery = {
         ...(order.delivery || {}),
         actualDelivery: new Date()
@@ -475,26 +509,91 @@ router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'deliv
       if (order.delivery?.requestedVehicleId) {
         await Vehicle.findByIdAndUpdate(order.delivery.requestedVehicleId, { status: 'Available' });
       }
+
+      // ── 2.2: Permanently deduct inventory (confirm reservations → reduce lot.quantity) ──
+      try {
+        const lots = await InventoryLot.find({
+          'reservations.orderId': order._id,
+          'reservations.status': { $in: ['active', 'confirmed'] }
+        });
+        for (const lot of lots) {
+          const reservation = lot.reservations.find(
+            r => String(r.orderId) === String(order._id) &&
+                 ['active', 'confirmed'].includes(r.status)
+          );
+          if (reservation) {
+            reservation.status = 'confirmed';
+            lot.quantity       = Math.max(0, lot.quantity - reservation.quantity);
+            lot.reservedQuantity = Math.max(0, lot.reservedQuantity - reservation.quantity);
+            await lot.save();
+            await InventoryLot.syncProductStockQuantity(lot.productId);
+          }
+        }
+      } catch (invErr) {
+        console.error('Inventory deduction on delivery failed:', invErr.message);
+      }
+
+      // ── 2.3: Auto-trigger commission → collected ──
+      try {
+        const commission = await Commission.findOne({ orderId: order._id });
+        if (commission && commission.status === 'pending') {
+          await commission.markCollected();
+        }
+      } catch (commErr) {
+        console.error('Commission markCollected failed:', commErr.message);
+      }
+
+      // ── 2.7: Award loyalty points to buyer (1 pt per ₹100 spent) ──
+      try {
+        const pointsEarned = Math.floor((order.total || 0) / 100);
+        if (pointsEarned > 0) {
+          await User.findByIdAndUpdate(order.buyerId, { $inc: { loyaltyPoints: pointsEarned } });
+        }
+      } catch (loyaltyErr) {
+        console.error('Loyalty points award failed:', loyaltyErr.message);
+      }
     }
-    if (String(status) === 'cancelled' && order.delivery?.requestedVehicleId) {
-      await Vehicle.findByIdAndUpdate(order.delivery.requestedVehicleId, { status: 'Available' });
+
+    if (normalizedNewStatus === 'cancelled') {
+      if (order.delivery?.requestedVehicleId) {
+        await Vehicle.findByIdAndUpdate(order.delivery.requestedVehicleId, { status: 'Available' });
+      }
+
+      // ── 2.4: Release inventory reservations back to available pool ──
+      try {
+        const lots = await InventoryLot.find({
+          'reservations.orderId': order._id,
+          'reservations.status': 'active'
+        });
+        for (const lot of lots) {
+          await lot.cancelReservation(order._id);
+        }
+      } catch (invErr) {
+        console.error('Inventory release on cancellation failed:', invErr.message);
+      }
     }
+
+    // Add to status history with transition audit log
+    const auditLog = createTransitionAuditLog(order._id, previousStatus, normalizedNewStatus, req.user._id, reason);
     order.statusHistory = [
       ...(order.statusHistory || []),
       {
-        status,
+        status: normalizedNewStatus,
         timestamp: new Date(),
         updatedBy: req.user._id,
-        notes: `Status changed from ${previousStatus} to ${status}`
+        notes: auditLog.reason,
+        reason: reason || undefined,
+        allowedTransition: transitionValidation.allowedTransitions
       }
     ];
+
     await order.save();
 
-    const normalizedStatus = String(status || '').toLowerCase();
-    const isCancelled = normalizedStatus === 'cancelled' || normalizedStatus === 'canceled';
-
+    // Notification logic
+    const isCancelled = normalizedNewStatus === 'cancelled';
     const notificationTargets = [order.buyerId, order.sellerId];
-    if (normalizedStatus === 'delivered' && order.marketplaceRequestId) {
+
+    if (normalizedNewStatus === 'delivered' && order.marketplaceRequestId) {
       const linkedRequest = await MarketplaceRequest.findById(order.marketplaceRequestId)
         .select('requesterType communityContext.poolId communityContext.contributorIds');
       if (linkedRequest?.requesterType === 'community') {
@@ -513,7 +612,7 @@ router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'deliv
       title: isCancelled ? 'Order Cancelled' : 'Order Status Updated',
       message: isCancelled
         ? `Order ${order.orderNumber} has been cancelled.`
-        : `Order ${order.orderNumber} status is now ${status}.`,
+        : `Order ${order.orderNumber} status is now ${normalizedNewStatus}.`,
       type: isCancelled ? 'alert' : 'order',
       relatedId: order._id
     });
@@ -521,12 +620,21 @@ router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'deliv
     res.json({
       success: true,
       message: 'Order status updated successfully',
-      data: { order }
+      data: { 
+        order,
+        transition: {
+          from: previousStatus,
+          to: normalizedNewStatus,
+          allowed: true,
+          timestamp: new Date()
+        }
+      }
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message,
+      code: 'STATUS_UPDATE_ERROR'
     });
   }
 });
@@ -535,13 +643,6 @@ router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'deliv
 router.patch('/:id/request-delivery', authenticate, validateObjectId('id'), async (req, res) => {
   try {
     const { vehicleId } = req.body;
-    if (!vehicleId) {
-      return res.status(400).json({
-        success: false,
-        message: 'vehicleId is required'
-      });
-    }
-
     const order = await Order.findById(req.params.id);
     if (!order) {
       return res.status(404).json({
@@ -559,35 +660,38 @@ router.patch('/:id/request-delivery', authenticate, validateObjectId('id'), asyn
       });
     }
 
-    const vehicle = await Vehicle.findById(vehicleId).populate('owner', 'roles status');
-    if (!vehicle) {
-      return res.status(404).json({
-        success: false,
-        message: 'Vehicle not found'
-      });
-    }
+    let vehicle = null;
+    if (vehicleId) {
+      vehicle = await Vehicle.findById(vehicleId).populate('owner', 'roles status');
+      if (!vehicle) {
+        return res.status(404).json({
+          success: false,
+          message: 'Vehicle not found'
+        });
+      }
 
-    const ownerRoles = vehicle.owner?.roles || [];
-    const isDeliveryPartnerVehicle = ownerRoles.some((r) => ['delivery', 'delivery_large', 'delivery_small'].includes(r));
-    const isOwnerActive = vehicle.owner?.status === 'active';
-    if (!isDeliveryPartnerVehicle || !isOwnerActive) {
-      return res.status(400).json({
-        success: false,
-        message: 'Selected vehicle must belong to an active delivery partner'
-      });
-    }
+      const ownerRoles = vehicle.owner?.roles || [];
+      const isDeliveryPartnerVehicle = ownerRoles.some((r) => ['delivery', 'delivery_large', 'delivery_small'].includes(r));
+      const isOwnerActive = vehicle.owner?.status === 'active';
+      if (!isDeliveryPartnerVehicle || !isOwnerActive) {
+        return res.status(400).json({
+          success: false,
+          message: 'Selected vehicle must belong to an active delivery partner'
+        });
+      }
 
-    if (vehicle.status !== 'Available') {
-      return res.status(400).json({
-        success: false,
-        message: 'Selected vehicle is not available'
-      });
+      if (vehicle.status !== 'Available') {
+        return res.status(400).json({
+          success: false,
+          message: 'Selected vehicle is not available'
+        });
+      }
     }
 
     order.delivery = {
       ...(order.delivery || {}),
-      requestedVehicleId: vehicle._id,
-      requestedPartnerId: vehicle.owner?._id || vehicle.owner,
+      requestedVehicleId: vehicle ? vehicle._id : undefined,
+      requestedPartnerId: vehicle ? (vehicle.owner?._id || vehicle.owner) : null,
       requestedAt: new Date(),
       requestStatus: 'requested'
     };
@@ -598,7 +702,7 @@ router.patch('/:id/request-delivery', authenticate, validateObjectId('id'), asyn
         status: order.status,
         timestamp: new Date(),
         updatedBy: req.user._id,
-        notes: `Delivery requested with vehicle ${vehicle.name}`
+        notes: vehicle ? `Delivery requested with vehicle ${vehicle.name}` : 'Delivery requested (broadcast to pool)'
       }
     ];
 
@@ -609,8 +713,8 @@ router.patch('/:id/request-delivery', authenticate, validateObjectId('id'), asyn
         .select('requesterType communityContext.poolId');
       if (linkedRequest?.requesterType === 'community' && linkedRequest.communityContext?.poolId) {
         await CommunityPool.findByIdAndUpdate(linkedRequest.communityContext.poolId, {
-          assignedVehicle: vehicle._id,
-          assignedDeliveryPartner: vehicle.owner?._id || vehicle.owner,
+          assignedVehicle: vehicle ? vehicle._id : undefined,
+          assignedDeliveryPartner: vehicle ? (vehicle.owner?._id || vehicle.owner) : null,
           deliveryRequestedAt: new Date(),
           deliveryRequestStatus: 'requested'
         });
@@ -688,7 +792,7 @@ router.patch('/:id/delivery-response', authenticate, validateObjectId('id'), asy
       });
     }
 
-    let resolvedVehicle = null;
+    // CRITICAL: Use atomic locking for delivery acceptance
     if (normalizedAction === 'accepted') {
       const targetVehicleId = vehicleId || order.delivery?.requestedVehicleId;
       if (!targetVehicleId) {
@@ -702,7 +806,8 @@ router.patch('/:id/delivery-response', authenticate, validateObjectId('id'), asy
         ? (order.delivery?.requestedPartnerId || req.user._id)
         : req.user._id;
 
-      resolvedVehicle = await Vehicle.findById(targetVehicleId).populate('owner', 'roles status');
+      // Pre-validate vehicle before atomic operation
+      const resolvedVehicle = await Vehicle.findById(targetVehicleId).populate('owner', 'roles status');
       if (!resolvedVehicle) {
         return res.status(404).json({
           success: false,
@@ -733,73 +838,126 @@ router.patch('/:id/delivery-response', authenticate, validateObjectId('id'), asy
         });
       }
 
-      await Vehicle.findByIdAndUpdate(resolvedVehicle._id, { status: 'On Delivery' });
-      order.delivery = {
-        ...(order.delivery || {}),
-        requestedVehicleId: resolvedVehicle._id,
-        requestedPartnerId: targetPartnerId,
-        requestStatus: 'accepted'
-      };
+      // ATOMIC OPERATION: Accept delivery with locking
+      const atomicResult = await safeAtomicDeliveryAcceptance(
+        req.params.id,
+        targetPartnerId,
+        targetVehicleId
+      );
+
+      if (!atomicResult.success) {
+        // Handle race condition - another driver beat us
+        if (atomicResult.code === 'ALREADY_ACCEPTED') {
+          return res.status(409).json({
+            success: false,
+            error: atomicResult.error,
+            code: atomicResult.code,
+            message: atomicResult.message,
+            details: 'Race condition detected: Another delivery partner already accepted this task'
+          });
+        }
+        
+        // Handle vehicle claim failure
+        if (atomicResult.code === 'VEHICLE_BUSY') {
+          return res.status(409).json({
+            success: false,
+            error: atomicResult.error,
+            code: atomicResult.code,
+            message: 'Vehicle was claimed by another delivery partner'
+          });
+        }
+
+        // Generic atomic failure
+        return res.status(400).json({
+          success: false,
+          error: atomicResult.error,
+          message: atomicResult.message,
+          phase: atomicResult.phase
+        });
+      }
+
+      // ATOMIC SUCCESS: Update related records
+      if (order.marketplaceRequestId) {
+        const linkedRequest = await MarketplaceRequest.findById(order.marketplaceRequestId)
+          .select('requesterType communityContext.poolId');
+        if (linkedRequest?.requesterType === 'community' && linkedRequest.communityContext?.poolId) {
+          await CommunityPool.findByIdAndUpdate(linkedRequest.communityContext.poolId, {
+            assignedVehicle: targetVehicleId,
+            assignedDeliveryPartner: targetPartnerId,
+            deliveryRequestStatus: 'accepted'
+          });
+        }
+      }
+
+      // Notify all parties
+      await notifyUsers([order.buyerId, order.sellerId, targetPartnerId].filter(Boolean), {
+        title: 'Delivery Request Accepted',
+        message: `Delivery partner accepted order ${order.orderNumber}.`,
+        type: 'delivery',
+        relatedId: order._id
+      });
+
+      // Audit log
+      const auditLog = createDeliveryAuditLog(
+        order._id,
+        targetPartnerId,
+        'accept_delivery',
+        {
+          vehicleId: targetVehicleId,
+          vehicleName: resolvedVehicle.name,
+          timestamp: new Date(),
+          atomicLockUsed: true
+        }
+      );
+
+      const populatedOrder = await Order.findById(order._id)
+        .populate('buyerId', 'name email')
+        .populate('sellerId', 'name email')
+        .populate('delivery.requestedVehicleId', 'name type capacity status plateNumber')
+        .populate('delivery.requestedPartnerId', 'name email phone');
+
+      return res.json({
+        success: true,
+        message: 'Delivery request accepted successfully (atomic operation)',
+        data: { order: populatedOrder, auditLog }
+      });
     } else {
-      order.delivery = {
-        ...(order.delivery || {}),
-        requestStatus: 'rejected'
-      };
-    }
+      // REJECTION: Simple update without atomic locking needed
+      const rejectResult = await atomicDeliveryStatusUpdate(
+        req.params.id,
+        'requested',
+        'rejected',
+        req.user._id
+      );
 
-    order.statusHistory = [
-      ...(order.statusHistory || []),
-      {
-        status: order.status,
-        timestamp: new Date(),
-        updatedBy: req.user._id,
-        notes: normalizedAction === 'accepted'
-          ? `Delivery request accepted${resolvedVehicle ? ` with vehicle ${resolvedVehicle.name}` : ''}`
-          : 'Delivery request rejected by delivery partner'
+      if (!rejectResult.success) {
+        return res.status(400).json({
+          success: false,
+          error: rejectResult.error,
+          message: rejectResult.message
+        });
       }
-    ];
 
-    await order.save();
+      // Notify parties of rejection
+      await notifyUsers([order.buyerId, order.sellerId].filter(Boolean), {
+        title: 'Delivery Request Rejected',
+        message: `Delivery partner rejected order ${order.orderNumber}.`,
+        type: 'delivery',
+        relatedId: order._id
+      });
 
-    if (order.marketplaceRequestId) {
-      const linkedRequest = await MarketplaceRequest.findById(order.marketplaceRequestId)
-        .select('requesterType communityContext.poolId');
-      if (linkedRequest?.requesterType === 'community' && linkedRequest.communityContext?.poolId) {
-        const update = normalizedAction === 'accepted'
-          ? {
-              assignedVehicle: resolvedVehicle?._id || order.delivery?.requestedVehicleId,
-              assignedDeliveryPartner: order.delivery?.requestedPartnerId,
-              deliveryRequestStatus: 'accepted'
-            }
-          : {
-              deliveryRequestStatus: 'rejected'
-            };
-        await CommunityPool.findByIdAndUpdate(linkedRequest.communityContext.poolId, update);
-      }
+      const populatedOrder = await Order.findById(order._id)
+        .populate('buyerId', 'name email')
+        .populate('sellerId', 'name email')
+        .populate('delivery.requestedVehicleId', 'name type capacity status plateNumber')
+        .populate('delivery.requestedPartnerId', 'name email phone');
+
+      return res.json({
+        success: true,
+        message: 'Delivery request rejected successfully',
+        data: { order: populatedOrder }
+      });
     }
-
-    await notifyUsers([order.buyerId, order.sellerId, order.delivery?.requestedPartnerId].filter(Boolean), {
-      title: normalizedAction === 'accepted' ? 'Delivery Request Accepted' : 'Delivery Request Rejected',
-      message: normalizedAction === 'accepted'
-        ? `Delivery partner accepted order ${order.orderNumber}.`
-        : `Delivery partner rejected order ${order.orderNumber}.`,
-      type: 'delivery',
-      relatedId: order._id
-    });
-
-    const populatedOrder = await Order.findById(order._id)
-      .populate('buyerId', 'name email')
-      .populate('sellerId', 'name email')
-      .populate('delivery.requestedVehicleId', 'name type capacity status plateNumber')
-      .populate('delivery.requestedPartnerId', 'name email phone');
-
-    res.json({
-      success: true,
-      message: normalizedAction === 'accepted'
-        ? 'Delivery request accepted successfully'
-        : 'Delivery request rejected successfully',
-      data: { order: populatedOrder }
-    });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -919,6 +1077,123 @@ router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
       success: false,
       message: error.message
     });
+  }
+});
+
+// 2.10: Auto-assign nearest available delivery partner
+// Finds an active delivery partner with the lowest active task load
+// and creates a delivery request on the order automatically.
+router.post('/:id/auto-assign-delivery', authenticate, authorize('admin', 'farmer'), validateObjectId('id'), async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const isFarmer = req.user.roles?.includes('farmer');
+    if (isFarmer && String(order.sellerId) !== String(req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Farmers can only auto-assign delivery for their own orders'
+      });
+    }
+
+    if (!['confirmed', 'processing'].includes(order.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Auto-assign is only available for confirmed or processing orders (current: ${order.status})`
+      });
+    }
+
+    if (order.delivery?.requestStatus === 'accepted') {
+      return res.status(400).json({
+        success: false,
+        message: 'A delivery partner has already accepted this order'
+      });
+    }
+
+    // Find active delivery partners sorted by fewest currently active tasks
+    const deliveryPartners = await User.find({
+      roles: { $in: ['delivery', 'delivery_small', 'delivery_large'] },
+      status: 'active'
+    }).select('_id name email phone roles').lean();
+
+    if (deliveryPartners.length === 0) {
+      return res.status(503).json({
+        success: false,
+        message: 'No active delivery partners available',
+        code: 'NO_DELIVERY_PARTNERS'
+      });
+    }
+
+    // Count active tasks per partner (use top-level import)
+    const taskCounts = await DeliveryTask.aggregate([
+      { $match: { status: { $in: ['pending', 'accepted', 'picked_up', 'in_transit'] } } },
+      { $group: { _id: '$deliveryPartnerId', count: { $sum: 1 } } }
+    ]);
+    const countMap = Object.fromEntries(taskCounts.map(t => [String(t._id), t.count]));
+
+    // Sort by workload ascending, cap at 10 active tasks
+    const available = deliveryPartners
+      .map(p => ({ ...p, load: countMap[String(p._id)] || 0 }))
+      .filter(p => p.load < 10)
+      .sort((a, b) => a.load - b.load);
+
+    if (available.length === 0) {
+      return res.status(503).json({
+        success: false,
+        message: 'All delivery partners are at capacity. Please try again later.',
+        code: 'ALL_PARTNERS_BUSY'
+      });
+    }
+
+    const chosen = available[0];
+
+    // Find an available vehicle for the chosen partner
+    const chosenVehicle = await Vehicle.findOne({
+      owner: chosen._id,
+      status: 'Available'
+    }).select('_id name');
+
+    // Create the delivery request
+    order.delivery = {
+      ...(order.delivery || {}),
+      requestedPartnerId: chosen._id,
+      requestedVehicleId: chosenVehicle?._id || undefined,
+      requestedAt: new Date(),
+      requestStatus: 'requested'
+    };
+    order.statusHistory = [
+      ...(order.statusHistory || []),
+      {
+        status: order.status,
+        timestamp: new Date(),
+        updatedBy: req.user._id,
+        notes: `Auto-assigned delivery to partner ${chosen.name} (load: ${chosen.load} tasks)`
+      }
+    ];
+    await order.save();
+
+    try {
+      await notifyUsers([chosen._id, order.buyerId, order.sellerId], {
+        title: 'Delivery Auto-Assigned',
+        message: `Order ${order.orderNumber} has been auto-assigned to you for delivery.`,
+        type: 'delivery',
+        relatedId: order._id
+      });
+    } catch { /* best-effort */ }
+
+    res.json({
+      success: true,
+      message: `Delivery auto-assigned to ${chosen.name}`,
+      data: {
+        assignedPartner: { _id: chosen._id, name: chosen.name, email: chosen.email },
+        assignedVehicle: chosenVehicle ? { _id: chosenVehicle._id, name: chosenVehicle.name } : null,
+        order
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

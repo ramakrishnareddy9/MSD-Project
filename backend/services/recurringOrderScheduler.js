@@ -6,6 +6,8 @@ import Commission from '../models/Commission.model.js';
 import Product from '../models/Product.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
 import User from '../models/User.model.js';
+import PriceAgreement from '../models/PriceAgreement.model.js';
+import InventoryManager from './inventory.manager.js';
 
 const supportsMongoTransactions = () => {
   if (process.env.DISABLE_MONGO_TRANSACTIONS === 'true') {
@@ -23,18 +25,25 @@ const supportsMongoTransactions = () => {
 /**
  * Recurring Order Scheduler Service
  * Polls due schedules and generates Orders atomically with inventory reservation
+ * 
+ * FIXES: Issue 2, 8, 11
+ * - Issue 2: Uses InventoryManager for race-condition-free reservations
+ * - Issue 8: Creates commission atomically with order
+ * - Issue 11: Prevents double-processing with isProcessing flag
+ * 
  * Per BACKEND_API_PROMPT.md lines 564-574 and SYSTEM_OVERVIEW_PROMPT.md lines 354-359
  */
 
 /**
  * Process a single recurring order
- * Creates an Order from the recurring template
+ * Creates an Order from the recurring template with atomic inventory reservation
+ * 
+ * Prevents double-processing: Only one worker can process same recurring order
+ * (checked via isProcessing flag at database level)
  */
 async function processRecurringOrder(recurringOrder) {
   const useTransaction = supportsMongoTransactions();
   let session = null;
-  const reservationToken = new mongoose.Types.ObjectId();
-  const reservedLotIds = [];
 
   if (useTransaction) {
     session = await mongoose.startSession();
@@ -44,7 +53,21 @@ async function processRecurringOrder(recurringOrder) {
   try {
     console.log(`Processing recurring order: ${recurringOrder._id}`);
     
-    // Optionally fetch buyer (not required for address anymore)
+    // Atomically claim the recurring order for processing.
+    // Using findOneAndUpdate with filter {isProcessing: {$ne: true}} ensures only
+    // ONE worker can proceed even if multiple scheduler instances run concurrently.
+    const claimed = await RecurringOrder.findOneAndUpdate(
+      { _id: recurringOrder._id, isProcessing: { $ne: true } },
+      { $set: { isProcessing: true, processingStartedAt: new Date() } },
+      { new: true, session: useTransaction ? session : null }
+    );
+
+    if (!claimed) {
+      console.log(`⏭️  Recurring order ${recurringOrder._id} already being processed by another worker`);
+      return { success: false, error: 'Already processing' };
+    }
+    
+    // Optionally fetch buyer
     const buyerQuery = User.findById(recurringOrder.buyerId);
     if (useTransaction) {
       buyerQuery.session(session);
@@ -58,8 +81,9 @@ async function processRecurringOrder(recurringOrder) {
       throw new Error('Recurring order missing delivery address');
     }
     
-    // Process items and check inventory
+    // Process items and prepare order data (DON'T reserve yet)
     const orderItems = [];
+    const itemsToReserve = [];
     let subtotal = 0;
     let sellerId = null;
     
@@ -80,19 +104,6 @@ async function processRecurringOrder(recurringOrder) {
         throw new Error(`Product ${product.name} price exceeds maximum (₹${template.maxPrice})`);
       }
       
-      // Reserve inventory atomically (works with and without transactions)
-      const inventory = await InventoryLot.reserveAvailableLot({
-        productId: product._id,
-        orderId: reservationToken,
-        quantity: template.quantity,
-        session: useTransaction ? session : null
-      });
-
-      if (!inventory) {
-        throw new Error(`Insufficient inventory for ${product.name}`);
-      }
-      reservedLotIds.push(inventory._id);
-      
       // Set seller ID (assuming all products from same farmer)
       if (!sellerId) {
         sellerId = product.ownerId;
@@ -106,8 +117,13 @@ async function processRecurringOrder(recurringOrder) {
         quantity: template.quantity,
         unit: product.unit,
         unitPrice: product.basePrice,
-        totalPrice: itemTotal,
-        lotId: inventory._id
+        totalPrice: itemTotal
+      });
+      
+      // Collect for batch reservation
+      itemsToReserve.push({
+        productId: product._id,
+        quantity: template.quantity
       });
       
       subtotal += itemTotal;
@@ -147,30 +163,37 @@ async function processRecurringOrder(recurringOrder) {
     } else {
       await order.save();
     }
+    
+    // CRITICAL FIX (Issue 2, 11): Use InventoryManager for atomic reservation
+    // This:
+    // 1. Prevents race conditions (uses locks + MongoDB transactions)
+    // 2. Prevents double-processing (isProcessing flag already set)
+    // 3. Rolls back partial failures (all-or-nothing)
+    // 4. Automatically cleans expired reservations (TTL)
+    // 5. Syncs product cache (stockQuantity)
+    const reservationResult = await InventoryManager.reserveForOrder({
+      orderItems: itemsToReserve,
+      orderId: order._id,
+      buyerId: recurringOrder.buyerId,
+      session: useTransaction ? session : null,
+      requestId: `recurring-${recurringOrder._id}-${Date.now()}`
+    });
 
-    // Replace temporary reservation token with real order ID.
-    for (const item of orderItems) {
-      const updateOptions = {
-        arrayFilters: [{ 'elem.status': 'active', 'elem.orderId': reservationToken }]
-      };
-
-      if (useTransaction) {
-        updateOptions.session = session;
-      }
-
-      await InventoryLot.findByIdAndUpdate(
-        item.lotId,
-        {
-          $set: {
-            'reservations.$[elem].orderId': order._id
-          }
-        },
-        updateOptions
-      );
+    if (!reservationResult.success) {
+      throw new Error(reservationResult.error || 'Failed to reserve inventory for recurring order');
     }
 
-    // Issue 8, 11 - Create commission record for recurring order (matching manual orders)
-    const commissionRate = recurringOrder.type === 'b2b' ? 0.05 : 0.10;
+    // Commission rate: prefer the negotiated rate from a PriceAgreement when one
+    // exists (B2B orders), otherwise fall back to platform defaults.
+    let commissionRate = recurringOrder.type === 'b2b' ? 0.05 : 0.10;
+    if (order.priceAgreementId) {
+      const agreement = await PriceAgreement.findById(order.priceAgreementId)
+        .select('commissionRate')
+        .session(useTransaction ? session : null);
+      if (agreement?.commissionRate != null) {
+        commissionRate = agreement.commissionRate;
+      }
+    }
     const commissionAmount = subtotal * commissionRate;
 
     const commission = new Commission({
@@ -206,28 +229,35 @@ async function processRecurringOrder(recurringOrder) {
     // Record success and advance schedule
     await recurringOrder.recordSuccess(order._id);
     
+    // Clear processing flag
+    await RecurringOrder.findByIdAndUpdate(
+      recurringOrder._id,
+      {
+        $set: { isProcessing: false }
+      }
+    );
+    
     console.log(`✅ Successfully created order ${order.orderNumber} from recurring order ${recurringOrder._id}`);
     
     return { success: true, orderId: order._id };
     
   } catch (error) {
-    if (!useTransaction && reservedLotIds.length > 0) {
-      // Compensating rollback for standalone MongoDB without transactions.
-      for (const lotId of reservedLotIds) {
-        try {
-          const lot = await InventoryLot.findById(lotId);
-          if (lot) {
-            await lot.cancelReservation(reservationToken);
-          }
-        } catch (rollbackError) {
-          console.error(`Failed to rollback reservation for lot ${lotId}:`, rollbackError.message);
-        }
-      }
-    }
-
     if (useTransaction && session) {
       await session.abortTransaction();
     }
+    
+    // Clear processing flag on error
+    try {
+      await RecurringOrder.findByIdAndUpdate(
+        recurringOrder._id,
+        {
+          $set: { isProcessing: false }
+        }
+      );
+    } catch (flagError) {
+      console.error(`Failed to clear processing flag: ${flagError.message}`);
+    }
+    
     console.error(`❌ Failed to process recurring order ${recurringOrder._id}:`, error.message);
     
     // Record failure
@@ -240,6 +270,8 @@ async function processRecurringOrder(recurringOrder) {
     }
   }
 }
+
+
 
 /**
  * Main scheduler function

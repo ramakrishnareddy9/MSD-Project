@@ -1,5 +1,6 @@
 import { body, param, query, validationResult } from 'express-validator';
 import { PRODUCT_STATUSES, PRODUCT_UNITS } from '../constants/productEnums.js';
+import { deepValidateNoPricing } from '../utils/priceCalculation.util.js';
 
 /**
  * Request Validation Middleware
@@ -177,51 +178,22 @@ export const validateProduct = [
   handleValidationErrors
 ];
 
-/**
- * Order Creation Validation
- */
-export const validateOrder = [
-  body('type')
-    .isIn(['b2c', 'b2b'])
-    .withMessage('Order type must be b2c or b2b'),
-  
-  body('buyerId')
-    .isMongoId()
-    .withMessage('Valid buyer ID is required'),
-  
-  body('sellerId')
-    .optional()
-    .isMongoId()
-    .withMessage('Valid seller ID is required'),
-  
-  body('orderItems')
-    .isArray({ min: 1 })
-    .withMessage('Order must contain at least one item'),
-  
-  body('orderItems.*.productId')
-    .isMongoId()
-    .withMessage('Valid product ID is required for each item'),
-  
-  body('orderItems.*.quantity')
-    .isInt({ min: 1 })
-    .withMessage('Quantity must be at least 1'),
-  
-  body('total')
-    .optional()
-    .isFloat({ min: 0 })
-    .withMessage('Total must be a positive number'),
-  
-  handleValidationErrors
-];
 
 /**
  * Review Creation Validation
+
  */
 export const validateReview = [
+  // userId is set server-side from the JWT — do NOT require it from the client
   body('userId')
+    .optional()
     .isMongoId()
     .withMessage('Valid user ID is required'),
-  
+
+  body('orderId')
+    .isMongoId()
+    .withMessage('Valid order ID is required (used to verify purchase eligibility)'),
+
   body('productId')
     .isMongoId()
     .withMessage('Valid product ID is required'),
@@ -251,6 +223,23 @@ export const validateReview = [
  * Issue 27 - Validate cart items before checkout
  */
 export const validateOrder = [
+  // CRITICAL: Reject ANY pricing data from frontend
+  // Issue: Cart Price Manipulation vulnerability
+  (req, res, next) => {
+    const validation = deepValidateNoPricing(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid request: pricing data cannot be sent from client',
+        field: validation.field,
+        reason: validation.message,
+        severity: 'CRITICAL',
+        detail: 'All prices, discounts, taxes, and totals are calculated server-side only. Do not send any of: price, cost, subtotal, discount, tax, total, amount, fee, commission, deliveryFee, etc.'
+      });
+    }
+    next();
+  },
+
   body('type')
     .isIn(['b2c', 'b2b'])
     .withMessage('Order type must be b2c or b2b'),

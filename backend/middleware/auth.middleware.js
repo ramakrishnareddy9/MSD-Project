@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.model.js';
+import { validateJWTRoles, logEscalationAttempt, ESCALATION_SEVERITY } from '../utils/roleEscalation.util.js';
 
 const ACCESS_COOKIE_NAME = 'farmkart_token';
 
@@ -76,6 +77,42 @@ export const authenticate = async (req, res, next) => {
         error: 'Account has been suspended',
         message: 'Account has been suspended'
       });
+    }
+
+    // CRITICAL SECURITY CHECK: Validate JWT roles against database
+    // Detects if JWT was tampered with or roles were escalated
+    // Issue: Role Escalation Vulnerability
+    const roleValidation = await validateJWTRoles(decoded.userId, decoded.roles || []);
+    if (!roleValidation.valid) {
+      logEscalationAttempt(
+        decoded.userId,
+        {
+          reason: roleValidation.reason,
+          detail: roleValidation.detail,
+          tokenRoles: decoded.roles,
+          databaseRoles: roleValidation.databaseRoles,
+          endpoint: req.originalUrl,
+          method: req.method,
+          ip: req.ip
+        },
+        roleValidation.severity
+      );
+
+      if (roleValidation.severity === ESCALATION_SEVERITY.CRITICAL) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid token',
+          message: 'Authentication token has been compromised',
+          code: 'COMPROMISED_TOKEN'
+        });
+      } else if (roleValidation.severity === ESCALATION_SEVERITY.HIGH) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid token',
+          message: 'Authentication token is invalid',
+          code: 'INVALID_TOKEN'
+        });
+      }
     }
 
     // Attach user to request object

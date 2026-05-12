@@ -174,7 +174,10 @@ inventoryLotSchema.methods.confirmReservation = async function(orderId, options 
   }
   
   reservation.status = 'confirmed';
-  return this.save(options?.session ? { session: options.session } : undefined);
+  const session = options?.session || undefined;
+  await this.save(session ? { session } : undefined);
+  // Explicitly sync the product cache now that the hook has been removed
+  await this.constructor.syncProductStockQuantity(this.productId, session || null);
 };
 
 inventoryLotSchema.methods.cancelReservation = async function(orderId, options = {}) {
@@ -185,7 +188,10 @@ inventoryLotSchema.methods.cancelReservation = async function(orderId, options =
   if (reservation) {
     reservation.status = 'cancelled';
     this.reservedQuantity -= reservation.quantity;
-    return this.save(options?.session ? { session: options.session } : undefined);
+    const session = options?.session || undefined;
+    await this.save(session ? { session } : undefined);
+    // Explicitly sync the product cache now that the hook has been removed
+    await this.constructor.syncProductStockQuantity(this.productId, session || null);
   }
 };
 
@@ -202,7 +208,10 @@ inventoryLotSchema.methods.cleanupExpiredReservations = async function(options =
   
   if (freedQuantity > 0) {
     this.reservedQuantity -= freedQuantity;
-    return this.save(options?.session ? { session: options.session } : undefined);
+    const session = options?.session || undefined;
+    await this.save(session ? { session } : undefined);
+    // Explicitly sync the product cache now that the hook has been removed
+    await this.constructor.syncProductStockQuantity(this.productId, session || null);
   }
 };
 
@@ -217,31 +226,11 @@ inventoryLotSchema.statics.cleanupAllExpiredReservations = async function() {
   return Promise.all(promises);
 };
 
-inventoryLotSchema.post('save', async function() {
-  const session = this.$session ? this.$session() : null;
-  await this.constructor.syncProductStockQuantity(this.productId, session);
-});
-
-inventoryLotSchema.post('findOneAndUpdate', async function(doc) {
-  if (!doc) return;
-  const session = this.getOptions ? this.getOptions().session : null;
-  await doc.constructor.syncProductStockQuantity(doc.productId, session);
-});
-
-inventoryLotSchema.post('findOneAndDelete', async function(doc) {
-  if (!doc) return;
-  const session = this.getOptions ? this.getOptions().session : null;
-  await doc.constructor.syncProductStockQuantity(doc.productId, session);
-});
-
-inventoryLotSchema.post('insertMany', async function(docs) {
-  if (!Array.isArray(docs) || docs.length === 0) return;
-  const uniqueProductIds = [...new Set(docs.map((doc) => String(doc.productId)))];
-
-  for (const productId of uniqueProductIds) {
-    await this.syncProductStockQuantity(productId);
-  }
-});
+// NOTE: stockQuantity sync is performed EXPLICITLY by InventoryManager._syncProductCache()
+// after each successful operation. Automatic post-hooks are NOT used because
+// this.$session() does not reliably propagate the active transaction session in
+// all Mongoose versions — which would cause the cache write to escape the
+// transaction boundary and create a permanent desync if the transaction aborts.
 
 const InventoryLot = mongoose.model('InventoryLot', inventoryLotSchema);
 

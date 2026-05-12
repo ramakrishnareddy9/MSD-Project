@@ -1,5 +1,6 @@
 import express from 'express';
 import User from '../models/User.model.js';
+import { notifyUser } from '../utils/notification.util.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
 import { validateObjectId } from '../middleware/validation.middleware.js';
@@ -209,6 +210,108 @@ router.delete('/:id', authenticate, authorize('admin'), validateObjectId('id'), 
       success: false,
       message: error.message
     });
+  }
+});
+
+// Submit KYC documents (self-service — any authenticated user)
+// Sets kycStatus to 'pending' so admins can review it.
+router.post('/me/kyc-submit', authenticate, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.kycStatus === 'verified') {
+      return res.status(400).json({
+        success: false,
+        message: 'Your KYC is already verified',
+        kycStatus: 'verified'
+      });
+    }
+
+    const { documentType, documentNumber, documentUrl, selfieUrl } = req.body;
+    if (!documentType || !documentNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'documentType and documentNumber are required'
+      });
+    }
+
+    // Store KYC submission in user record
+    user.kycStatus = 'pending';
+    user.kycDocuments = {
+      documentType: String(documentType).trim(),
+      documentNumber: String(documentNumber).trim(),
+      documentUrl: documentUrl || undefined,
+      selfieUrl: selfieUrl || undefined,
+      submittedAt: new Date()
+    };
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'KYC submitted successfully. An admin will review your documents shortly.',
+      data: { kycStatus: user.kycStatus }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Admin: approve or reject KYC for a user
+router.patch('/:id/kyc', authenticate, authorize('admin'), validateObjectId('id'), async (req, res) => {
+  try {
+    const { decision, reason } = req.body;
+    const normalizedDecision = String(decision || '').toLowerCase();
+
+    if (!['verified', 'rejected'].includes(normalizedDecision)) {
+      return res.status(400).json({
+        success: false,
+        message: 'decision must be "verified" or "rejected"'
+      });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.kycStatus !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot review KYC with status "${user.kycStatus}". Only pending submissions can be reviewed.`
+      });
+    }
+
+    user.kycStatus = normalizedDecision;
+    if (user.kycDocuments) {
+      user.kycDocuments.reviewedAt = new Date();
+      user.kycDocuments.reviewedBy = req.user._id;
+      user.kycDocuments.rejectionReason = normalizedDecision === 'rejected' ? (reason || 'Documents not acceptable') : undefined;
+    }
+    await user.save();
+
+    // Notify the user of the KYC decision
+    try {
+      await notifyUser({
+        userId: user._id,
+        title: normalizedDecision === 'verified' ? 'KYC Approved' : 'KYC Rejected',
+        message: normalizedDecision === 'verified'
+          ? 'Your identity has been verified. You can now list products and perform seller actions.'
+          : `Your KYC was rejected: ${reason || 'Documents not acceptable'}. Please re-submit with valid documents.`,
+        type: 'system',
+        relatedId: user._id
+      });
+    } catch { /* best-effort */ }
+
+    res.json({
+      success: true,
+      message: `KYC ${normalizedDecision} successfully`,
+      data: { kycStatus: user.kycStatus, userId: user._id }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

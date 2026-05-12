@@ -58,11 +58,6 @@ const productSchema = new mongoose.Schema({
     default: 1
   },
   maxOrderQuantity: Number,
-  stockQuantity: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
   landSize: String,
   season: String,
   averageRating: {

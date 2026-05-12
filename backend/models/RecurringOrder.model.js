@@ -1,6 +1,69 @@
 import mongoose from 'mongoose';
 
 /**
+ * Lightweight POSIX cron "next date" calculator (no external dependencies).
+ * Supports 5-field expressions: "min hour dom month dow"
+ * Wildcards (*) and single numeric values are supported.
+ * Does NOT support ranges, step values, or lists — use cron-parser for advanced cases.
+ *
+ * @param {string} cronExpr  - e.g. "0 6 * * 1" (every Monday at 06:00)
+ * @param {Date}   from      - start searching from this point (default: now)
+ * @returns {Date}           - next occurrence after `from`
+ */
+function getNextCronDate(cronExpr, from = new Date()) {
+  const parts = String(cronExpr).trim().split(/\s+/);
+  if (parts.length !== 5) {
+    throw new Error(`Expected 5-field cron expression, got ${parts.length} fields: "${cronExpr}"`);
+  }
+
+  const [minF, hourF, domF, monthF, dowF] = parts;
+
+  const matches = (field, value) => field === '*' || parseInt(field, 10) === value;
+
+  // Advance one minute beyond `from` so we don't re-trigger the current minute
+  const cursor = new Date(from.getTime() + 60 * 1000);
+  cursor.setSeconds(0, 0);
+
+  // Search up to 1 year ahead to avoid infinite loops on invalid expressions
+  const limit = new Date(from.getTime() + 366 * 24 * 60 * 60 * 1000);
+
+  while (cursor < limit) {
+    const month = cursor.getMonth() + 1; // 1-12
+    const dom   = cursor.getDate();       // 1-31
+    const dow   = cursor.getDay();        // 0-6 (Sun-Sat)
+    const hour  = cursor.getHours();
+    const min   = cursor.getMinutes();
+
+    if (!matches(monthF, month)) {
+      // Skip to next month
+      cursor.setMonth(cursor.getMonth() + 1, 1);
+      cursor.setHours(0, 0, 0, 0);
+      continue;
+    }
+    if (!matches(domF, dom) || !matches(dowF, dow)) {
+      // Skip to next day
+      cursor.setDate(cursor.getDate() + 1);
+      cursor.setHours(0, 0, 0, 0);
+      continue;
+    }
+    if (!matches(hourF, hour)) {
+      // Skip to next hour
+      cursor.setHours(cursor.getHours() + 1, 0, 0, 0);
+      continue;
+    }
+    if (!matches(minF, min)) {
+      // Skip to next minute
+      cursor.setMinutes(cursor.getMinutes() + 1, 0, 0);
+      continue;
+    }
+
+    return new Date(cursor);
+  }
+
+  throw new Error(`No next occurrence found for cron expression "${cronExpr}" within 1 year`);
+}
+
+/**
  * Recurring Order Model
  * Defines scheduled purchase patterns that generate concrete Orders on schedule
  * Per BACKEND_API_PROMPT.md lines 212-242 and SYSTEM_OVERVIEW_PROMPT.md lines 354-359
@@ -138,6 +201,16 @@ const recurringOrderSchema = new mongoose.Schema({
     default: 'active',
     index: true
   },
+  isProcessing: {
+    type: Boolean,
+    default: false,
+    // Issue 11 - Prevent double-processing from multiple workers
+    // Set to true when scheduler starts processing, false when complete/failed
+  },
+  processingStartedAt: {
+    type: Date,
+    // When processing started (for timeout detection)
+  },
   lastRun: lastRunSchema,
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
@@ -168,20 +241,34 @@ recurringOrderSchema.methods.calculateNextRunDate = function() {
   switch (frequency) {
     case 'weekly':
       return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    
+
     case 'biweekly':
       return new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
-    
-    case 'monthly':
+
+    case 'monthly': {
       const nextMonth = new Date(now);
       nextMonth.setMonth(nextMonth.getMonth() + 1);
       return nextMonth;
-    
-    case 'custom':
-      // For custom cron expressions, would need a cron parser
-      // This is a placeholder - implement with a library like 'cron-parser'
-      return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    
+    }
+
+    case 'custom': {
+      // Parse the cron expression to calculate the next run time.
+      // Supports 5-field POSIX cron: "min hour dom month dow"
+      // e.g. "0 6 * * 1"  = Every Monday at 06:00
+      //      "0 8 1 * *"  = 1st of every month at 08:00
+      if (!customCron) {
+        console.warn('[RecurringOrder] custom frequency but no customCron expression — defaulting to weekly');
+        return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      }
+
+      try {
+        return getNextCronDate(customCron, now);
+      } catch (err) {
+        console.error(`[RecurringOrder] Failed to parse customCron "${customCron}": ${err.message} — defaulting to weekly`);
+        return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      }
+    }
+
     default:
       return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
   }

@@ -384,6 +384,12 @@ export const login = async (req, res) => {
       });
     }
 
+    // Record last login timestamp (best-effort — don't block on failure)
+    try {
+      user.lastLogin = new Date();
+      await user.save();
+    } catch { /* ignore */ }
+
     // Generate token
     const token = jwt.sign(
       { userId: user._id, roles: user.roles },

@@ -308,7 +308,13 @@ const DeliveryDashboard = ({ mode = 'large' }) => {
       setAssignDialog({ open: false, order: null, selectedVehicleId: '' });
       await refreshAll();
     } catch (error) {
-      showMessage(error.message || 'Failed to accept delivery request', 'error');
+      if (error.status === 409) {
+        showMessage('Another delivery partner already accepted this task.', 'error');
+        setAssignDialog({ open: false, order: null, selectedVehicleId: '' });
+        await refreshAll();
+      } else {
+        showMessage(error.message || 'Failed to accept delivery request', 'error');
+      }
     }
   };
 

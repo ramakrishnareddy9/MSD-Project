@@ -1,5 +1,5 @@
 import express from 'express';
-import { getCart, addItemToCart, updateCartItem, removeItemFromCart, clearCart } from '../controllers/cart.controller.js';
+import { getCart, addItemToCart, updateCartItem, removeItemFromCart, clearCart, checkoutCart } from '../controllers/cart.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 
 const router = express.Router();
@@ -11,8 +11,12 @@ router.route('/')
   .post(addItemToCart)
   .delete(clearCart);
 
+// Checkout: convert cart -> Order (must be before /:productId to avoid param collision)
+router.post('/checkout', checkoutCart);
+
 router.route('/:productId')
   .put(updateCartItem)
   .delete(removeItemFromCart);
 
 export default router;
+

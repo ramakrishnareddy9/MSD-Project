@@ -168,23 +168,52 @@ deliveryTaskSchema.index({ orderId: 1 });
 deliveryTaskSchema.index({ 'timeSlot.date': 1, 'timeSlot.slot': 1 });
 deliveryTaskSchema.index({ createdAt: -1 });
 
-// Methods
+// Methods — all methods enforce strict status ordering so the lifecycle
+// cannot be skipped or reversed.
+
 deliveryTaskSchema.methods.accept = async function() {
+  if (this.status !== 'assigned') {
+    throw new Error(`Cannot accept task in status "${this.status}". Task must be in "assigned" status.`);
+  }
   this.status = 'accepted';
   return this.save();
 };
 
 deliveryTaskSchema.methods.startDelivery = async function() {
+  if (this.status !== 'accepted') {
+    throw new Error(`Cannot start delivery in status "${this.status}". Task must be "accepted" first.`);
+  }
   this.status = 'out_for_delivery';
   this.tracking.startedAt = new Date();
   return this.save();
 };
 
 deliveryTaskSchema.methods.complete = async function(proof) {
+  if (this.status !== 'out_for_delivery') {
+    throw new Error(`Cannot complete task in status "${this.status}". Task must be "out_for_delivery" first (call startDelivery).`);
+  }
+
+  // Validate COD collection before marking delivered
+  if (this.payment?.method === 'cod') {
+    if (!proof?.codCollected) {
+      throw new Error('COD orders require proof.codCollected = true before marking delivered.');
+    }
+    if (typeof proof.codAmount === 'number' && proof.codAmount < (this.payment.codAmount || 0)) {
+      throw new Error(
+        `COD amount collected (₹${proof.codAmount}) is less than required (₹${this.payment.codAmount}).`
+      );
+    }
+    this.payment.collected = true;
+    this.payment.collectedAmount = proof.codAmount ?? this.payment.codAmount;
+  }
+
   this.status = 'delivered';
   this.tracking.completedAt = new Date();
   this.proof = {
-    ...proof,
+    deliveryPhoto: proof?.deliveryPhoto,
+    signature: proof?.signature,
+    receiverName: proof?.receiverName,
+    notes: proof?.notes,
     deliveredAt: new Date()
   };
   return this.save();
@@ -198,15 +227,21 @@ deliveryTaskSchema.methods.recordAttempt = async function(success, reason) {
     status: success ? 'successful' : 'failed',
     reason
   });
-  
+
   if (!success && attemptNumber >= 3) {
     this.status = 'failed';
   }
-  
+
   return this.save();
 };
 
 deliveryTaskSchema.methods.updateLocation = async function(coordinates) {
+  // Bug 7: Block GPS updates on terminal states to prevent data pollution
+  const terminalStatuses = ['delivered', 'cancelled', 'failed'];
+  if (terminalStatuses.includes(this.status)) {
+    throw new Error(`Cannot update location for a task in terminal status "${this.status}".`);
+  }
+
   this.tracking.currentLocation = {
     coordinates,
     lastUpdated: new Date()
@@ -217,6 +252,7 @@ deliveryTaskSchema.methods.updateLocation = async function(coordinates) {
   });
   return this.save();
 };
+
 
 const DeliveryTask = mongoose.model('DeliveryTask', deliveryTaskSchema);
 export default DeliveryTask;

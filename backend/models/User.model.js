@@ -63,6 +63,9 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  lastLogin: {
+    type: Date
+  },
   passwordResetTokenHash: String,
   passwordResetExpires: Date,
   refreshTokenHash: String,  // SHA-256 hash of the current refresh token (for revocation)
@@ -71,6 +74,17 @@ const userSchema = new mongoose.Schema({
   loyaltyPoints: {
     type: Number,
     default: 0
+  },
+  // KYC submission data — populated by POST /users/me/kyc-submit
+  kycDocuments: {
+    documentType: { type: String, trim: true },  // e.g. 'aadhaar', 'pan', 'passport'
+    documentNumber: { type: String, trim: true },
+    documentUrl: String,   // URL to uploaded doc image
+    selfieUrl: String,     // URL to selfie image
+    submittedAt: Date,
+    reviewedAt: Date,
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    rejectionReason: String
   },
   addresses: [addressSchema],
   profileImage: String,

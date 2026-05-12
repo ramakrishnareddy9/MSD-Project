@@ -1,5 +1,6 @@
 import express from 'express';
 import Review from '../models/Review.model.js';
+import Order from '../models/Order.model.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { validateReview } from '../middleware/validation.middleware.js';
 
@@ -44,7 +45,40 @@ router.get('/', async (req, res) => {
 // Create review (authenticated users only, validated)
 router.post('/', authenticate, validateReview, async (req, res) => {
   try {
-    const review = new Review(req.body);
+    const { productId, orderId } = req.body;
+
+    // 2.11: Verify the reviewer has a delivered order containing this product
+    const eligibleOrder = await Order.findOne({
+      _id: orderId,
+      buyerId: req.user._id,
+      status: 'delivered',
+      'orderItems.productId': productId
+    }).select('_id');
+
+    if (!eligibleOrder) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only review products from your own delivered orders',
+        code: 'REVIEW_NOT_ELIGIBLE'
+      });
+    }
+
+    // Prevent duplicate review for the same order (additional guard before DB unique index)
+    const existing = await Review.findOne({ userId: req.user._id, orderId });
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        message: 'You have already reviewed this order',
+        code: 'DUPLICATE_REVIEW'
+      });
+    }
+
+    // Always set userId and verifiedPurchase server-side (never trust client)
+    const review = new Review({
+      ...req.body,
+      userId: req.user._id,
+      verifiedPurchase: true
+    });
     await review.save();
 
     res.status(201).json({
@@ -61,3 +95,4 @@ router.post('/', authenticate, validateReview, async (req, res) => {
 });
 
 export default router;
+

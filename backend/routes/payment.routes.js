@@ -454,11 +454,36 @@ router.patch('/:id/failed', authenticate, validateObjectId('id'), async (req, re
 
     await payment.markFailed(reason);
 
-    const order = await Order.findById(payment.orderId);
+    // Immediately release inventory reservation so stock is visible to other buyers.
+    // Without this, the 30-min TTL is the only safety net — blocking high-demand products.
+    try {
+      const { InventoryManager } = await import('../services/inventory.manager.js');
+      await InventoryManager.cancelReservation({ orderId: payment.orderId });
+    } catch (invErr) {
+      console.error('[Payment:failed] Could not release inventory reservation:', invErr.message);
+      // Non-fatal — TTL will clean up within 30 minutes
+    }
+
+    // Revert order back to cancelled so the buyer knows to retry
+    const order = await Order.findByIdAndUpdate(
+      payment.orderId,
+      {
+        status: 'cancelled',
+        $push: {
+          statusHistory: {
+            status: 'cancelled',
+            timestamp: new Date(),
+            notes: `Payment failed${reason ? `: ${reason}` : ''}`
+          }
+        }
+      },
+      { new: true }
+    );
+
     if (order) {
       await notifyUsers([order.buyerId, order.sellerId], {
         title: 'Payment Failed',
-        message: `Payment failed for order ${order.orderNumber}${reason ? `: ${reason}` : ''}.`,
+        message: `Payment failed for order ${order.orderNumber}${reason ? `: ${reason}` : ''}. Order has been cancelled and inventory released.`,
         type: 'payment',
         relatedId: order._id
       });
@@ -466,7 +491,7 @@ router.patch('/:id/failed', authenticate, validateObjectId('id'), async (req, re
 
     res.json({
       success: true,
-      message: 'Payment marked as failed',
+      message: 'Payment marked as failed, inventory released, order cancelled',
       data: { payment }
     });
   } catch (error) {
@@ -476,6 +501,7 @@ router.patch('/:id/failed', authenticate, validateObjectId('id'), async (req, re
     });
   }
 });
+
 
 // Process refund (admin only)
 router.post('/:id/refund', authenticate, authorize('admin'), validateObjectId('id'), async (req, res) => {

@@ -3,6 +3,9 @@ import mongoose from 'mongoose';
 import Shipment from '../models/Shipment.model.js';
 import DeliveryTask from '../models/DeliveryTask.model.js';
 import Order from '../models/Order.model.js';
+import Payment from '../models/Payment.model.js';
+import Commission from '../models/Commission.model.js';
+import User from '../models/User.model.js';
 import MarketplaceRequest from '../models/MarketplaceRequest.model.js';
 import CommunityPool from '../models/CommunityPool.model.js';
 import { notifyUsers } from '../utils/notification.util.js';
@@ -11,6 +14,13 @@ import { authorize } from '../middleware/role.middleware.js';
 import { validateObjectId } from '../middleware/validation.middleware.js';
 
 const router = express.Router();
+
+/**
+ * Guard: returns true only when MongoDB is connected and can start a session.
+ * Prevents cold-start crashes when a request arrives before the DB is ready.
+ */
+const isDbReady = () => mongoose.connection.readyState === 1;
+
 
 /**
  * SHIPMENT ROUTES (Long-haul delivery)
@@ -95,6 +105,13 @@ router.get('/shipments/:id', authenticate, validateObjectId('id'), async (req, r
 
 // Create shipment (admin or large-scale delivery)
 router.post('/shipments', authenticate, authorize('admin', 'delivery_large'), async (req, res) => {
+  if (!isDbReady()) {
+    return res.status(503).set('Retry-After', '5').json({
+      success: false,
+      message: 'Database not ready. Please retry in a few seconds.'
+    });
+  }
+
   const session = await mongoose.startSession();
   session.startTransaction();
   
@@ -332,6 +349,13 @@ router.get('/tasks/:id', authenticate, validateObjectId('id'), async (req, res) 
 
 // Create delivery task
 router.post('/tasks', authenticate, authorize('admin', 'delivery_small'), async (req, res) => {
+  if (!isDbReady()) {
+    return res.status(503).set('Retry-After', '5').json({
+      success: false,
+      message: 'Database not ready. Please retry in a few seconds.'
+    });
+  }
+
   const session = await mongoose.startSession();
   session.startTransaction();
   
@@ -534,8 +558,44 @@ router.patch('/tasks/:id/complete', authenticate, authorize('delivery', 'deliver
     
     await session.commitTransaction();
 
-    const order = await Order.findById(task.orderId).select('orderNumber buyerId sellerId marketplaceRequestId');
+    const order = await Order.findById(task.orderId).select('orderNumber buyerId sellerId marketplaceRequestId total paymentTerms');
     if (order) {
+      // 2.5: For COD orders — settle Payment record now that cash is collected
+      if (order.paymentTerms === 'cod' || task.payment?.method === 'cod') {
+        try {
+          let payment = await Payment.findOne({ orderId: order._id });
+          if (!payment) {
+            payment = new Payment({
+              orderId: order._id,
+              amount: order.total,
+              currency: 'INR',
+              method: 'cod',
+              gateway: 'manual',
+              status: 'pending'
+            });
+          }
+          payment.status = 'success';
+          payment.paidAt = new Date();
+          payment.transactionId = `COD-${task.taskNumber}`;
+          await payment.save();
+
+          // Mark commission as collected
+          const commission = await Commission.findOne({ orderId: order._id });
+          if (commission && commission.status === 'pending') {
+            await commission.markCollected();
+          }
+
+          // Award loyalty points
+          const pointsEarned = Math.floor((order.total || 0) / 100);
+          if (pointsEarned > 0) {
+            await User.findByIdAndUpdate(order.buyerId, { $inc: { loyaltyPoints: pointsEarned } });
+          }
+        } catch (codErr) {
+          console.error('COD payment settlement failed:', codErr.message);
+        }
+      }
+
+      // Notify all parties about delivery completion
       const targetUsers = [order.buyerId, order.sellerId, task.deliveryPartnerId];
 
       if (order.marketplaceRequestId) {

@@ -150,17 +150,33 @@ export const getUserMetrics = async (req, res) => {
       });
     }
     
-    // As buyer
-    const ordersAsBuyer = await Order.countDocuments({ buyerId: userId });
+    // As buyer: only count delivered orders as "spent" (exclude cancelled/pending)
+    const ordersAsBuyer = await Order.countDocuments({
+      buyerId: userId,
+      status: { $in: ['confirmed', 'processing', 'shipped', 'delivered'] }
+    });
     const totalSpent = await Order.aggregate([
-      { $match: { buyerId: new mongoose.Types.ObjectId(userId) } },
+      {
+        $match: {
+          buyerId: new mongoose.Types.ObjectId(userId),
+          status: { $in: ['delivered'] }
+        }
+      },
       { $group: { _id: null, total: { $sum: '$total' } } }
     ]);
-    
-    // As seller
-    const ordersAsSeller = await Order.countDocuments({ sellerId: userId });
+
+    // As seller: only count delivered orders as "earned"
+    const ordersAsSeller = await Order.countDocuments({
+      sellerId: userId,
+      status: { $in: ['confirmed', 'processing', 'shipped', 'delivered'] }
+    });
     const totalEarned = await Order.aggregate([
-      { $match: { sellerId: new mongoose.Types.ObjectId(userId) } },
+      {
+        $match: {
+          sellerId: new mongoose.Types.ObjectId(userId),
+          status: { $in: ['delivered'] }
+        }
+      },
       { $group: { _id: null, total: { $sum: '$total' } } }
     ]);
     
@@ -208,8 +224,12 @@ export const getRevenueMetrics = async (req, res) => {
       if (endDate) query.createdAt.$lte = new Date(endDate);
     }
     
+    // Revenue is only recognized from orders that have been delivered.
+    // Cancelled/pending/processing orders must NEVER be counted as revenue.
+    const revenueStatusFilter = { status: { $in: ['delivered'] } };
+
     const revenues = await Order.aggregate([
-      { $match: query },
+      { $match: { ...query, ...revenueStatusFilter } },
       {
         $group: {
           _id: {
@@ -221,9 +241,15 @@ export const getRevenueMetrics = async (req, res) => {
       },
       { $sort: { _id: 1 } }
     ]);
-    
+
+    // Also compute pipeline (confirmed + processing + shipped) for visibility
+    const pipelineRevenue = await Order.aggregate([
+      { $match: { ...query, status: { $in: ['confirmed', 'processing', 'shipped'] } } },
+      { $group: { _id: null, total: { $sum: '$total' } } }
+    ]);
+
     const totalRevenue = await Order.aggregate([
-      { $match: query },
+      { $match: { ...query, ...revenueStatusFilter } },
       { $group: { _id: null, total: { $sum: '$total' } } }
     ]);
     
@@ -231,6 +257,7 @@ export const getRevenueMetrics = async (req, res) => {
       success: true,
       data: {
         totalRevenue: totalRevenue[0]?.total || 0,
+        pipelineRevenue: pipelineRevenue[0]?.total || 0,
         dailyRevenues: revenues
       }
     });
