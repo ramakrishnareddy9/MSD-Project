@@ -5,11 +5,13 @@ import Product from '../models/Product.model.js';
 import Order from '../models/Order.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
 import Commission from '../models/Commission.model.js';
+import Category from '../models/Category.model.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
 import { escapeRegex } from '../utils/regex.util.js';
 import { getCropByName, normalizeCropName } from '../constants/cropCatalog.js';
 import { notifyUsers } from '../utils/notification.util.js';
+import { getCommissionRate } from '../utils/commission.util.js';
 
 const router = express.Router();
 
@@ -112,6 +114,13 @@ router.post(
         notes,
         status: 'open',
         matchedFarmerId: product.ownerId?._id || product.ownerId
+      });
+
+      await notifyUsers([req.user._id], {
+        title: 'Marketplace request submitted',
+        message: `Your request for ${crop.name} is now awaiting a farmer response.`,
+        type: 'marketplace',
+        relatedId: marketplaceRequest._id
       });
 
       res.status(201).json({
@@ -316,6 +325,15 @@ router.patch('/:id/respond', authenticate, authorize('farmer', 'admin'), async (
     await request.populate('matchedFarmerId', 'name email');
     await request.populate('productId', 'name unit basePrice ownerId');
 
+    if (request.requesterId) {
+      await notifyUsers([request.requesterId._id || request.requesterId], {
+        title: 'Marketplace response received',
+        message: `A farmer has responded to your request for ${request.cropName}.`,
+        type: 'marketplace',
+        relatedId: request._id
+      });
+    }
+
     res.json({
       success: true,
       message: `Marketplace request ${action}ed successfully`,
@@ -405,6 +423,15 @@ router.patch('/:id/buyer-respond', authenticate, authorize('business', 'restaura
     await request.populate('matchedFarmerId', 'name email');
     await request.populate('productId', 'name unit basePrice ownerId');
 
+    if (request.matchedFarmerId) {
+      await notifyUsers([request.matchedFarmerId._id || request.matchedFarmerId], {
+        title: 'Marketplace request updated',
+        message: `The buyer responded to your ${request.cropName} negotiation.`,
+        type: 'marketplace',
+        relatedId: request._id
+      });
+    }
+
     res.json({
       success: true,
       message: `Buyer ${action} action completed successfully`,
@@ -472,6 +499,10 @@ router.post(
       const agreedPrice = Number(request.agreedPrice);
       const quantity = Number(request.quantity);
       const itemTotal = agreedPrice * quantity;
+      const category = product.categoryId
+        ? await Category.findById(product.categoryId).select('gstRate')
+        : null;
+      const gstRate = Number(category?.gstRate ?? 0.05);
 
       // Reserve inventory atomically — use a temp token ObjectId, swap to real orderId after save
       const reservationToken = new mongoose.Types.ObjectId();
@@ -489,9 +520,9 @@ router.post(
       }
 
       const deliveryFee = 0; // Marketplace (B2B-style) — free delivery
-      const tax = itemTotal * 0.05;
+      const tax = Number((itemTotal * gstRate).toFixed(2));
       const total = itemTotal + deliveryFee + tax;
-      const commissionRate = 0.05;
+      const commissionRate = await getCommissionRate('b2b');
       const commissionAmount = itemTotal * commissionRate;
 
       const order = new Order({
@@ -510,6 +541,8 @@ router.post(
           unitPrice: agreedPrice,
           totalPrice: itemTotal,
           discountApplied: 0,
+          gstRate,
+          taxAmount: tax,
           lotId: lot._id
         }],
         subtotal: itemTotal,

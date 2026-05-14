@@ -16,9 +16,11 @@
  */
 
 import Product from '../models/Product.model.js';
+import Category from '../models/Category.model.js';
 import PriceAgreement from '../models/PriceAgreement.model.js';
 import CommunityPool from '../models/CommunityPool.model.js';
 import Community from '../models/Community.model.js';
+import { calculateDeliveryFeeForOrder } from './deliveryFee.util.js';
 
 /**
  * Validate that NO pricing data is included in request
@@ -167,7 +169,9 @@ export async function calculateOrderTotals({
   communityPoolId,
   marketplaceRequest,
   session = null,
-  priceMap = null     // Cache of {productId: {product, unitPrice, priceSource}}
+  priceMap = null,    // Cache of {productId: {product, unitPrice, priceSource}}
+  lotIds = [],
+  deliveryAddressCoordinates = null
 }) {
   if (!orderItems || orderItems.length === 0) {
     throw new Error('No order items provided');
@@ -237,6 +241,24 @@ export async function calculateOrderTotals({
     const itemSubtotal = discountedUnitPrice * item.quantity;
     const itemDiscountAmount = (unitPrice - discountedUnitPrice) * item.quantity;
 
+    // Determine GST for this product via its category (fallback to product.categoryId or default)
+    let gstRateForItem = 0.05; // default 5%
+    try {
+      const categoryId = product.categoryId;
+      if (categoryId) {
+        const catQuery = Category.findById(categoryId).select('gstRate');
+        if (session) catQuery.session(session);
+        const category = await catQuery;
+        if (category && typeof category.gstRate === 'number') {
+          gstRateForItem = Number(category.gstRate);
+        }
+      }
+    } catch (err) {
+      // ignore and use default
+    }
+
+    const itemTaxAmount = +(itemSubtotal * (gstRateForItem || 0)).toFixed(2);
+
     calculatedItems.push({
       productId: item.productId,
       productName: product.name,
@@ -244,6 +266,8 @@ export async function calculateOrderTotals({
       unitPrice: unitPrice,           // BEFORE discount
       discountedUnitPrice,            // AFTER discount
       itemSubtotal,                   // quantity * discountedUnitPrice
+      gstRate: gstRateForItem,
+      taxAmount: itemTaxAmount,
       itemDiscountAmount,             // discount applied
       communityDiscountPercent: communityDiscount * 100,
       priceSource,                    // For audit trail
@@ -260,9 +284,15 @@ export async function calculateOrderTotals({
   }
 
   // Calculate fees and taxes (fixed formulas, not from frontend)
-  const deliveryFee = orderType === 'b2b' ? 0 : 50; // B2C: ₹50, B2B: Free
-  const gstRate = 0.05; // 5% GST (can be product-specific)
-  const tax = subtotal * gstRate;
+  const deliveryFeeResult = await calculateDeliveryFeeForOrder({
+    orderType,
+    lotIds,
+    deliveryAddressCoordinates,
+    session
+  });
+  const deliveryFee = deliveryFeeResult.deliveryFee;
+  // Aggregate tax from item tax amounts (calculated per-item above)
+  const tax = calculatedItems.reduce((s, it) => s + (Number(it.taxAmount || 0)), 0);
   const total = subtotal + deliveryFee + tax;
 
   // Validate totals are reasonable
@@ -283,7 +313,7 @@ export async function calculateOrderTotals({
     communityDiscount: communityDiscount * 100,
     communityDiscountAmount,
     deliveryFee,
-    gstRate: gstRate * 100,
+    // For audit: no single gstRate as items may differ; provide total tax and per-item breakdown
     tax,
     total,
     breakdown: {
@@ -297,6 +327,8 @@ export async function calculateOrderTotals({
       itemCount: calculatedItems.length,
       communityDiscountApplied: communityDiscount > 0,
       orderType,
+      deliveryDistanceKm: deliveryFeeResult.distanceKm,
+      deliveryFeeTier: deliveryFeeResult.feeTier,
       timestamp: new Date().toISOString()
     }
   };

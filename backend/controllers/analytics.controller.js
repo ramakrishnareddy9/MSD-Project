@@ -3,6 +3,7 @@ import Order from '../models/Order.model.js';
 import Payment from '../models/Payment.model.js';
 import Product from '../models/Product.model.js';
 import Commission from '../models/Commission.model.js';
+import InventoryLot from '../models/InventoryLot.model.js';
 import mongoose from 'mongoose';
 
 const canAccessUserMetrics = (requestUser, targetUserId) => {
@@ -394,5 +395,297 @@ export const getProductAnalytics = async (req, res) => {
       success: false,
       message: error.message
     });
+  }
+};
+
+const getDateLabel = (value) => new Date(value).toISOString().slice(0, 7);
+
+export const getFarmerAnalytics = async (req, res) => {
+  try {
+    const sellerId = req.query.sellerId || req.user._id;
+    if (!req.user.roles?.includes('admin') && String(req.user._id) !== String(sellerId)) {
+      return res.status(403).json({ success: false, message: 'You are not authorized to access this farmer analytics data' });
+    }
+
+    const since = new Date();
+    since.setMonth(since.getMonth() - 12);
+
+    const cropPriceTrend = await Order.aggregate([
+      { $match: { sellerId: new mongoose.Types.ObjectId(sellerId), status: 'delivered', createdAt: { $gte: since } } },
+      { $unwind: '$orderItems' },
+      {
+        $group: {
+          _id: {
+            crop: '$orderItems.productName',
+            month: { $dateToString: { format: '%Y-%m', date: '$createdAt' } }
+          },
+          avgPrice: { $avg: '$orderItems.unitPrice' },
+          totalQuantity: { $sum: '$orderItems.quantity' }
+        }
+      },
+      { $sort: { '_id.month': 1 } }
+    ]);
+
+    const demandForecast = await Order.aggregate([
+      { $match: { sellerId: new mongoose.Types.ObjectId(sellerId), status: 'delivered', createdAt: { $gte: since } } },
+      { $unwind: '$orderItems' },
+      {
+        $group: {
+          _id: '$orderItems.productName',
+          unitsSold: { $sum: '$orderItems.quantity' },
+          revenue: { $sum: '$orderItems.totalPrice' }
+        }
+      },
+      { $sort: { unitsSold: -1 } },
+      { $limit: 10 }
+    ]);
+
+    const earningsVsCommission = await Commission.aggregate([
+      {
+        $match: {
+          sellerId: new mongoose.Types.ObjectId(sellerId),
+          status: { $in: ['collected', 'processing', 'paid'] }
+        }
+      },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m', date: { $ifNull: ['$processedAt', '$createdAt'] } } },
+          grossAmount: { $sum: '$orderAmount' },
+          commissionAmount: { $sum: '$commissionAmount' },
+          payoutAmount: { $sum: '$sellerPayout' }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        cropPriceTrend,
+        demandForecast,
+        earningsVsCommission
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getAdminDeepAnalytics = async (req, res) => {
+  try {
+    const platformGmv = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      { $group: { _id: null, gmv: { $sum: '$total' }, orders: { $sum: 1 } } }
+    ]);
+
+    const commissionTotals = await Commission.aggregate([
+      { $match: { status: { $in: ['collected', 'processing', 'paid'] } } },
+      { $group: { _id: null, commission: { $sum: '$commissionAmount' } } }
+    ]);
+
+    const topFarmers = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      {
+        $group: {
+          _id: '$sellerId',
+          revenue: { $sum: '$total' },
+          orders: { $sum: 1 }
+        }
+      },
+      { $sort: { revenue: -1 } },
+      { $limit: 10 },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'seller'
+        }
+      },
+      { $unwind: '$seller' },
+      {
+        $project: {
+          _id: '$seller._id',
+          name: '$seller.name',
+          revenue: 1,
+          orders: 1
+        }
+      }
+    ]);
+
+    const cropByRegion = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      { $unwind: '$orderItems' },
+      {
+        $group: {
+          _id: {
+            region: '$deliveryAddress.state',
+            crop: '$orderItems.productName'
+          },
+          totalOrdered: { $sum: '$orderItems.quantity' },
+          totalRevenue: { $sum: '$orderItems.totalPrice' }
+        }
+      },
+      { $sort: { totalOrdered: -1 } },
+      { $limit: 20 }
+    ]);
+
+    const gmv = platformGmv[0]?.gmv || 0;
+    const commission = commissionTotals[0]?.commission || 0;
+
+    res.json({
+      success: true,
+      data: {
+        platformGmv: gmv,
+        takeRate: gmv > 0 ? (commission / gmv) * 100 : 0,
+        topFarmers,
+        cropByRegion
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getCustomerAnalytics = async (req, res) => {
+  try {
+    const userId = req.query.userId || req.user._id;
+    if (!req.user.roles?.includes('admin') && String(req.user._id) !== String(userId)) {
+      return res.status(403).json({ success: false, message: 'You are not authorized to access this customer analytics data' });
+    }
+
+    const orderFrequency = await Order.aggregate([
+      { $match: { buyerId: new mongoose.Types.ObjectId(userId), status: 'delivered' } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m', date: '$createdAt' } },
+          orderCount: { $sum: 1 },
+          basketSize: { $avg: '$total' }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const user = await User.findById(userId).select('loyaltyPoints loyaltyPointsHistory');
+    const loyaltyPointsHistory = (user?.loyaltyPointsHistory || []).map((entry) => ({
+      points: entry.points,
+      reason: entry.reason,
+      awardedAt: entry.awardedAt,
+      expiresAt: entry.expiresAt
+    }));
+
+    const expiryWarnings = loyaltyPointsHistory.filter((entry) => entry.expiresAt && new Date(entry.expiresAt).getTime() <= Date.now() + (14 * 24 * 60 * 60 * 1000));
+
+    res.json({
+      success: true,
+      data: {
+        orderFrequency,
+        averageBasketSize: orderFrequency.reduce((sum, bucket) => sum + (bucket.basketSize || 0), 0) / Math.max(orderFrequency.length, 1),
+        loyaltyPoints: user?.loyaltyPoints || 0,
+        loyaltyPointsHistory,
+        expiryWarnings
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getInventoryAnalytics = async (req, res) => {
+  try {
+    const lots = await InventoryLot.aggregate([
+      {
+        $group: {
+          _id: '$productId',
+          stockQuantity: { $sum: { $subtract: ['$quantity', '$reservedQuantity'] } },
+          earliestExpiry: { $min: '$expiryDate' }
+        }
+      },
+      {
+        $lookup: {
+          from: 'products',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'product'
+        }
+      },
+      { $unwind: '$product' },
+      {
+        $project: {
+          _id: '$product._id',
+          name: '$product.name',
+          stockQuantity: 1,
+          earliestExpiry: 1
+        }
+      }
+    ]);
+
+    const nearExpiryAlerts = await InventoryLot.aggregate([
+      {
+        $match: {
+          expiryDate: {
+            $gte: new Date(),
+            $lte: new Date(Date.now() + (14 * 24 * 60 * 60 * 1000))
+          }
+        }
+      },
+      {
+        $lookup: {
+          from: 'products',
+          localField: 'productId',
+          foreignField: '_id',
+          as: 'product'
+        }
+      },
+      { $unwind: '$product' },
+      {
+        $project: {
+          _id: 1,
+          productId: 1,
+          productName: '$product.name',
+          quantity: 1,
+          expiryDate: 1
+        }
+      }
+    ]);
+
+    const recentVelocity = await Order.aggregate([
+      { $match: { status: 'delivered', createdAt: { $gte: new Date(Date.now() - (30 * 24 * 60 * 60 * 1000)) } } },
+      { $unwind: '$orderItems' },
+      {
+        $group: {
+          _id: '$orderItems.productId',
+          unitsSold: { $sum: '$orderItems.quantity' }
+        }
+      }
+    ]);
+
+    const velocityMap = new Map(recentVelocity.map((entry) => [String(entry._id), entry.unitsSold / 30]));
+    const stockMap = new Map(lots.map((entry) => [String(entry._id), entry]));
+
+    const reorderSuggestions = lots.map((entry) => {
+      const dailyVelocity = velocityMap.get(String(entry._id)) || 0;
+      const daysOfStockRemaining = dailyVelocity > 0 ? entry.stockQuantity / dailyVelocity : null;
+
+      return {
+        productId: entry._id,
+        name: entry.name,
+        stockQuantity: entry.stockQuantity,
+        daysOfStockRemaining,
+        shouldReorder: daysOfStockRemaining != null ? daysOfStockRemaining <= 14 : entry.stockQuantity <= 10
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        products: lots,
+        nearExpiryAlerts,
+        reorderSuggestions,
+        stockCoverage: Array.from(stockMap.values())
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };

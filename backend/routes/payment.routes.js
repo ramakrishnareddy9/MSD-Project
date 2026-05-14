@@ -74,6 +74,7 @@ const finalizeSuccessfulPayment = async ({ payment, transactionId, paymentId, me
 router.get('/', authenticate, async (req, res) => {
   try {
     const { orderId, status, method, page = 1, limit = 20 } = req.query;
+    const cappedLimit = Math.min(Number(limit) || 20, 100);
     
     let query = {};
     
@@ -99,8 +100,8 @@ router.get('/', authenticate, async (req, res) => {
 
     const payments = await Payment.find(query)
       .populate('orderId', 'orderNumber type buyerId sellerId total')
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
+      .limit(cappedLimit)
+      .skip((page - 1) * cappedLimit)
       .sort({ createdAt: -1 });
 
     const count = await Payment.countDocuments(query);
@@ -109,7 +110,7 @@ router.get('/', authenticate, async (req, res) => {
       success: true,
       data: {
         payments,
-        totalPages: Math.ceil(count / limit),
+        totalPages: Math.ceil(count / cappedLimit),
         currentPage: page,
         total: count
       }
@@ -439,7 +440,7 @@ router.post('/webhook/razorpay', async (req, res) => {
 });
 
 // Mark payment as failed (admin or payment gateway callback)
-router.patch('/:id/failed', authenticate, validateObjectId('id'), async (req, res) => {
+router.patch('/:id/failed', authenticate, authorize('admin'), validateObjectId('id'), async (req, res) => {
   try {
     const payment = await Payment.findById(req.params.id);
     

@@ -5,9 +5,15 @@ import {
 	validateLogin,
 	validateForgotPassword,
 	validateResetPassword,
-	validateVerifyEmailOtp
+	validateVerifyEmailOtp,
+	validateVerifyPhoneOtp
 } from '../middleware/validation.middleware.js';
-import { verifyEmailOtpLimiter, resendEmailOtpLimiter } from '../middleware/authOtpRateLimit.middleware.js';
+import {
+	verifyEmailOtpLimiter,
+	resendEmailOtpLimiter,
+	verifyPhoneOtpLimiter,
+	resendPhoneOtpLimiter
+} from '../middleware/authOtpRateLimit.middleware.js';
 import * as authController from '../controllers/auth.controller.js';
 
 const router = express.Router();
@@ -34,6 +40,12 @@ router.post('/verify-email', verifyEmailOtpLimiter, authenticate, validateVerify
 
 // Resend verification OTP
 router.post('/resend-verification', resendEmailOtpLimiter, authenticate, authController.resendVerificationOtp);
+
+// Phone verification (OTP)
+router.post('/verify-phone', verifyPhoneOtpLimiter, authenticate, validateVerifyPhoneOtp, authController.verifyPhone);
+
+// Resend phone verification OTP
+router.post('/resend-phone-otp', resendPhoneOtpLimiter, authenticate, authController.resendPhoneOtp);
 
 // Get current user
 router.get('/me', authenticate, authController.me);

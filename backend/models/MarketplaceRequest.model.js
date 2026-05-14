@@ -101,8 +101,13 @@ const marketplaceRequestSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['open', 'countered', 'accepted', 'declined', 'fulfilled', 'cancelled'],
+    enum: ['open', 'countered', 'accepted', 'declined', 'fulfilled', 'cancelled', 'expired'],
     default: 'open'
+  },
+  expiresAt: {
+    type: Date,
+    default: () => new Date(Date.now() + 72 * 60 * 60 * 1000),
+    required: true
   },
   matchedFarmerId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -151,6 +156,7 @@ marketplaceRequestSchema.index({ cropName: 1, status: 1, createdAt: -1 });
 marketplaceRequestSchema.index({ requesterId: 1, status: 1, createdAt: -1 });
 marketplaceRequestSchema.index({ matchedFarmerId: 1, status: 1, createdAt: -1 });
 marketplaceRequestSchema.index({ status: 1, createdAt: -1 });
+marketplaceRequestSchema.index({ expiresAt: 1, status: 1 });
 
 marketplaceRequestSchema.pre('validate', function(next) {
   if (!this.requestNumber) {
@@ -171,16 +177,41 @@ const MarketplaceRequest = mongoose.model('MarketplaceRequest', marketplaceReque
  */
 MarketplaceRequest.prototype.canTransitionTo = function(newStatus) {
   const validTransitions = {
-    'open': ['countered', 'declined'],
-    'countered': ['open', 'accepted', 'declined'],
-    'accepted': ['fulfilled', 'cancelled'],
-    'declined': [],
+    'open': ['countered', 'declined', 'expired'],
+    'countered': ['open', 'accepted', 'declined', 'expired'],
+    'accepted': ['fulfilled', 'cancelled', 'expired'],
+    'declined': ['expired'],
     'fulfilled': ['cancelled'],
-    'cancelled': []
+    'cancelled': [],
+    'expired': []
   };
   
   const allowed = validTransitions[this.status] || [];
   return allowed.includes(newStatus);
+};
+
+/**
+ * Issue 19 - Expire old requests
+ * Marks requests as expired if past expiresAt and not in terminal state
+ */
+MarketplaceRequest.expireOldRequests = async function() {
+  try {
+    const now = new Date();
+    
+    // Find non-terminal requests that have expired
+    const result = await this.updateMany(
+      {
+        expiresAt: { $lt: now },
+        status: { $nin: ['fulfilled', 'cancelled', 'expired'] }
+      },
+      { status: 'expired', updatedAt: now }
+    );
+    
+    return result;
+  } catch (error) {
+    console.error('❌ Error expiring old marketplace requests:', error);
+    throw error;
+  }
 };
 
 export default MarketplaceRequest;

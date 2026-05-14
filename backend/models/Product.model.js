@@ -43,6 +43,23 @@ const productSchema = new mongoose.Schema({
     enum: ['ambient', 'refrigerated', 'frozen']
   },
   tags: [String],
+  availableMonths: [{
+    type: Number,
+    min: 1,
+    max: 12
+  }],
+  harvestWindow: {
+    startMonth: {
+      type: Number,
+      min: 1,
+      max: 12
+    },
+    endMonth: {
+      type: Number,
+      min: 1,
+      max: 12
+    }
+  },
   status: {
     type: String,
     enum: PRODUCT_STATUSES,
@@ -80,6 +97,12 @@ const productSchema = new mongoose.Schema({
     min: 0,
     max: 100
   },
+  ownerRole: {
+    type: String,
+    enum: ['farmer', 'business', 'restaurant', 'travel_agency', 'customer'],
+    default: 'farmer',
+    index: true
+  },
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -91,6 +114,7 @@ productSchema.plugin(softDeletePlugin);
 
 // Indexes
 productSchema.index({ ownerId: 1, status: 1, createdAt: -1 });
+productSchema.index({ ownerRole: 1, status: 1, createdAt: -1 }); // Fast catalog queries without User join
 productSchema.index({ categoryId: 1, status: 1 });
 productSchema.index({ categoryId: 1, status: 1, basePrice: 1 });
 productSchema.index({ status: 1, averageRating: -1 });

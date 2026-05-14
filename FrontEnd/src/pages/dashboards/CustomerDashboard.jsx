@@ -15,7 +15,7 @@ import {
   CheckCircle, ArrowForward, Search, TrendingUp, Home, Groups, PersonAdd, Send,
   ThumbUp, ThumbDown, AdminPanelSettings, CardGiftcard,
   Chat, Inventory, Assignment, Agriculture, LocalGroceryStore, Refresh,
-  BarChart as BarChartIcon, PieChart as PieChartIcon
+  BarChart as BarChartIcon, PieChart as PieChartIcon, Cancel
 } from '@mui/icons-material';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -23,7 +23,7 @@ import {
 } from 'recharts';
 import { useAuth } from '../../contexts/AuthContext';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { authAPI, productAPI, cartAPI, wishlistAPI, orderAPI, communityAPI, userAPI, notificationAPI, marketplaceRequestAPI } from '../../services/api';
+import { authAPI, productAPI, cartAPI, wishlistAPI, orderAPI, communityAPI, userAPI, notificationAPI, marketplaceRequestAPI, disputeAPI } from '../../services/api';
 import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 
 const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1488459716781-6f03ee1b563b?w=800&h=600&fit=crop&q=80';
@@ -77,6 +77,13 @@ const CustomerDashboard = () => {
   const [notificationPage, setNotificationPage] = useState(1);
   const [notificationTotalPages, setNotificationTotalPages] = useState(1);
   const [negotiations, setNegotiations] = useState([]);
+  const [disputes, setDisputes] = useState([]);
+  const [disputeForm, setDisputeForm] = useState({
+    orderId: '',
+    reason: 'damaged',
+    description: '',
+    evidenceImage: ''
+  });
   const [profileForm, setProfileForm] = useState({
     name: '',
     email: '',
@@ -146,6 +153,42 @@ const CustomerDashboard = () => {
   const syncWishlistFromResponse = (wishlistRes) => {
     const productsFromWishlist = wishlistRes?.data?.products || [];
     setWishlist(productsFromWishlist.map(normalizeWishlistItem));
+  };
+
+  const refreshDisputes = async () => {
+    try {
+      const disputesRes = await disputeAPI.getAll({ limit: 25 });
+      if (disputesRes.success) {
+        setDisputes(disputesRes.data?.disputes || []);
+      }
+    } catch (error) {
+      console.error('Error fetching disputes:', error);
+      setDisputes([]);
+    }
+  };
+
+  const submitDispute = async () => {
+    try {
+      if (!disputeForm.orderId || !disputeForm.description.trim()) {
+        showSnackbar('Choose a delivered order and provide a description', 'error');
+        return;
+      }
+
+      const response = await disputeAPI.create({
+        orderId: disputeForm.orderId,
+        reason: disputeForm.reason,
+        description: disputeForm.description.trim(),
+        evidenceImages: disputeForm.evidenceImage.trim() ? [disputeForm.evidenceImage.trim()] : []
+      });
+
+      if (response.success) {
+        showSnackbar('Dispute submitted successfully', 'success');
+        setDisputeForm({ orderId: '', reason: 'damaged', description: '', evidenceImage: '' });
+        await refreshDisputes();
+      }
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to submit dispute', 'error');
+    }
   };
 
   const refreshCommunityPools = async (communities, currentUserId) => {
@@ -309,6 +352,8 @@ const CustomerDashboard = () => {
           if (requestsRes.success) {
             setNegotiations(requestsRes.data?.requests || []);
           }
+
+          await refreshDisputes();
 
           await refreshCommunities(currentUser._id);
 
@@ -832,6 +877,7 @@ const CustomerDashboard = () => {
     { id: 'join-community', label: 'Join Community', icon: <PersonAdd />, badge: availableCommunities.length },
     { id: 'community-chat', label: 'Community Chat', icon: <Chat />, badge: totalChatMessages > 0 ? '•' : 0 },
     { id: 'contributions', label: 'My Contributions', icon: <Assignment /> },
+    { id: 'disputes', label: 'Disputes', icon: <Cancel />, badge: disputes.filter((dispute) => ['open', 'under_review'].includes(dispute.status)).length || 0 },
     { id: 'analytics', label: 'Analytics', icon: <BarChartIcon /> },
     { id: 'wishlist', label: 'Wishlist', icon: <Favorite />, badge: wishlist.length },
     { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: unreadNotifications },
@@ -1709,6 +1755,116 @@ const CustomerDashboard = () => {
                     </TableContainer>
                   </Paper>
                 )}
+              </Box>
+            )}
+
+            {/* ═══ DISPUTES ══════════════════════════════════════════════════ */}
+            {activeSection === 'disputes' && (
+              <Box>
+                <Typography variant="h5" fontWeight="bold" gutterBottom sx={{ mb: 3 }}>Disputes & Returns</Typography>
+                <Grid container spacing={3}>
+                  <Grid item xs={12} md={5}>
+                    <Paper sx={{ p: 3 }}>
+                      <Typography variant="h6" fontWeight="bold" gutterBottom>Open a Dispute</Typography>
+                      <Alert severity="info" sx={{ mb: 2 }}>
+                        Only delivered orders within the allowed dispute window can be submitted.
+                      </Alert>
+                      <Stack spacing={2}>
+                        <TextField
+                          select
+                          label="Delivered Order"
+                          value={disputeForm.orderId}
+                          onChange={(e) => setDisputeForm((prev) => ({ ...prev, orderId: e.target.value }))}
+                          fullWidth
+                        >
+                          {myOrders.filter((order) => order.status === 'delivered').length > 0 ? (
+                            myOrders.filter((order) => order.status === 'delivered').map((order) => (
+                              <MenuItem key={order.id} value={order.id}>
+                                #{order.id} - {order.product} - ₹{order.amount}
+                              </MenuItem>
+                            ))
+                          ) : (
+                            <MenuItem value="" disabled>No delivered orders available</MenuItem>
+                          )}
+                        </TextField>
+                        <TextField
+                          select
+                          label="Reason"
+                          value={disputeForm.reason}
+                          onChange={(e) => setDisputeForm((prev) => ({ ...prev, reason: e.target.value }))}
+                          fullWidth
+                        >
+                          {[
+                            { value: 'damaged', label: 'Damaged' },
+                            { value: 'wrong_item', label: 'Wrong Item' },
+                            { value: 'not_delivered', label: 'Not Delivered' },
+                            { value: 'quality', label: 'Quality Issue' }
+                          ].map((option) => (
+                            <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+                          ))}
+                        </TextField>
+                        <TextField
+                          label="Description"
+                          value={disputeForm.description}
+                          onChange={(e) => setDisputeForm((prev) => ({ ...prev, description: e.target.value }))}
+                          multiline
+                          rows={4}
+                          fullWidth
+                        />
+                        <TextField
+                          label="Evidence image URL"
+                          value={disputeForm.evidenceImage}
+                          onChange={(e) => setDisputeForm((prev) => ({ ...prev, evidenceImage: e.target.value }))}
+                          fullWidth
+                        />
+                        <Button variant="contained" onClick={submitDispute} disabled={!disputeForm.orderId}>
+                          Submit Dispute
+                        </Button>
+                      </Stack>
+                    </Paper>
+                  </Grid>
+
+                  <Grid item xs={12} md={7}>
+                    <Paper sx={{ p: 3 }}>
+                      <Typography variant="h6" fontWeight="bold" gutterBottom>My Disputes</Typography>
+                      <Divider sx={{ my: 2 }} />
+                      {disputes.length > 0 ? (
+                        <TableContainer>
+                          <Table>
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>Order</TableCell>
+                                <TableCell>Reason</TableCell>
+                                <TableCell>Status</TableCell>
+                                <TableCell>Created</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {disputes.map((dispute) => (
+                                <TableRow key={dispute._id}>
+                                  <TableCell>
+                                    #{dispute.orderId?.orderNumber || dispute.orderId || 'Order'}
+                                  </TableCell>
+                                  <TableCell>{dispute.reason}</TableCell>
+                                  <TableCell>
+                                    <Chip
+                                      label={dispute.status}
+                                      color={dispute.status === 'resolved_refund' || dispute.status === 'resolved_replacement' ? 'success' : dispute.status === 'rejected' ? 'error' : 'warning'}
+                                      size="small"
+                                    />
+                                  </TableCell>
+                                  <TableCell>{new Date(dispute.createdAt).toLocaleDateString()}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      ) : (
+                        <Typography color="text.secondary">No disputes filed yet.</Typography>
+                      )}
+                    </Paper>
+                  </Grid>
+                </Grid>
               </Box>
             )}
 

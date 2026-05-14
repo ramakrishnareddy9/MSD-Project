@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { PRODUCT_UNITS } from '../constants/productEnums.js';
 
 /**
  * Lightweight POSIX cron "next date" calculator (no external dependencies).
@@ -82,7 +83,7 @@ const itemTemplateSchema = new mongoose.Schema({
   },
   unit: {
     type: String,
-    enum: ['kg', 'g', 'liter', 'ml', 'piece', 'dozen', 'bag', 'box'],
+    enum: PRODUCT_UNITS,
     required: true
   },
   maxPrice: {

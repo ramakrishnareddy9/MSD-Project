@@ -29,6 +29,18 @@ const orderItemSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
+  // GST rate applied to this item (decimal fraction, e.g. 0.05 = 5%)
+  gstRate: {
+    type: Number,
+    default: 0.05,
+    min: 0,
+    max: 1
+  },
+  // Tax amount for this item (calculated = discountedUnitPrice * quantity * gstRate)
+  taxAmount: {
+    type: Number,
+    default: 0
+  },
   totalPrice: {
     type: Number,
     required: true

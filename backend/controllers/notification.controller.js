@@ -36,27 +36,6 @@ export const getNotifications = async (req, res) => {
   }
 };
 
-// @desc    Create a notification
-// @route   POST /api/notifications
-// @access  Private
-export const createNotification = async (req, res) => {
-  try {
-    const { title, message, type, relatedId } = req.body;
-
-    const notification = await Notification.create({
-      user: req.user._id,
-      title,
-      message,
-      type,
-      relatedId
-    });
-
-    res.status(201).json({ success: true, data: notification });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
 // @desc    Mark notification as read
 // @route   PUT /api/notifications/:id/read
 // @access  Private

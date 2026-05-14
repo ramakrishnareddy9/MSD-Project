@@ -31,6 +31,30 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Get category by slug
+router.get('/slug/:slug', async (req, res) => {
+  try {
+    const category = await Category.findOne({ slug: String(req.params.slug).toLowerCase() });
+
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: 'Category not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: { category }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
 // Get category by ID
 router.get('/:id', validateObjectId('id'), async (req, res) => {
   try {

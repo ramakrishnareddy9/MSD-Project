@@ -10,13 +10,18 @@ import {
   Agriculture, Inventory, TrendingUp, AccountCircle,
   Add, Delete, Visibility, Notifications, Menu as MenuIcon,
   LocationOn,
-  LocalShipping, AttachMoney, CheckCircle, Cancel,
+  LocalShipping, AttachMoney, CheckCircle, Cancel, AccountBalanceWallet,
   Verified, Home, Store, Schedule, Business,
   ShoppingCart, Refresh
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { authAPI, productAPI, orderAPI, inventoryAPI, analyticsAPI, deliveryAPI, categoryAPI, marketplaceRequestAPI, userAPI, notificationAPI } from '../../services/api';
+import { authAPI, productAPI, orderAPI, inventoryAPI, analyticsAPI, deliveryAPI, categoryAPI, marketplaceRequestAPI, userAPI, notificationAPI, payoutAPI } from '../../services/api';
 import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
+import VerificationBanner from '../../Components/VerificationBanner';
+import { useFarmerData } from '../../hooks/useFarmerData';
+import FarmerCropsPanel from './farmer/FarmerCropsPanel';
+import FarmerOrdersPanel from './farmer/FarmerOrdersPanel';
+import FarmerAnalyticsPanel from './farmer/FarmerAnalyticsPanel';
 
 const defaultFarmerData = {
   _id: '',
@@ -55,6 +60,14 @@ const FarmerDashboard = () => {
   const [myOrders, setMyOrders] = useState([]);
   const [globalOrders, setGlobalOrders] = useState([]);
   const [myAcceptedOrders, setMyAcceptedOrders] = useState([]);
+  const [payouts, setPayouts] = useState([]);
+  const [payoutSummary, setPayoutSummary] = useState({
+    grossAmount: 0,
+    commissionDeducted: 0,
+    netAmount: 0,
+    pendingAmount: 0,
+    processedAmount: 0
+  });
   const [metrics, setMetrics] = useState({
     totalCrops: 0,
     activeSales: 0,
@@ -91,6 +104,27 @@ const FarmerDashboard = () => {
       fetchNotifications(notificationPage, notificationFilter);
     }
   });
+
+  // Centralized data fetch hook
+  const { loading: hookLoading, fetchAll } = useFarmerData();
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      setLoading(true);
+      const res = await fetchAll({ ownerId: safeFarmerData._id });
+      if (!mounted) return;
+      setCrops(res.products || []);
+      setMyOrders(res.orders || []);
+      setPayouts(res.payouts || []);
+      setMetrics(res.metrics || {});
+      setNotifications(res.notifications || []);
+      setLoading(false);
+    };
+
+    load();
+    return () => { mounted = false; };
+  }, [fetchAll]);
 
   const safeFarmerData = {
     ...defaultFarmerData,
@@ -240,6 +274,18 @@ const FarmerDashboard = () => {
               ...prev,
               pendingOrders: mappedOrders.filter(o => String(o.status || '').toLowerCase() === 'pending').length
             }));
+          }
+
+          const payoutsRes = await payoutAPI.getMy();
+          if (payoutsRes.success && payoutsRes.data) {
+            setPayouts(payoutsRes.data.payouts || []);
+            setPayoutSummary(payoutsRes.data.summary || {
+              grossAmount: 0,
+              commissionDeducted: 0,
+              netAmount: 0,
+              pendingAmount: 0,
+              processedAmount: 0
+            });
           }
 
           await fetchNotifications(1, 'all');
@@ -459,6 +505,7 @@ const FarmerDashboard = () => {
     { id: 'overview', label: 'Overview', icon: <Home /> },
     { id: 'crops', label: 'My Crops', icon: <Agriculture />, badge: crops.length },
     { id: 'orders', label: 'Orders', icon: <Store />, badge: safeFarmerData.stats.pendingOrders },
+    { id: 'earnings', label: 'Earnings', icon: <AccountBalanceWallet />, badge: payouts.length || null },
     { id: 'marketplace', label: 'Order Marketplace', icon: <ShoppingCart />, badge: globalOrders.filter(o => o.status === 'Open').length },
     { id: 'inventory', label: 'Inventory', icon: <Inventory /> },
     { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: unreadCount || null },
@@ -812,6 +859,14 @@ const FarmerDashboard = () => {
                         <Button 
                           variant="outlined" 
                           fullWidth
+                          startIcon={<AccountBalanceWallet />}
+                          onClick={() => setActiveSection('earnings')}
+                        >
+                          View Earnings
+                        </Button>
+                        <Button 
+                          variant="outlined" 
+                          fullWidth
                           startIcon={<Inventory />}
                           onClick={() => setActiveSection('inventory')}
                         >
@@ -1046,6 +1101,101 @@ const FarmerDashboard = () => {
                     </Grid>
                   ))}
                 </Grid>
+              </Box>
+            )}
+
+            {/* Earnings */}
+            {activeSection === 'earnings' && (
+              <Box>
+                <Grid container spacing={3} sx={{ mb: 3 }}>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <Card sx={{ bgcolor: 'success.lighter' }}>
+                      <CardContent>
+                        <Typography variant="caption" color="text.secondary">Gross Earnings</Typography>
+                        <Typography variant="h4" fontWeight="bold" color="success.main">
+                          ₹{Number(payoutSummary.grossAmount || 0).toLocaleString('en-IN')}
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <Card sx={{ bgcolor: 'warning.lighter' }}>
+                      <CardContent>
+                        <Typography variant="caption" color="text.secondary">Commission Withheld</Typography>
+                        <Typography variant="h4" fontWeight="bold" color="warning.main">
+                          ₹{Number(payoutSummary.commissionDeducted || 0).toLocaleString('en-IN')}
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <Card sx={{ bgcolor: 'info.lighter' }}>
+                      <CardContent>
+                        <Typography variant="caption" color="text.secondary">Net Payout</Typography>
+                        <Typography variant="h4" fontWeight="bold" color="info.main">
+                          ₹{Number(payoutSummary.netAmount || 0).toLocaleString('en-IN')}
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <Card sx={{ bgcolor: 'error.lighter' }}>
+                      <CardContent>
+                        <Typography variant="caption" color="text.secondary">Pending Payouts</Typography>
+                        <Typography variant="h4" fontWeight="bold" color="error.main">
+                          ₹{Number(payoutSummary.pendingAmount || 0).toLocaleString('en-IN')}
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                </Grid>
+
+                <Paper sx={{ p: 3 }}>
+                  <Typography variant="h6" fontWeight="bold" gutterBottom>
+                    Payout History
+                  </Typography>
+                  <Divider sx={{ my: 2 }} />
+                  <TableContainer>
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Period</TableCell>
+                          <TableCell align="right">Gross</TableCell>
+                          <TableCell align="right">Commission</TableCell>
+                          <TableCell align="right">Net</TableCell>
+                          <TableCell>Status</TableCell>
+                          <TableCell>Payment Ref</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {payouts.length > 0 ? payouts.map((payout) => (
+                          <TableRow key={payout._id}>
+                            <TableCell>
+                              {new Date(payout.periodStart).toLocaleDateString('en-IN')} - {new Date(payout.periodEnd).toLocaleDateString('en-IN')}
+                            </TableCell>
+                            <TableCell align="right">₹{Number(payout.grossAmount || 0).toLocaleString('en-IN')}</TableCell>
+                            <TableCell align="right">₹{Number(payout.commissionDeducted || 0).toLocaleString('en-IN')}</TableCell>
+                            <TableCell align="right">₹{Number(payout.netAmount || 0).toLocaleString('en-IN')}</TableCell>
+                            <TableCell>
+                              <Chip
+                                label={payout.status}
+                                color={payout.status === 'processed' ? 'success' : 'warning'}
+                                size="small"
+                              />
+                            </TableCell>
+                            <TableCell>{payout.paymentReference || 'Pending'}</TableCell>
+                          </TableRow>
+                        )) : (
+                          <TableRow>
+                            <TableCell colSpan={6} align="center">
+                              No payout records found yet.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Paper>
               </Box>
             )}
 

@@ -1,7 +1,6 @@
 import express from 'express';
 import { 
   getNotifications, 
-  createNotification, 
   markAsRead, 
   markAllAsRead, 
   deleteNotification 
@@ -13,8 +12,7 @@ const router = express.Router();
 router.use(authenticate);
 
 router.route('/')
-  .get(getNotifications)
-  .post(createNotification);
+  .get(getNotifications);
 
 router.put('/read-all', markAllAsRead);
 

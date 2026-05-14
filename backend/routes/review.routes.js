@@ -1,15 +1,25 @@
 import express from 'express';
 import Review from '../models/Review.model.js';
 import Order from '../models/Order.model.js';
-import { authenticate } from '../middleware/auth.middleware.js';
+import { authenticate, optionalAuth } from '../middleware/auth.middleware.js';
 import { validateReview } from '../middleware/validation.middleware.js';
+import rateLimit from 'express-rate-limit';
 
 const router = express.Router();
 
-// Get reviews
-router.get('/', async (req, res) => {
+// Rate limiter for public review listing (prevents scraping)
+const reviewListLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Get reviews (optional auth, rate-limited)
+router.get('/', optionalAuth, reviewListLimiter, async (req, res) => {
   try {
     const { productId, userId, status = 'published', page = 1, limit = 20 } = req.query;
+    const cappedLimit = Math.min(Number(limit) || 20, 100);
     
     const query = {};
     if (productId) query.productId = productId;
@@ -19,8 +29,8 @@ router.get('/', async (req, res) => {
     const reviews = await Review.find(query)
       .populate('userId', 'name profileImage')
       .populate('productId', 'name images')
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
+      .limit(cappedLimit)
+      .skip((page - 1) * cappedLimit)
       .sort({ createdAt: -1 });
 
     const count = await Review.countDocuments(query);
@@ -29,7 +39,7 @@ router.get('/', async (req, res) => {
       success: true,
       data: {
         reviews,
-        totalPages: Math.ceil(count / limit),
+        totalPages: Math.ceil(count / cappedLimit),
         currentPage: page,
         total: count
       }

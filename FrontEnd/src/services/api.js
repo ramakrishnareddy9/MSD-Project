@@ -43,6 +43,28 @@ const attemptSilentRefresh = async () => {
 // ─── Core API helper ───────────────────────────────────────────────────────────
 /**
  * Make an API call with automatic silent refresh on 401.
+
+  // ===== DISPUTE API =====
+  export const disputeAPI = {
+    create: async (payload) => {
+      return apiCall('/disputes', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+    },
+
+    getAll: async (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return apiCall(`/disputes?${query}`);
+    },
+
+    resolve: async (id, payload) => {
+      return apiCall(`/disputes/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload)
+      });
+    }
+  };
  * When the access token expires (15 min), the first 401 triggers a
  * POST /auth/refresh using the long-lived refresh cookie. If refresh
  * succeeds the original request is retried exactly once.
@@ -142,6 +164,8 @@ export const authAPI = {
   },
 
   logout: async () => {
+    // Logout is authoritative on the server: it clears the refresh-token hash,
+    // so the client must always call this endpoint instead of only dropping UI state.
     return apiCall('/auth/logout', {
       method: 'POST'
     });
@@ -972,6 +996,13 @@ export const analyticsAPI = {
     const params = ownerId ? { ownerId } : {};
     const query = new URLSearchParams(params).toString();
     return apiCall(`/analytics/products?${query}`);
+  }
+};
+
+// ===== PAYOUT API =====
+export const payoutAPI = {
+  getMy: async () => {
+    return apiCall('/payouts/me');
   }
 };
 

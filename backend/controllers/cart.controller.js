@@ -3,10 +3,13 @@ import Product from '../models/Product.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
 import Order from '../models/Order.model.js';
 import Commission from '../models/Commission.model.js';
+import Category from '../models/Category.model.js';
 import User from '../models/User.model.js';
 import mongoose from 'mongoose';
+import { calculateDeliveryFeeForOrder } from '../utils/deliveryFee.util.js';
+import { getCommissionRate } from '../utils/commission.util.js';
 
-const ensureFarmerProduct = async (productId) => {
+const ensureFarmerProduct = async (productId, requestedQty = 1) => {
   const product = await Product.findById(productId).select('ownerId status name');
   if (!product || product.status !== 'active') {
     return { ok: false, message: 'Product not found or unavailable', product: null, availableQty: 0 };
@@ -19,8 +22,25 @@ const ensureFarmerProduct = async (productId) => {
     return { ok: false, message: 'Only crops grown by active farmers can be added to cart', product: null, availableQty: 0 };
   }
 
-  const availableQty = await InventoryLot.getAvailableQuantityForProduct(product._id);
+  // Use the same validation logic as checkout: find if a lot can be reserved with requested qty
+  // This prevents cart accepting items that will fail at checkout due to inventory fragmentation
+  const availableLot = await InventoryLot.findOne({
+    productId: product._id,
+    $expr: {
+      $gte: [
+        { $subtract: ['$quantity', '$reservedQuantity'] },
+        requestedQty
+      ]
+    }
+  }).select('quantity reservedQuantity');
 
+  if (!availableLot) {
+    // If no single lot has enough, report total available across all lots (for user information)
+    const totalAvailable = await InventoryLot.getAvailableQuantityForProduct(product._id);
+    return { ok: false, message: `Insufficient stock: ${totalAvailable} available`, product, availableQty: totalAvailable };
+  }
+
+  const availableQty = availableLot.quantity - availableLot.reservedQuantity;
   return { ok: true, message: '', product, availableQty };
 };
 
@@ -99,7 +119,7 @@ export const addItemToCart = async (req, res) => {
     const { productId, qty } = req.body;
     const requestedQty = normalizeQty(qty);
 
-    const productCheck = await ensureFarmerProduct(productId);
+    const productCheck = await ensureFarmerProduct(productId, requestedQty);
     if (!productCheck.ok) {
       return res.status(400).json({ success: false, message: productCheck.message });
     }
@@ -114,10 +134,12 @@ export const addItemToCart = async (req, res) => {
     const existingQty = getCartItemQty(cart, productId);
     const nextQty = existingQty + requestedQty;
 
-    if (!canFitInStock(productCheck.availableQty, nextQty)) {
+    // Re-validate that the total quantity can be reserved from a single lot
+    const totalQtyCheck = await ensureFarmerProduct(productId, nextQty);
+    if (!totalQtyCheck.ok) {
       return res.status(400).json({
         success: false,
-        message: `Only ${Number(productCheck.availableQty || 0)} ${productCheck.product.name || 'units'} available in stock`
+        message: `Cannot add ${requestedQty} more units. ${totalQtyCheck.message}`
       });
     }
 
@@ -174,16 +196,9 @@ export const updateCartItem = async (req, res) => {
     const itemIndex = cart.items.findIndex(item => item.product.toString() === productId);
 
     if (itemIndex > -1) {
-      const productCheck = await ensureFarmerProduct(productId);
+      const productCheck = await ensureFarmerProduct(productId, requestedQty);
       if (!productCheck.ok) {
         return res.status(400).json({ success: false, message: productCheck.message });
-      }
-
-      if (!canFitInStock(productCheck.availableQty, requestedQty)) {
-        return res.status(400).json({
-          success: false,
-          message: `Only ${Number(productCheck.availableQty || 0)} ${productCheck.product.name || 'units'} available in stock`
-        });
       }
 
       cart.items[itemIndex].qty = requestedQty;
@@ -372,11 +387,42 @@ export const checkoutCart = async (req, res) => {
     }
 
     const adjustedSubtotal = Math.max(0, subtotal - loyaltyDiscount);
-    const deliveryFee = orderType === 'b2b' ? 0 : 50;
-    const tax = adjustedSubtotal * 0.05;
+    const deliveryFeeResult = await calculateDeliveryFeeForOrder({
+      orderType,
+      lotIds: processedItems.map((item) => item.lotId),
+      deliveryAddressCoordinates: deliveryAddress.coordinates
+    });
+    const deliveryFee = deliveryFeeResult.deliveryFee;
+    const categoryIds = [...new Set(processedItems.map((item) => item.categoryId).filter(Boolean).map((categoryId) => String(categoryId)))];
+    const categoryDocs = categoryIds.length > 0
+      ? await Category.find({ _id: { $in: categoryIds } }).select('gstRate')
+      : [];
+    const gstRateMap = new Map(categoryDocs.map((category) => [String(category._id), Number(category.gstRate ?? 0.05)]));
+    const itemBases = processedItems.map((item) => ({
+      item,
+      discountShare: subtotal > 0 ? loyaltyDiscount * (item.totalPrice / subtotal) : 0
+    }));
+
+    let runningDiscount = 0;
+    let tax = 0;
+    itemBases.forEach(({ item, discountShare }, index) => {
+      const allocatedDiscount = index === itemBases.length - 1
+        ? Math.max(0, loyaltyDiscount - runningDiscount)
+        : Math.min(item.totalPrice, Number(discountShare.toFixed(2)));
+      runningDiscount += allocatedDiscount;
+      const taxableAmount = Math.max(0, item.totalPrice - allocatedDiscount);
+      const gstRate = gstRateMap.get(String(item.categoryId)) ?? 0.05;
+      const taxAmount = Number((taxableAmount * gstRate).toFixed(2));
+
+      item.discountApplied = Number(allocatedDiscount.toFixed(2));
+      item.gstRate = gstRate;
+      item.taxAmount = taxAmount;
+      tax += taxAmount;
+    });
+    tax = Number(tax.toFixed(2));
     const total = adjustedSubtotal + deliveryFee + tax;
 
-    const commissionRate = orderType === 'b2b' ? 0.05 : 0.10;
+    const commissionRate = await getCommissionRate(orderType);
     const commissionAmount = adjustedSubtotal * commissionRate;
 
 

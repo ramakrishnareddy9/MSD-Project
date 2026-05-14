@@ -14,7 +14,7 @@ import {
   Security, AdminPanelSettings, Schedule, Cancel
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { analyticsAPI, userAPI, orderAPI, notificationAPI } from '../../services/api';
+import { analyticsAPI, userAPI, orderAPI, notificationAPI, disputeAPI } from '../../services/api';
 import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 
 const AdminDashboard = () => {
@@ -28,6 +28,7 @@ const AdminDashboard = () => {
   const [notificationFilter, setNotificationFilter] = useState('all');
   const [notificationPage, setNotificationPage] = useState(1);
   const [notificationTotalPages, setNotificationTotalPages] = useState(1);
+  const [disputes, setDisputes] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Real API data state
@@ -127,6 +128,11 @@ const AdminDashboard = () => {
 
         setActivities(systemActivities.sort((a, b) => b.ts - a.ts));
 
+        const disputesRes = await disputeAPI.getAll({ limit: 25 });
+        if (disputesRes.success && disputesRes.data) {
+          setDisputes(disputesRes.data.disputes || []);
+        }
+
         await fetchNotifications(1, 'all');
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
@@ -223,10 +229,29 @@ const AdminDashboard = () => {
     { id: 'overview', label: 'Dashboard', icon: <Dashboard /> },
     { id: 'users', label: 'User Management', icon: <People />, badge: stats.pendingApprovals },
     { id: 'orders', label: 'Orders', icon: <ShoppingCart /> },
+    { id: 'disputes', label: 'Disputes', icon: <Cancel />, badge: disputes.filter((dispute) => ['open', 'under_review'].includes(dispute.status)).length || null },
     { id: 'analytics', label: 'Analytics', icon: <Assessment /> },
     { id: 'notifications', label: 'Notifications', icon: <Notifications />, badge: unreadCount || null },
     { id: 'settings', label: 'Settings', icon: <Settings /> },
   ];
+
+  const resolveDispute = async (disputeId, resolution) => {
+    try {
+      await disputeAPI.resolve(disputeId, {
+        resolution,
+        resolutionNotes: `Resolved as ${resolution.replace(/_/g, ' ')} from admin dashboard`
+      });
+
+      const disputesRes = await disputeAPI.getAll({ limit: 25 });
+      if (disputesRes.success && disputesRes.data) {
+        setDisputes(disputesRes.data.disputes || []);
+      }
+
+      showSnackbar('Dispute updated successfully', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to update dispute', 'error');
+    }
+  };
 
   const roleColors = {
     'farmer': 'success',
@@ -811,6 +836,87 @@ const AdminDashboard = () => {
                             </TableCell>
                           </TableRow>
                         ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Paper>
+              </Box>
+            )}
+
+            {/* Disputes */}
+            {activeSection === 'disputes' && (
+              <Box>
+                <Typography variant="h5" fontWeight="bold" gutterBottom sx={{ mb: 3 }}>
+                  Dispute Review
+                </Typography>
+                <Paper sx={{ p: 3 }}>
+                  <TableContainer>
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Order</TableCell>
+                          <TableCell>Buyer</TableCell>
+                          <TableCell>Reason</TableCell>
+                          <TableCell>Status</TableCell>
+                          <TableCell>Created</TableCell>
+                          <TableCell>Actions</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {disputes.length > 0 ? disputes.map((dispute) => (
+                          <TableRow key={dispute._id}>
+                            <TableCell>
+                              #{dispute.orderId?.orderNumber || dispute.orderId || 'Order'}
+                            </TableCell>
+                            <TableCell>
+                              {dispute.buyerId?.name || dispute.buyerId?.email || 'Buyer'}
+                            </TableCell>
+                            <TableCell>
+                              <Stack spacing={0.5}>
+                                <Typography variant="body2" fontWeight="600">{dispute.reason}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {dispute.description}
+                                </Typography>
+                              </Stack>
+                            </TableCell>
+                            <TableCell>
+                              <Chip
+                                label={dispute.status}
+                                color={dispute.status === 'resolved_refund' || dispute.status === 'resolved_replacement' ? 'success' : dispute.status === 'rejected' ? 'error' : 'warning'}
+                                size="small"
+                              />
+                            </TableCell>
+                            <TableCell>{new Date(dispute.createdAt).toLocaleDateString()}</TableCell>
+                            <TableCell>
+                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                {['open', 'under_review'].includes(dispute.status) && (
+                                  <Button size="small" variant="outlined" onClick={() => resolveDispute(dispute._id, 'under_review')}>
+                                    Review
+                                  </Button>
+                                )}
+                                {dispute.status === 'open' && (
+                                  <>
+                                    <Button size="small" variant="contained" color="success" onClick={() => resolveDispute(dispute._id, 'resolved_refund')}>
+                                      Refund
+                                    </Button>
+                                    <Button size="small" variant="contained" color="info" onClick={() => resolveDispute(dispute._id, 'resolved_replacement')}>
+                                      Replace
+                                    </Button>
+                                    <Button size="small" variant="contained" color="error" onClick={() => resolveDispute(dispute._id, 'rejected')}>
+                                      Reject
+                                    </Button>
+                                  </>
+                                )}
+                              </Stack>
+                            </TableCell>
+                          </TableRow>
+                        )) : (
+                          <TableRow>
+                            <TableCell colSpan={6} align="center">
+                              No disputes found.
+                            </TableCell>
+                          </TableRow>
+                        )}
                       </TableBody>
                     </Table>
                   </TableContainer>

@@ -4,6 +4,7 @@ import InventoryLot from '../models/InventoryLot.model.js';
 import Location from '../models/Location.model.js';
 import { CROP_CATALOG, getCropByName } from '../constants/cropCatalog.js';
 import { getCoordinatesForCity, isCanonicalAddressCoordinate } from '../utils/address.util.js';
+import { getSeasonalAvailability, normalizeMonthList, expandHarvestWindowMonths } from '../utils/seasonal.util.js';
 
 const resolveAddress = (owner) => {
   const primaryAddress = owner?.addresses?.[0];
@@ -110,18 +111,21 @@ export const getAllProducts = async (req, res) => {
       minPrice,
       maxPrice,
       tags,
+      seasonal = 'current',
       page = 1, 
       limit = 20,
       sort = '-createdAt'
     } = req.query;
+    const cappedLimit = Math.min(Number(limit) || 20, 100);
+    const currentMonth = new Date().getMonth() + 1;
     
     const query = {};
     if (category) query.categoryId = category;
     if (ownerId) {
       query.ownerId = ownerId;
     } else {
-      const farmerUsers = await User.find({ roles: 'farmer', status: 'active' }).select('_id');
-      query.ownerId = { $in: farmerUsers.map((u) => u._id) };
+      // Optimized: query by ownerRole instead of fetching all farmer users (eliminates O(n) User scan)
+      query.ownerRole = 'farmer';
     }
     // Keep marketplace/public listings active by default,
     // but allow owners to fetch all their products when status is not specified.
@@ -139,21 +143,28 @@ export const getAllProducts = async (req, res) => {
     if (search) {
       query.$text = { $search: String(search).trim().slice(0, 100) };
     }
+    if (seasonal !== 'all') {
+      query.availableMonths = currentMonth;
+    }
 
     const products = await Product.find(query)
       .populate('ownerId', 'name email')
       .populate('categoryId', 'name slug')
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
+      .limit(cappedLimit)
+      .skip((page - 1) * cappedLimit)
       .sort(sort);
 
+    const productsWithAvailability = products.map((product) => ({
+      ...product.toObject(),
+      seasonalAvailability: getSeasonalAvailability(product)
+    }));
     const count = await Product.countDocuments(query);
 
     res.json({
       success: true,
       data: {
-        products,
-        totalPages: Math.ceil(count / limit),
+        products: productsWithAvailability,
+        totalPages: Math.ceil(count / cappedLimit),
         currentPage: page,
         total: count
       }
@@ -181,7 +192,12 @@ export const getProductById = async (req, res) => {
 
     res.json({
       success: true,
-      data: { product }
+      data: {
+        product: {
+          ...product.toObject(),
+          seasonalAvailability: getSeasonalAvailability(product)
+        }
+      }
     });
   } catch (error) {
     res.status(500).json({
@@ -223,7 +239,31 @@ export const createProduct = async (req, res) => {
       }
     }
 
+    if (Array.isArray(req.body.availableMonths)) {
+      req.body.availableMonths = normalizeMonthList(req.body.availableMonths);
+    }
+
+    if (req.body.harvestWindow) {
+      const startMonth = Number(req.body.harvestWindow.startMonth);
+      const endMonth = Number(req.body.harvestWindow.endMonth);
+      if (Number.isInteger(startMonth) && Number.isInteger(endMonth)) {
+        req.body.harvestWindow = { startMonth, endMonth };
+        if (!Array.isArray(req.body.availableMonths) || req.body.availableMonths.length === 0) {
+          req.body.availableMonths = expandHarvestWindowMonths(req.body.harvestWindow);
+        }
+      } else {
+        delete req.body.harvestWindow;
+      }
+    }
+
     const product = new Product(req.body);
+    
+    // Populate ownerRole from owner's roles (for fast catalog queries without User join)
+    const owner = await User.findById(product.ownerId).select('roles');
+    if (owner && owner.roles.length > 0) {
+      product.ownerRole = owner.roles[0]; // Primary role
+    }
+    
     await product.save();
 
     try {
@@ -284,7 +324,33 @@ export const updateProduct = async (req, res) => {
       }
     }
 
+    if (Array.isArray(req.body.availableMonths)) {
+      req.body.availableMonths = normalizeMonthList(req.body.availableMonths);
+    }
+
+    if (req.body.harvestWindow) {
+      const startMonth = Number(req.body.harvestWindow.startMonth);
+      const endMonth = Number(req.body.harvestWindow.endMonth);
+      if (Number.isInteger(startMonth) && Number.isInteger(endMonth)) {
+        req.body.harvestWindow = { startMonth, endMonth };
+        if (!Array.isArray(req.body.availableMonths) || req.body.availableMonths.length === 0) {
+          req.body.availableMonths = expandHarvestWindowMonths(req.body.harvestWindow);
+        }
+      } else {
+        delete req.body.harvestWindow;
+      }
+    }
+
     Object.assign(product, req.body);
+    
+    // Sync ownerRole if ownerId changed
+    if (req.body.ownerId) {
+      const owner = await User.findById(req.body.ownerId).select('roles');
+      if (owner && owner.roles.length > 0) {
+        product.ownerRole = owner.roles[0];
+      }
+    }
+    
     await product.save();
 
     if (stockQuantityProvided) {

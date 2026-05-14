@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { registerSchema, resetSchema } from '../utils/validationSchemas';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
   Typography, 
@@ -32,75 +35,67 @@ import { useAuth } from '../contexts/AuthContext';
 import { getDashboardPath } from '../utils/roleRouting';
 import { authAPI } from '../services/api';
 
-const AuthPage = () => {
+const AuthPage = ({ mode }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { login, register } = useAuth();
+  const { login, register: authRegister } = useAuth();
   
-  const [activeTab, setActiveTab] = useState(
-    location.pathname === '/signup' ? 'Register' : 'Login'
-  );
+  const initialTabFromPath = location.pathname === '/signup' ? 'Register' : 'Login';
+  const modeTab = mode === 'register' ? 'Register' : mode === 'reset' ? 'Reset' : mode === 'login' ? 'Login' : null;
+  const [activeTab, setActiveTab] = useState(modeTab || initialTabFromPath);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [validationErrors, setValidationErrors] = useState({});
   
-  // Login Form State
-  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
+  // Login Form State (react-hook-form)
+  const { register, handleSubmit, formState: { errors } } = useForm();
+
+  // Register form (zod validated)
+  const regForm = useForm({ resolver: zodResolver(registerSchema) });
+  const { register: regRegister, handleSubmit: regHandleSubmit, formState: { errors: regErrors }, watch: regWatch } = regForm;
+
+  // Reset form (zod validated)
+  const resetForm = useForm({ resolver: zodResolver(resetSchema) });
+  const { register: resetRegister, handleSubmit: resetHandleSubmit, formState: { errors: resetErrors } } = resetForm;
   
-  // Register Form State
+  // Controlled state kept for register inputs (backwards compatible)
   const [registerForm, setRegisterForm] = useState({
-    email: '',
-    password: '',
-    name: '',
-    phone: '',
-    address: '',
-    city: '',
-    role: 'customer',
-    farmName: '',
-    totalLand: '',
-    experience: '',
-    companyName: '',
-    businessType: '',
-    owner: '',
-    gst: '',
-    agencyName: '',
-    licenseNumber: '',
-    accountType: ''
+    email: '', password: '', name: '', phone: '', address: '', city: '', role: 'customer', farmName: '', totalLand: '', experience: '', companyName: '', businessType: '', owner: '', gst: '', agencyName: '', licenseNumber: '', accountType: ''
   });
-  
-  // Forget Password Form State
   const [forgetForm, setForgetForm] = useState({ email: '' });
 
-  const buildRegisterPayload = () => {
-    const role = registerForm.role;
+  const buildRegisterPayload = (values) => {
+    const v = values || {};
+    const role = v.role || 'customer';
     const payload = {
-      name: registerForm.name.trim(),
-      email: registerForm.email.trim().toLowerCase(),
-      phone: registerForm.phone.trim(),
-      address: registerForm.address.trim(),
-      city: registerForm.city.trim(),
-      password: registerForm.password,
+      name: (v.name || '').trim(),
+      email: (v.email || '').trim().toLowerCase(),
+      phone: (v.phone || '').trim(),
+      address: (v.address || '').trim(),
+      city: (v.city || '').trim(),
+      password: v.password,
       roles: [role],
       profileData: {}
     };
 
     if (role === 'farmer') {
-      payload.farmName = registerForm.farmName.trim() || `${registerForm.name.trim()}'s Farm`;
-      payload.totalLand = registerForm.totalLand.trim();
-      payload.experience = registerForm.experience.trim();
+      payload.farmName = (v.farmName || v.name || '').trim() || `${(v.name || '').trim()}'s Farm`;
+      payload.totalLand = v.totalLand || '';
+      payload.experience = v.experience || '';
       payload.profileData.farmer = {
         farmName: payload.farmName,
-        farmSize: Number(registerForm.totalLand) || 1,
-        experience: Number(registerForm.experience) || 0
+        farmSize: Number(payload.totalLand) || 1,
+        experience: Number(payload.experience) || 0
       };
     }
 
     if (role === 'business') {
-      payload.businessType = registerForm.businessType.trim() || 'Business';
-      payload.owner = registerForm.owner.trim() || registerForm.name.trim();
-      payload.gst = registerForm.gst.trim();
+      payload.businessType = (v.businessType || '').trim() || 'Business';
+      payload.owner = (v.owner || v.name || '').trim();
+      payload.gst = (v.gst || '').trim();
       payload.profileData.business = {
-        companyName: registerForm.companyName.trim() || `${registerForm.name.trim()} Traders`,
+        companyName: (v.companyName || v.name || '').trim(),
         companyType: 'retailer',
         gstNumber: payload.gst
       };
@@ -108,43 +103,35 @@ const AuthPage = () => {
 
     if (role === 'restaurant') {
       payload.businessType = 'Restaurant';
-      payload.profileData.restaurant = {
-        restaurantName: registerForm.companyName.trim() || `${registerForm.name.trim()} Restaurant`
-      };
+      payload.profileData.restaurant = { restaurantName: (v.companyName || v.name || '').trim() };
     }
 
     if (role === 'travel_agency') {
-      payload.profileData.travelAgency = {
-        agencyName: registerForm.agencyName.trim() || `${registerForm.name.trim()} Travels`
-      };
+      payload.profileData.travelAgency = { agencyName: (v.agencyName || v.name || '').trim() };
     }
 
     if (role === 'delivery_large' || role === 'delivery_small') {
-      payload.licenseNumber = registerForm.licenseNumber.trim();
-      payload.accountType = registerForm.accountType.trim() || (role === 'delivery_large' ? 'Large-Scale Transporter' : 'Last-Mile Delivery');
-      payload.profileData.delivery = {
-        companyName: registerForm.companyName.trim() || `${registerForm.name.trim()} Logistics`,
-        scale: role === 'delivery_large' ? 'large' : 'small'
-      };
+      payload.licenseNumber = v.licenseNumber || '';
+      payload.accountType = v.accountType || (role === 'delivery_large' ? 'Large-Scale Transporter' : 'Last-Mile Delivery');
+      payload.profileData.delivery = { companyName: (v.companyName || v.name || '').trim(), scale: role === 'delivery_large' ? 'large' : 'small' };
     }
 
     return payload;
   };
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
+  const handleLogin = handleSubmit(async (data) => {
     setError('');
     setSuccess('');
     setLoading(true);
-    
+
     try {
-      const res = await login(loginForm.email.trim(), loginForm.password);
+      const res = await login(data.email.trim(), data.password);
       if (!res.success) {
         setError(res.error || 'Login failed');
         setLoading(false);
         return;
       }
-      
+
       const userRoles = res.user?.roles || res.roles || ['customer'];
       const from = location.state?.from?.pathname || getDashboardPath(userRoles);
       navigate(from, { replace: true });
@@ -152,32 +139,27 @@ const AuthPage = () => {
       setError(err.message || 'Login failed. Please check your credentials.');
       setLoading(false);
     }
-  };
+  });
 
   const handleRegister = async (e) => {
     e.preventDefault();
     setError('');
     setSuccess('');
-
-    if (registerForm.password.length < 8) {
-      setError('Password must be at least 8 characters');
+    // Validate with zod
+    const parsed = registerSchema.safeParse(registerForm);
+    if (!parsed.success) {
+      const fieldErrors = {};
+      for (const issue of parsed.error.issues) {
+        fieldErrors[issue.path[0]] = issue.message;
+      }
+      setValidationErrors(fieldErrors);
       return;
     }
-
-    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/.test(registerForm.password)) {
-      setError('Password must include uppercase, lowercase, and a number');
-      return;
-    }
-
-    if (!/^[+]?([\d\s\-()]){10,20}$/.test(registerForm.phone)) {
-      setError('Please enter a valid phone number');
-      return;
-    }
-
+    setValidationErrors({});
     setLoading(true);
 
     try {
-      const res = await register(buildRegisterPayload());
+      const res = await authRegister(buildRegisterPayload(registerForm));
 
       if (!res.success) {
         setError(res.error || 'Registration failed');
@@ -202,11 +184,19 @@ const AuthPage = () => {
     setLoading(true);
 
     try {
+      const parsed = resetSchema.safeParse({ email: forgetForm.email });
+      if (!parsed.success) {
+        setValidationErrors({ email: parsed.error.issues[0].message });
+        setLoading(false);
+        return;
+      }
+
       const response = await authAPI.forgotPassword(forgetForm.email.trim());
 
       if (response.success) {
         setSuccess(response.message || 'Password reset link sent to your email');
         setForgetForm({ email: '' });
+        resetForm.reset();
         setActiveTab('Login');
         return;
       }
@@ -321,12 +311,11 @@ const AuthPage = () => {
                 </Typography>
               </div>
 
-              <div className="space-y-4 mb-6">
+              <form onSubmit={handleLogin} className="space-y-4 mb-6">
                 <TextField
                   fullWidth
                   placeholder="Email address"
-                  value={loginForm.email}
-                  onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
+                  {...register('email', { required: 'Email is required' })}
                   InputProps={{
                     startAdornment: (
                       <InputAdornment position="start">
@@ -337,14 +326,14 @@ const AuthPage = () => {
                   variant="outlined"
                   required
                   disabled={loading}
+                  error={!!errors.email}
+                  helperText={errors.email?.message}
                   sx={{
                     '& .MuiOutlinedInput-root': {
                       backgroundColor: '#f5f5f5',
                       borderRadius: '8px',
-                      '& fieldset': {
-                        border: 'none',
-                      },
-                    },
+                      '& fieldset': { border: 'none' }
+                    }
                   }}
                 />
 
@@ -352,8 +341,7 @@ const AuthPage = () => {
                   fullWidth
                   type="password"
                   placeholder="Password"
-                  value={loginForm.password}
-                  onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                  {...register('password', { required: 'Password is required' })}
                   InputProps={{
                     startAdornment: (
                       <InputAdornment position="start">
@@ -364,38 +352,15 @@ const AuthPage = () => {
                   variant="outlined"
                   required
                   disabled={loading}
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      backgroundColor: '#f5f5f5',
-                      borderRadius: '8px',
-                      '& fieldset': {
-                        border: 'none',
-                      },
-                    },
-                  }}
+                  error={!!errors.password}
+                  helperText={errors.password?.message}
+                  sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }}
                 />
-              </div>
 
-              <Button
-                onClick={handleLogin}
-                fullWidth
-                variant="contained"
-                disabled={loading}
-                sx={{
-                  backgroundColor: '#22c55e',
-                  borderRadius: '8px',
-                  padding: '12px',
-                  fontSize: '16px',
-                  fontWeight: 600,
-                  textTransform: 'none',
-                  marginBottom: '24px',
-                  '&:hover': {
-                    backgroundColor: '#16a34a',
-                  },
-                }}
-              >
-                {loading ? 'Signing in...' : 'Login →'}
-              </Button>
+                <Button type="submit" fullWidth variant="contained" disabled={loading} sx={{ backgroundColor: '#22c55e', borderRadius: '8px', padding: '12px', fontSize: '16px', fontWeight: 600, textTransform: 'none', marginBottom: '24px', '&:hover': { backgroundColor: '#16a34a' } }}>
+                  {loading ? 'Signing in...' : 'Login →'}
+                </Button>
+              </form>
 
               {/* Demo Credentials */}
               <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
@@ -474,6 +439,8 @@ const AuthPage = () => {
                   variant="outlined"
                   required
                   disabled={loading}
+                  error={!!validationErrors.name}
+                  helperText={validationErrors.name || ''}
                   sx={{
                     '& .MuiOutlinedInput-root': {
                       backgroundColor: '#f5f5f5',
@@ -499,6 +466,8 @@ const AuthPage = () => {
                   variant="outlined"
                   required
                   disabled={loading}
+                  error={!!validationErrors.email}
+                  helperText={validationErrors.email || ''}
                   sx={{
                     '& .MuiOutlinedInput-root': {
                       backgroundColor: '#f5f5f5',
@@ -524,6 +493,8 @@ const AuthPage = () => {
                   variant="outlined"
                   required
                   disabled={loading}
+                  error={!!validationErrors.phone}
+                  helperText={validationErrors.phone || ''}
                   sx={{
                     '& .MuiOutlinedInput-root': {
                       backgroundColor: '#f5f5f5',
@@ -549,14 +520,9 @@ const AuthPage = () => {
                   variant="outlined"
                   required
                   disabled={loading}
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      backgroundColor: '#f5f5f5',
-                      borderRadius: '8px',
-                      '& fieldset': { border: 'none' },
-                    },
-                  }}
-                  helperText="Use 8+ characters with uppercase, lowercase and number"
+                  error={!!validationErrors.password}
+                  helperText={validationErrors.password || 'Use 8+ characters with uppercase, lowercase and number'}
+                  sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }}
                 />
 
                 <TextField
@@ -564,22 +530,12 @@ const AuthPage = () => {
                   placeholder="Address"
                   value={registerForm.address}
                   onChange={(e) => setRegisterForm({ ...registerForm, address: e.target.value })}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <AccountCircle className="text-gray-400" />
-                      </InputAdornment>
-                    ),
-                  }}
+                  InputProps={{ startAdornment: (<InputAdornment position="start"><AccountCircle className="text-gray-400" /></InputAdornment>) }}
                   variant="outlined"
                   disabled={loading}
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      backgroundColor: '#f5f5f5',
-                      borderRadius: '8px',
-                      '& fieldset': { border: 'none' },
-                    },
-                  }}
+                  error={!!validationErrors.address}
+                  helperText={validationErrors.address || ''}
+                  sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }}
                 />
 
                 <TextField
@@ -587,22 +543,12 @@ const AuthPage = () => {
                   placeholder="City"
                   value={registerForm.city}
                   onChange={(e) => setRegisterForm({ ...registerForm, city: e.target.value })}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <AccountCircle className="text-gray-400" />
-                      </InputAdornment>
-                    ),
-                  }}
+                  InputProps={{ startAdornment: (<InputAdornment position="start"><AccountCircle className="text-gray-400" /></InputAdornment>) }}
                   variant="outlined"
                   disabled={loading}
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      backgroundColor: '#f5f5f5',
-                      borderRadius: '8px',
-                      '& fieldset': { border: 'none' },
-                    },
-                  }}
+                  error={!!validationErrors.city}
+                  helperText={validationErrors.city || ''}
+                  sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }}
                 />
 
                 <FormControl fullWidth variant="outlined">
@@ -882,6 +828,8 @@ const AuthPage = () => {
                   variant="outlined"
                   required
                   disabled={loading}
+                  error={!!validationErrors.email}
+                  helperText={validationErrors.email || ''}
                   sx={{
                     '& .MuiOutlinedInput-root': {
                       backgroundColor: '#f5f5f5',

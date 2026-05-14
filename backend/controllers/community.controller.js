@@ -138,7 +138,8 @@ export const joinCommunity = async (req, res) => {
           joinRequests: {
             user: req.user._id,
             message: message || '',
-            status: 'pending'
+            status: 'pending',
+            reminderSentAt: undefined
           }
         }
       },
@@ -164,6 +165,14 @@ export const joinCommunity = async (req, res) => {
       title: 'New join request',
       message: `${req.user.name || 'A user'} wants to join ${updated.name}.`,
       type: 'alert',
+      relatedId: updated._id
+    });
+
+    await notifyUser({
+      userId: req.user._id,
+      title: 'Join request submitted',
+      message: `Your request to join ${updated.name} is pending admin approval.`,
+      type: 'system',
       relatedId: updated._id
     });
 
@@ -691,6 +700,22 @@ export const contributeToPool = async (req, res) => {
     const pool = await CommunityPool.findById(req.params.poolId);
     if (!pool) {
       return res.status(404).json({ success: false, message: 'Pool not found' });
+    }
+
+    const community = await Community.findById(pool.community).select('members admin');
+    if (!community) {
+      return res.status(404).json({ success: false, message: 'Community not found' });
+    }
+
+    const isMember = community.members.some(
+      (member) => String(member.user) === String(req.user._id)
+    );
+
+    if (!isMember && String(community.admin) !== String(req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You must be a community member to contribute to this pool'
+      });
     }
 
     if (['ordered', 'delivered', 'allocated'].includes(pool.status)) {

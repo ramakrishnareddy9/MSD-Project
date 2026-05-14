@@ -20,8 +20,10 @@ import reviewRoutes from './routes/review.routes.js';
 import recurringOrderRoutes from './routes/recurringOrder.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import priceAgreementRoutes from './routes/priceAgreement.routes.js';
+import payoutRoutes from './routes/payout.routes.js';
 import deliveryRoutes from './routes/delivery.routes.js';
 import commissionRoutes from './routes/commission.routes.js';
+import commissionConfigRoutes from './routes/commissionConfig.routes.js';
 import communityRoutes from './routes/community.routes.js';
 import cartRoutes from './routes/cart.routes.js';
 import wishlistRoutes from './routes/wishlist.routes.js';
@@ -29,6 +31,7 @@ import notificationRoutes from './routes/notification.routes.js';
 import vehicleRoutes from './routes/vehicle.routes.js';
 import analyticsRoutes from './routes/analytics.routes.js';
 import marketplaceRequestRoutes from './routes/marketplaceRequest.routes.js';
+import disputeRoutes from './routes/dispute.routes.js';
 
 // Import middleware
 import { errorHandler, notFoundHandler } from './middleware/error.middleware.js';
@@ -42,6 +45,8 @@ import {
 // Import services
 import { startRecurringOrderScheduler } from './services/recurringOrderScheduler.js';
 import { startInventoryCleanupScheduler } from './services/inventoryCleanupScheduler.js';
+import { startPayoutScheduler } from './services/payoutScheduler.js';
+import { startCommunityJoinReminderScheduler } from './services/communityReminderScheduler.js';
 import { initializeSocketServer } from './services/socket.service.js';
 
 dotenv.config();
@@ -149,9 +154,12 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/recurring-orders', recurringOrderRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/price-agreements', priceAgreementRoutes);
+app.use('/api/payouts', payoutRoutes);
 app.use('/api/delivery', deliveryRoutes);
 app.use('/api/commissions', commissionRoutes);
+app.use('/api/commission-config', commissionConfigRoutes);
 app.use('/api/communities', communityRoutes);
+app.use('/api/disputes', disputeRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/notifications', notificationRoutes);
@@ -197,6 +205,8 @@ server.listen(PORT, () => {
   if (process.env.ENABLE_SCHEDULER !== 'false') {
     startRecurringOrderScheduler();
     startInventoryCleanupScheduler();
+    startPayoutScheduler();
+    startCommunityJoinReminderScheduler();
   } else {
     console.log('⏸️  Schedulers disabled');
   }

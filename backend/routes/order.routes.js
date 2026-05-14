@@ -4,6 +4,7 @@ import Order from '../models/Order.model.js';
 import Product from '../models/Product.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
 import PriceAgreement from '../models/PriceAgreement.model.js';
+import Category from '../models/Category.model.js';
 import MarketplaceRequest from '../models/MarketplaceRequest.model.js';
 import CommunityPool from '../models/CommunityPool.model.js';
 import Commission from '../models/Commission.model.js';
@@ -17,6 +18,8 @@ import { authorize } from '../middleware/role.middleware.js';
 import { validateOrder, validateObjectId } from '../middleware/validation.middleware.js';
 import { validateTransition, getAllowedTransitions, getTransitionMetadata, createTransitionAuditLog } from '../utils/orderStateMachine.util.js';
 import { safeAtomicDeliveryAcceptance, atomicDeliveryStatusUpdate, createDeliveryAuditLog } from '../utils/deliveryAtomicLocking.util.js';
+import { calculateDeliveryFeeForOrder } from '../utils/deliveryFee.util.js';
+import { getCommissionRate } from '../utils/commission.util.js';
 
 const router = express.Router();
 
@@ -37,6 +40,7 @@ const supportsMongoTransactions = () => {
 router.get('/', authenticate, async (req, res) => {
   try {
     const { buyerId, sellerId, type, status, page = 1, limit = 20 } = req.query;
+    const cappedLimit = Math.min(Number(limit) || 20, 100);
     
     const query = {};
     const isAdmin = req.user.roles?.includes('admin');
@@ -63,8 +67,8 @@ router.get('/', authenticate, async (req, res) => {
       .populate('orderItems.productId', 'name images')
       .populate('delivery.requestedVehicleId', 'name type capacity status plateNumber')
       .populate('delivery.requestedPartnerId', 'name email phone')
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
+      .limit(cappedLimit)
+      .skip((page - 1) * cappedLimit)
       .sort({ createdAt: -1 });
 
     const count = await Order.countDocuments(query);
@@ -73,7 +77,7 @@ router.get('/', authenticate, async (req, res) => {
       success: true,
       data: {
         orders,
-        totalPages: Math.ceil(count / limit),
+        totalPages: Math.ceil(count / cappedLimit),
         currentPage: page,
         total: count
       }
@@ -104,11 +108,12 @@ router.get('/:id', authenticate, validateObjectId('id'), async (req, res) => {
     const isAdmin = req.user.roles?.includes('admin');
     const isBuyer = String(order.buyerId?._id || order.buyerId) === String(req.user._id);
     const isSeller = String(order.sellerId?._id || order.sellerId) === String(req.user._id);
+    const isDeliveryPartner = Boolean(order.delivery && order.delivery.requestedPartnerId && String(order.delivery.requestedPartnerId) === String(req.user._id));
 
-    if (!isAdmin && !isBuyer && !isSeller) {
+    if (!isAdmin && !isBuyer && !isSeller && !isDeliveryPartner) {
       return res.status(403).json({
         success: false,
-        message: 'Forbidden: You can only access orders where you are the buyer or seller'
+        message: 'Forbidden: You can only access orders where you are the buyer, seller, assigned delivery partner, or an admin'
       });
     }
 
@@ -289,12 +294,29 @@ router.post('/', authenticate, (req, res, next) => {
     }
     
     // Calculate fees and totals
-    const deliveryFee = type === 'b2b' ? 0 : 50; // Free delivery for B2B
-    const tax = subtotal * 0.05; // 5% GST
+    const deliveryFeeResult = await calculateDeliveryFeeForOrder({
+      orderType: type,
+      lotIds: processedItems.map((item) => item.lotId),
+      deliveryAddressCoordinates: deliveryAddress.coordinates,
+      session: useTransaction ? session : null
+    });
+    const deliveryFee = deliveryFeeResult.deliveryFee;
+    const categoryIds = [...new Set(processedItems.map((item) => item.categoryId).filter(Boolean).map((categoryId) => String(categoryId)))];
+    const categoryDocs = categoryIds.length > 0
+      ? await Category.find({ _id: { $in: categoryIds } }).select('gstRate')
+      : [];
+    const gstRateMap = new Map(categoryDocs.map((category) => [String(category._id), Number(category.gstRate ?? 0.05)]));
+    const tax = Number(processedItems.reduce((sum, item) => {
+      const gstRate = gstRateMap.get(String(item.categoryId)) ?? 0.05;
+      const taxAmount = Number((item.totalPrice * gstRate).toFixed(2));
+      item.gstRate = gstRate;
+      item.taxAmount = taxAmount;
+      return sum + taxAmount;
+    }, 0).toFixed(2));
     const total = subtotal + deliveryFee + tax;
     
     // Calculate commission (lower for B2B)
-    const commissionRate = type === 'b2b' ? 0.05 : 0.10; // 5% for B2B, 10% for B2C
+    const commissionRate = await getCommissionRate(type);
     const commissionAmount = subtotal * commissionRate;
 
     const verificationCheck = assertTransactionVerification(req.user, total, type);
@@ -543,9 +565,9 @@ router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'deliv
         console.error('Commission markCollected failed:', commErr.message);
       }
 
-      // ── 2.7: Award loyalty points to buyer (1 pt per ₹100 spent) ──
+      // ── 2.7: Award loyalty points to buyer (1 pt per ₹1 spent) ──
       try {
-        const pointsEarned = Math.floor((order.total || 0) / 100);
+        const pointsEarned = Math.floor(order.total || 0);
         if (pointsEarned > 0) {
           await User.findByIdAndUpdate(order.buyerId, { $inc: { loyaltyPoints: pointsEarned } });
         }

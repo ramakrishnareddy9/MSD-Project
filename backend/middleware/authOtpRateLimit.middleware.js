@@ -24,3 +24,21 @@ export const resendEmailOtpLimiter = rateLimit({
   legacyHeaders: false,
   skip: shouldSkipLimiter
 });
+
+export const verifyPhoneOtpLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 8 : 50,
+  message: 'Too many phone verification attempts. Please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: shouldSkipLimiter
+});
+
+export const resendPhoneOtpLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 3 : 20,
+  message: 'Too many phone OTP resend requests. Please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: shouldSkipLimiter
+});

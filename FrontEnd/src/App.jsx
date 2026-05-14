@@ -8,6 +8,7 @@ import ResetPassword from './pages/ResetPassword.jsx';
 import Unauthorized from './pages/Unauthorized.jsx';
 import { Loader } from './Components/common/Loader';
 import { ToastProvider } from './Components/common/Toast';
+import VerificationBanner from './Components/VerificationBanner';
 
 // Lazy load dashboards for better performance
 const CustomerDashboard = lazy(() => import('./pages/dashboards/CustomerDashboard'));
@@ -28,6 +29,7 @@ function App() {
     <>
       <ToastProvider />
       <Suspense fallback={<Loader fullScreen message="Loading..." />}>
+        <VerificationBanner />
         <Routes>
         {/* Public */}
         <Route path="/" element={<FarmKartLanding />} />

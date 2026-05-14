@@ -10,6 +10,7 @@ import crypto from 'crypto';
 const AUTH_TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const AUTH_COOKIE_NAME = 'farmkart_token';
 const EMAIL_OTP_TTL_MS = 1000 * 60 * 10;
+const PHONE_OTP_TTL_MS = 1000 * 60 * 10;
 
 const parseBool = (value) => String(value || '').toLowerCase() === 'true';
 
@@ -71,13 +72,35 @@ const generateSixDigitOtp = () => String(crypto.randomInt(0, 1000000)).padStart(
 
 const hashOtp = (otp) => crypto.createHash('sha256').update(String(otp)).digest('hex');
 
-const createEmailOtpPayload = () => {
+const createOtpPayload = (ttlMs) => {
   const otp = generateSixDigitOtp();
   return {
     otp,
     otpHash: hashOtp(otp),
-    otpExpires: new Date(Date.now() + EMAIL_OTP_TTL_MS)
+    otpExpires: new Date(Date.now() + ttlMs)
   };
+};
+
+const createEmailOtpPayload = () => createOtpPayload(EMAIL_OTP_TTL_MS);
+
+const createPhoneOtpPayload = () => createOtpPayload(PHONE_OTP_TTL_MS);
+
+const hashRefreshToken = (token) => crypto.createHash('sha256').update(String(token)).digest('hex');
+
+const persistRefreshTokenHash = async (userId, token) => {
+  if (!userId || !token) return;
+
+  await User.findByIdAndUpdate(userId, {
+    refreshTokenHash: hashRefreshToken(token)
+  });
+};
+
+const clearRefreshTokenHash = async (userId) => {
+  if (!userId) return;
+
+  await User.findByIdAndUpdate(userId, {
+    $unset: { refreshTokenHash: '' }
+  });
 };
 
 const isOtpHashMatch = (submittedOtp, storedHash) => {
@@ -160,14 +183,84 @@ const sendVerificationOtpEmail = async ({ to, otp }) => {
 };
 
 const sendVerificationOtpSms = async ({ to, otp }) => {
+  const message = `Your FarmKart verification code is ${otp}. It expires in 10 minutes.`;
+
+  const sendViaTwilio = async () => {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+
+    if (!accountSid || !authToken || !fromNumber) {
+      return false;
+    }
+
+    const endpoint = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+    const basicAuth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        From: fromNumber,
+        To: String(to),
+        Body: message
+      })
+    });
+
+    return response.ok;
+  };
+
+  const sendViaMsg91 = async () => {
+    const authKey = process.env.MSG91_AUTH_KEY;
+    const sender = process.env.MSG91_SENDER_ID || 'FARMKT';
+    const route = process.env.MSG91_ROUTE || '4';
+    const country = process.env.MSG91_COUNTRY || '91';
+
+    if (!authKey) {
+      return false;
+    }
+
+    const endpoint = 'https://api.msg91.com/api/v2/sendsms';
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        authkey: authKey,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        sender,
+        route,
+        country,
+        mobiles: String(to).replace(/\D/g, ''),
+        message
+      })
+    });
+
+    return response.ok;
+  };
+
   const smsWebhookUrl = process.env.SMS_WEBHOOK_URL;
-  if (!smsWebhookUrl || !to) {
+  if (!to) {
     return false;
   }
 
   const smsToken = process.env.SMS_WEBHOOK_TOKEN;
 
   try {
+    if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER) {
+      return await sendViaTwilio();
+    }
+
+    if (process.env.MSG91_AUTH_KEY) {
+      return await sendViaMsg91();
+    }
+
+    if (!smsWebhookUrl) {
+      return false;
+    }
+
     const response = await fetch(smsWebhookUrl, {
       method: 'POST',
       headers: {
@@ -177,8 +270,8 @@ const sendVerificationOtpSms = async ({ to, otp }) => {
       body: JSON.stringify({
         to,
         otp,
-        purpose: 'email_verification',
-        message: `Your FarmKart verification code is ${otp}. It expires in 10 minutes.`
+        purpose: 'phone_verification',
+        message
       })
     });
 
@@ -235,9 +328,12 @@ export const register = async (req, res) => {
       city: String(city || profileData?.city || '').trim(),
     });
 
-    const { otp, otpHash, otpExpires } = createEmailOtpPayload();
-    user.emailOtpHash = otpHash;
-    user.emailOtpExpires = otpExpires;
+    const { otp: emailOtp, otpHash: emailOtpHash, otpExpires: emailOtpExpires } = createEmailOtpPayload();
+    const { otp: phoneOtp, otpHash: phoneOtpHash, otpExpires: phoneOtpExpires } = createPhoneOtpPayload();
+    user.emailOtpHash = emailOtpHash;
+    user.emailOtpExpires = emailOtpExpires;
+    user.phoneOtpHash = phoneOtpHash;
+    user.phoneOtpExpires = phoneOtpExpires;
 
     await user.save();
     createdUserId = user._id;
@@ -297,12 +393,12 @@ export const register = async (req, res) => {
     }
 
     const [emailOtpSent, smsOtpSent] = await Promise.all([
-      sendVerificationOtpEmail({ to: user.email, otp }),
-      sendVerificationOtpSms({ to: user.phone, otp })
+      sendVerificationOtpEmail({ to: user.email, otp: emailOtp }),
+      sendVerificationOtpSms({ to: user.phone, otp: phoneOtp })
     ]);
 
     if (!emailOtpSent && !smsOtpSent && process.env.NODE_ENV === 'production') {
-      throw new Error('Unable to send email verification OTP at this time. Please try again later.');
+      throw new Error('Unable to send verification OTPs at this time. Please try again later.');
     }
 
     // Generate token
@@ -312,14 +408,22 @@ export const register = async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    await persistRefreshTokenHash(user._id, token);
     issueAuthCookie(res, token);
 
     res.status(201).json({
       success: true,
-      message: 'User registered successfully. Please verify your email using the OTP sent to your inbox.',
+      message: 'User registered successfully. Please verify your email and phone using the OTPs sent to your inbox and phone.',
       data: {
         user: buildAuthUserPayload(user),
-        ...(process.env.NODE_ENV !== 'production' ? { verificationOtp: otp, otpExpiresAt: user.emailOtpExpires } : {})
+        ...(process.env.NODE_ENV !== 'production'
+          ? {
+              verificationOtp: emailOtp,
+              otpExpiresAt: user.emailOtpExpires,
+              phoneVerificationOtp: phoneOtp,
+              phoneOtpExpiresAt: user.phoneOtpExpires
+            }
+          : {})
       }
     });
   } catch (error) {
@@ -397,6 +501,7 @@ export const login = async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    await persistRefreshTokenHash(user._id, token);
     issueAuthCookie(res, token);
 
     res.json({
@@ -428,6 +533,7 @@ export const me = async (req, res) => {
 
 export const logout = async (req, res) => {
   try {
+    await clearRefreshTokenHash(req.user?._id);
     clearAuthCookie(res);
     res.json({
       success: true,
@@ -477,11 +583,21 @@ export const refresh = async (req, res) => {
       });
     }
 
+    if (!user.refreshTokenHash || user.refreshTokenHash !== hashRefreshToken(token)) {
+      clearAuthCookie(res);
+      return res.status(401).json({
+        success: false,
+        message: 'Session expired'
+      });
+    }
+
     const refreshedToken = jwt.sign(
       { userId: user._id, roles: user.roles },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
+
+    await persistRefreshTokenHash(user._id, refreshedToken);
 
     issueAuthCookie(res, refreshedToken);
 
@@ -553,6 +669,61 @@ export const verifyEmail = async (req, res) => {
   }
 };
 
+export const verifyPhone = async (req, res) => {
+  try {
+    const otp = String(req.body?.otp || '').trim();
+    const user = await User.findById(req.user?._id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (user.phoneVerified) {
+      return res.json({
+        success: true,
+        message: 'Phone is already verified',
+        data: { user: buildAuthUserPayload(user) }
+      });
+    }
+
+    if (!/^\d{6}$/.test(otp)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired OTP'
+      });
+    }
+
+    const isOtpExpired = !user.phoneOtpExpires || new Date() > user.phoneOtpExpires;
+    if (!user.phoneOtpHash || isOtpExpired || !isOtpHashMatch(otp, user.phoneOtpHash)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired OTP'
+      });
+    }
+
+    user.phoneVerified = true;
+    user.phoneOtpHash = undefined;
+    user.phoneOtpExpires = undefined;
+    if (user.status === 'pending_verification') {
+      user.status = 'active';
+    }
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Phone verified successfully',
+      data: { user: buildAuthUserPayload(user) }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
 export const resendVerificationOtp = async (req, res) => {
   try {
     const user = await User.findById(req.user?._id);
@@ -591,6 +762,50 @@ export const resendVerificationOtp = async (req, res) => {
       success: true,
       message: 'Verification OTP sent successfully',
       ...(process.env.NODE_ENV !== 'production' ? { data: { verificationOtp: otp, otpExpiresAt: user.emailOtpExpires } } : {})
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const resendPhoneOtp = async (req, res) => {
+  try {
+    const user = await User.findById(req.user?._id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (user.phoneVerified) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone is already verified'
+      });
+    }
+
+    const { otp, otpHash, otpExpires } = createPhoneOtpPayload();
+    user.phoneOtpHash = otpHash;
+    user.phoneOtpExpires = otpExpires;
+    await user.save();
+
+    const smsSent = await sendVerificationOtpSms({ to: user.phone, otp });
+
+    if (!smsSent && process.env.NODE_ENV === 'production') {
+      return res.status(500).json({
+        success: false,
+        message: 'Unable to send phone verification OTP at this time. Please try again later.'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Phone verification OTP sent successfully',
+      ...(process.env.NODE_ENV !== 'production' ? { data: { phoneVerificationOtp: otp, phoneOtpExpiresAt: user.phoneOtpExpires } } : {})
     });
   } catch (error) {
     res.status(500).json({

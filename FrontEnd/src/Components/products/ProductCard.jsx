@@ -19,6 +19,11 @@ const ProductCard = ({ product, onView }) => {
   const discount = product.originalPrice 
     ? Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)
     : product.discount || 0;
+  const seasonalAvailability = product.seasonalAvailability || {};
+  const seasonalBadge = seasonalAvailability.badgeLabel;
+  const seasonalBadgeClass = seasonalAvailability.status === 'in_season'
+    ? 'bg-emerald-500 text-white'
+    : 'bg-amber-500 text-white';
     
   const handleAddToCart = () => {
     const productWithDefaults = {
@@ -61,12 +66,19 @@ const ProductCard = ({ product, onView }) => {
       onMouseLeave={() => setIsHovered(false)}
       className="relative bg-white rounded-2xl shadow-lg overflow-hidden group h-full flex flex-col"
     >
-      {/* Discount Badge */}
-      {discount > 0 && (
-        <div className="absolute top-4 left-4 z-10 bg-red-500 text-white px-3 py-1 rounded-full text-sm font-semibold shadow-md">
-          {discount}% OFF
-        </div>
-      )}
+      {/* Badges */}
+      <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
+        {discount > 0 && (
+          <div className="bg-red-500 text-white px-3 py-1 rounded-full text-sm font-semibold shadow-md">
+            {discount}% OFF
+          </div>
+        )}
+        {seasonalBadge && (
+          <div className={clsx('px-3 py-1 rounded-full text-xs font-semibold shadow-md', seasonalBadgeClass)}>
+            {seasonalBadge}
+          </div>
+        )}
+      </div>
       
       {/* Like Button */}
       <button

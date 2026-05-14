@@ -21,6 +21,19 @@ const router = express.Router();
  */
 const isDbReady = () => mongoose.connection.readyState === 1;
 
+/**
+ * Checks whether the current MongoDB topology supports transactions.
+ * Mirrors the helper in order.routes.js to avoid starting transactions on
+ * standalone deployments which will throw MongoServerError.
+ */
+const supportsMongoTransactions = () => {
+  if (process.env.DISABLE_MONGO_TRANSACTIONS === 'true') return false;
+  if (mongoose.connection.readyState !== 1) return false;
+
+  const topologyType = mongoose.connection.client?.topology?.description?.type;
+  return ['ReplicaSetWithPrimary', 'Sharded', 'LoadBalanced'].includes(topologyType);
+};
+
 
 /**
  * SHIPMENT ROUTES (Long-haul delivery)
@@ -30,6 +43,7 @@ const isDbReady = () => mongoose.connection.readyState === 1;
 router.get('/shipments', authenticate, authorize('delivery', 'delivery_large', 'admin'), async (req, res) => {
   try {
     const { status, page = 1, limit = 20 } = req.query;
+    const cappedLimit = Math.min(Number(limit) || 20, 100);
     const query = {};
     
     // Filter by delivery partner unless admin
@@ -44,8 +58,8 @@ router.get('/shipments', authenticate, authorize('delivery', 'delivery_large', '
       .populate('destination.locationId', 'name type')
       .populate('orders.orderId', 'orderNumber')
       .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .limit(cappedLimit)
+      .skip((page - 1) * cappedLimit);
     
     const count = await Shipment.countDocuments(query);
     
@@ -53,7 +67,7 @@ router.get('/shipments', authenticate, authorize('delivery', 'delivery_large', '
       success: true,
       data: {
         shipments,
-        totalPages: Math.ceil(count / limit),
+        totalPages: Math.ceil(count / cappedLimit),
         currentPage: page,
         total: count
       }
@@ -112,9 +126,10 @@ router.post('/shipments', authenticate, authorize('admin', 'delivery_large'), as
     });
   }
 
-  const session = await mongoose.startSession();
-  session.startTransaction();
-  
+  const useTransaction = supportsMongoTransactions();
+  const session = useTransaction ? await mongoose.startSession() : null;
+  if (useTransaction) session.startTransaction();
+  let shipmentCreatedId = null;
   try {
     const {
       type,
@@ -138,22 +153,38 @@ router.post('/shipments', authenticate, authorize('admin', 'delivery_large'), as
       }
     });
     
-    await shipment.save({ session });
+    if (useTransaction) {
+      await shipment.save({ session });
+    } else {
+      await shipment.save();
+      shipmentCreatedId = shipment._id;
+    }
     
     // Update orders with shipment reference
     for (const orderItem of orders) {
-      await Order.findByIdAndUpdate(
-        orderItem.orderId,
-        {
-          'delivery.shipmentId': shipment._id,
-          'delivery.trackingNumber': shipment.shipmentNumber,
-          'delivery.estimatedDelivery': estimatedArrival
-        },
-        { session }
-      );
+      if (useTransaction) {
+        await Order.findByIdAndUpdate(
+          orderItem.orderId,
+          {
+            'delivery.shipmentId': shipment._id,
+            'delivery.trackingNumber': shipment.shipmentNumber,
+            'delivery.estimatedDelivery': estimatedArrival
+          },
+          { session }
+        );
+      } else {
+        await Order.findByIdAndUpdate(
+          orderItem.orderId,
+          {
+            'delivery.shipmentId': shipment._id,
+            'delivery.trackingNumber': shipment.shipmentNumber,
+            'delivery.estimatedDelivery': estimatedArrival
+          }
+        );
+      }
     }
-    
-    await session.commitTransaction();
+
+    if (useTransaction) await session.commitTransaction();
 
     const relatedOrders = await Order.find({ _id: { $in: orders.map((o) => o.orderId) } }).select('buyerId sellerId');
     const recipients = [shipment.deliveryPartnerId, ...relatedOrders.flatMap((o) => [o.buyerId, o.sellerId])];
@@ -170,13 +201,26 @@ router.post('/shipments', authenticate, authorize('admin', 'delivery_large'), as
       data: { shipment }
     });
   } catch (error) {
-    await session.abortTransaction();
+    if (useTransaction && session) await session.abortTransaction();
+    // Compensating rollback for non-transactional topology
+    if (!useTransaction) {
+      try {
+        if (shipmentCreatedId) {
+          await Shipment.findByIdAndDelete(shipmentCreatedId).catch(() => {});
+        }
+        await Order.updateMany(
+          { _id: { $in: orders.map((o) => o.orderId) } },
+          { $unset: { 'delivery.shipmentId': '', 'delivery.trackingNumber': '', 'delivery.estimatedDelivery': '' } }
+        ).catch(() => {});
+      } catch (_) {}
+    }
+
     res.status(500).json({
       success: false,
       message: error.message
     });
   } finally {
-    session.endSession();
+    if (session) session.endSession();
   }
 });
 
@@ -268,6 +312,7 @@ router.patch('/shipments/:id/deliver', authenticate, authorize('delivery', 'deli
 router.get('/tasks', authenticate, authorize('delivery', 'delivery_small', 'admin'), async (req, res) => {
   try {
     const { status, date, slot, page = 1, limit = 20 } = req.query;
+    const cappedLimit = Math.min(Number(limit) || 20, 100);
     const query = {};
     
     // Filter by delivery partner unless admin
@@ -288,8 +333,8 @@ router.get('/tasks', authenticate, authorize('delivery', 'delivery_small', 'admi
       .populate('orderId', 'orderNumber total')
       .populate('pickupLocation.locationId', 'name type')
       .sort({ 'timeSlot.date': 1, priority: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .limit(cappedLimit)
+      .skip((page - 1) * cappedLimit);
     
     const count = await DeliveryTask.countDocuments(query);
     
@@ -297,7 +342,7 @@ router.get('/tasks', authenticate, authorize('delivery', 'delivery_small', 'admi
       success: true,
       data: {
         tasks,
-        totalPages: Math.ceil(count / limit),
+        totalPages: Math.ceil(count / cappedLimit),
         currentPage: page,
         total: count
       }
@@ -356,9 +401,10 @@ router.post('/tasks', authenticate, authorize('admin', 'delivery_small'), async 
     });
   }
 
-  const session = await mongoose.startSession();
-  session.startTransaction();
-  
+  const useTransaction = supportsMongoTransactions();
+  const session = useTransaction ? await mongoose.startSession() : null;
+  if (useTransaction) session.startTransaction();
+  let taskCreatedId = null;
   try {
     const {
       type,
@@ -392,19 +438,33 @@ router.post('/tasks', authenticate, authorize('admin', 'delivery_small'), async 
       }
     });
     
-    await task.save({ session });
-    
+    if (useTransaction) {
+      await task.save({ session });
+    } else {
+      await task.save();
+      taskCreatedId = task._id;
+    }
+
     // Update order with delivery task reference
-    await Order.findByIdAndUpdate(
-      orderId,
-      {
-        'delivery.deliveryTaskId': task._id,
-        'delivery.trackingNumber': task.taskNumber
-      },
-      { session }
-    );
-    
-    await session.commitTransaction();
+    if (useTransaction) {
+      await Order.findByIdAndUpdate(
+        orderId,
+        {
+          'delivery.deliveryTaskId': task._id,
+          'delivery.trackingNumber': task.taskNumber
+        },
+        { session }
+      );
+      await session.commitTransaction();
+    } else {
+      await Order.findByIdAndUpdate(
+        orderId,
+        {
+          'delivery.deliveryTaskId': task._id,
+          'delivery.trackingNumber': task.taskNumber
+        }
+      );
+    }
 
     await notifyUsers([task.deliveryPartnerId, order.buyerId, order.sellerId], {
       title: 'Delivery Task Created',
@@ -419,13 +479,20 @@ router.post('/tasks', authenticate, authorize('admin', 'delivery_small'), async 
       data: { task }
     });
   } catch (error) {
-    await session.abortTransaction();
+    if (useTransaction && session) await session.abortTransaction();
+    if (!useTransaction) {
+      try {
+        if (taskCreatedId) await DeliveryTask.findByIdAndDelete(taskCreatedId).catch(() => {});
+        await Order.findByIdAndUpdate(orderId, { $unset: { 'delivery.deliveryTaskId': '', 'delivery.trackingNumber': '' } }).catch(() => {});
+      } catch (_) {}
+    }
+
     res.status(500).json({
       success: false,
       message: error.message
     });
   } finally {
-    session.endSession();
+    if (session) session.endSession();
   }
 });
 
@@ -519,13 +586,14 @@ router.patch('/tasks/:id/start', authenticate, authorize('delivery', 'delivery_s
 
 // Complete delivery
 router.patch('/tasks/:id/complete', authenticate, authorize('delivery', 'delivery_small'), validateObjectId('id'), async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-  
+  const useTransaction = supportsMongoTransactions();
+  const session = useTransaction ? await mongoose.startSession() : null;
+  if (useTransaction) session.startTransaction();
+  let taskProcessed = false;
   try {
     const { proof } = req.body;
     
-    const task = await DeliveryTask.findById(req.params.id).session(session);
+    const task = useTransaction ? await DeliveryTask.findById(req.params.id).session(session) : await DeliveryTask.findById(req.params.id);
     
     if (!task) {
       throw new Error('Task not found');
@@ -536,27 +604,47 @@ router.patch('/tasks/:id/complete', authenticate, authorize('delivery', 'deliver
     }
     
     await task.complete(proof);
+    taskProcessed = true;
     
     // Update order status
-    await Order.findByIdAndUpdate(
-      task.orderId,
-      {
-        status: 'delivered',
-        actualDeliveryDate: new Date(),
-        'delivery.actualDelivery': new Date(),
-        $push: {
-          statusHistory: {
-            status: 'delivered',
-            timestamp: new Date(),
-            updatedBy: req.user._id,
-            notes: 'Delivered successfully'
+    if (useTransaction) {
+      await Order.findByIdAndUpdate(
+        task.orderId,
+        {
+          status: 'delivered',
+          actualDeliveryDate: new Date(),
+          'delivery.actualDelivery': new Date(),
+          $push: {
+            statusHistory: {
+              status: 'delivered',
+              timestamp: new Date(),
+              updatedBy: req.user._id,
+              notes: 'Delivered successfully'
+            }
+          }
+        },
+        { session }
+      );
+
+      await session.commitTransaction();
+    } else {
+      await Order.findByIdAndUpdate(
+        task.orderId,
+        {
+          status: 'delivered',
+          actualDeliveryDate: new Date(),
+          'delivery.actualDelivery': new Date(),
+          $push: {
+            statusHistory: {
+              status: 'delivered',
+              timestamp: new Date(),
+              updatedBy: req.user._id,
+              notes: 'Delivered successfully'
+            }
           }
         }
-      },
-      { session }
-    );
-    
-    await session.commitTransaction();
+      );
+    }
 
     const order = await Order.findById(task.orderId).select('orderNumber buyerId sellerId marketplaceRequestId total paymentTerms');
     if (order) {
@@ -585,8 +673,8 @@ router.patch('/tasks/:id/complete', authenticate, authorize('delivery', 'deliver
             await commission.markCollected();
           }
 
-          // Award loyalty points
-          const pointsEarned = Math.floor((order.total || 0) / 100);
+          // Award loyalty points (1 pt per ₹1 spent)
+          const pointsEarned = Math.floor(order.total || 0);
           if (pointsEarned > 0) {
             await User.findByIdAndUpdate(order.buyerId, { $inc: { loyaltyPoints: pointsEarned } });
           }
@@ -628,13 +716,22 @@ router.patch('/tasks/:id/complete', authenticate, authorize('delivery', 'deliver
       data: { task }
     });
   } catch (error) {
-    await session.abortTransaction();
+    if (useTransaction && session) await session.abortTransaction();
+    // Compensating rollback for non-transactional topology: try to revert task.complete
+    if (!useTransaction && taskProcessed) {
+      try {
+        // Attempt to mark task back to previous status (best-effort)
+        await DeliveryTask.findByIdAndUpdate(req.params.id, { status: 'accepted' }).catch(() => {});
+        await Order.findByIdAndUpdate(taskProcessed ? (await DeliveryTask.findById(req.params.id)).orderId : null, { $pop: { statusHistory: 1 } }).catch(() => {});
+      } catch (_) {}
+    }
+
     res.status(500).json({
       success: false,
       message: error.message
     });
   } finally {
-    session.endSession();
+    if (session) session.endSession();
   }
 });
 

@@ -5,6 +5,7 @@ import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
 import { validateObjectId } from '../middleware/validation.middleware.js';
 import { body, validationResult } from 'express-validator';
+import { notifyUsers } from '../utils/notification.util.js';
 
 const router = express.Router();
 
@@ -31,6 +32,7 @@ const validatePriceAgreement = [
 router.get('/', authenticate, async (req, res) => {
   try {
     const { sellerId, buyerId, productId, status, page = 1, limit = 20 } = req.query;
+    const cappedLimit = Math.min(Number(limit) || 20, 100);
     
     let query = {};
     
@@ -57,8 +59,8 @@ router.get('/', authenticate, async (req, res) => {
       .populate('sellerId', 'name email')
       .populate('buyerId', 'name email')
       .populate('productId', 'name unit basePrice')
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
+      .limit(cappedLimit)
+      .skip((page - 1) * cappedLimit)
       .sort({ createdAt: -1 });
 
     const count = await PriceAgreement.countDocuments(query);
@@ -67,7 +69,7 @@ router.get('/', authenticate, async (req, res) => {
       success: true,
       data: {
         agreements,
-        totalPages: Math.ceil(count / limit),
+        totalPages: Math.ceil(count / cappedLimit),
         currentPage: page,
         total: count
       }
@@ -180,6 +182,13 @@ router.post('/', authenticate, authorize('farmer', 'business', 'restaurant', 'ad
     });
 
     await agreement.save();
+
+    await notifyUsers([sellerId, buyerId].filter(Boolean), {
+      title: 'Price agreement created',
+      message: `A price agreement for ${product.name} has been created and is awaiting review.`,
+      type: 'agreement',
+      relatedId: agreement._id
+    });
 
     res.status(201).json({
       success: true,

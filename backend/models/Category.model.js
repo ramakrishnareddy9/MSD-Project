@@ -25,6 +25,13 @@ const categorySchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  // GST rate for this category (stored as decimal fraction, e.g. 0.05 for 5%)
+  gstRate: {
+    type: Number,
+    default: 0.05,
+    min: 0,
+    max: 1
+  }
 }, {
   timestamps: true
 });

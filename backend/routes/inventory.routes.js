@@ -9,9 +9,10 @@ import { validateObjectId } from '../middleware/validation.middleware.js';
 const router = express.Router();
 
 // Get inventory lots
-router.get('/', async (req, res) => {
+router.get('/', authenticate, async (req, res) => {
   try {
     const { productId, locationId, ownerId, page = 1, limit = 50 } = req.query;
+    const cappedLimit = Math.min(Number(limit) || 50, 100);
     
     const query = {};
     if (productId) query.productId = productId;
@@ -41,8 +42,8 @@ router.get('/', async (req, res) => {
     const lots = await InventoryLot.find(query)
       .populate('productId', 'name unit images')
       .populate('locationId', 'name type address')
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
+      .limit(cappedLimit)
+      .skip((page - 1) * cappedLimit)
       .sort({ expiryDate: 1 });
 
     const count = await InventoryLot.countDocuments(query);
@@ -52,7 +53,7 @@ router.get('/', async (req, res) => {
       data: {
         lots,
         inventory: lots,
-        totalPages: Math.ceil(count / limit),
+        totalPages: Math.ceil(count / cappedLimit),
         currentPage: page,
         total: count
       }
@@ -107,6 +108,13 @@ router.post('/', authenticate, authorize('farmer', 'admin'), async (req, res) =>
     const lot = new InventoryLot(req.body);
     await lot.save();
 
+    // Sync product stock cache after creating a lot
+    try {
+      await InventoryLot.syncProductStockQuantity(lot.productId);
+    } catch (syncErr) {
+      console.error('[Inventory] Failed to sync product stock cache after create:', syncErr.message);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Inventory lot created successfully',
@@ -155,6 +163,13 @@ router.put('/:id', authenticate, authorize('farmer', 'admin'), validateObjectId(
       message: 'Inventory lot updated successfully',
       data: { lot, inventory: lot }
     });
+
+    // Sync product stock cache after update
+    try {
+      await InventoryLot.syncProductStockQuantity(lot.productId);
+    } catch (syncErr) {
+      console.error('[Inventory] Failed to sync product stock cache after update:', syncErr.message);
+    }
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -179,6 +194,13 @@ router.delete('/:id', authenticate, authorize('farmer', 'admin'), validateObject
       success: true,
       message: 'Inventory lot deleted successfully'
     });
+
+    // Sync product stock cache after delete
+    try {
+      await InventoryLot.syncProductStockQuantity(lot.productId);
+    } catch (syncErr) {
+      console.error('[Inventory] Failed to sync product stock cache after delete:', syncErr.message);
+    }
   } catch (error) {
     res.status(500).json({
       success: false,

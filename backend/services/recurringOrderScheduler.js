@@ -7,7 +7,10 @@ import Product from '../models/Product.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
 import User from '../models/User.model.js';
 import PriceAgreement from '../models/PriceAgreement.model.js';
+import Category from '../models/Category.model.js';
 import InventoryManager from './inventory.manager.js';
+import { calculateDeliveryFeeForOrder } from '../utils/deliveryFee.util.js';
+import { getCommissionRate } from '../utils/commission.util.js';
 
 const supportsMongoTransactions = () => {
   if (process.env.DISABLE_MONGO_TRANSACTIONS === 'true') {
@@ -41,9 +44,13 @@ const supportsMongoTransactions = () => {
  * Prevents double-processing: Only one worker can process same recurring order
  * (checked via isProcessing flag at database level)
  */
-async function processRecurringOrder(recurringOrder) {
+export async function processRecurringOrder(recurringOrder) {
   const useTransaction = supportsMongoTransactions();
   let session = null;
+  let createdOrder = null;
+  let createdCommission = null;
+  let reservationSucceeded = false;
+  let reservationOrderId = null;
 
   if (useTransaction) {
     session = await mongoose.startSession();
@@ -84,6 +91,7 @@ async function processRecurringOrder(recurringOrder) {
     // Process items and prepare order data (DON'T reserve yet)
     const orderItems = [];
     const itemsToReserve = [];
+    reservationOrderId = new mongoose.Types.ObjectId();
     let subtotal = 0;
     let sellerId = null;
     
@@ -114,6 +122,7 @@ async function processRecurringOrder(recurringOrder) {
       orderItems.push({
         productId: product._id,
         productName: product.name,
+        categoryId: product.categoryId,
         quantity: template.quantity,
         unit: product.unit,
         unitPrice: product.basePrice,
@@ -129,11 +138,53 @@ async function processRecurringOrder(recurringOrder) {
       subtotal += itemTotal;
     }
     
-    // Calculate totals (simplified - add delivery fee, tax logic as needed)
-    const deliveryFee = recurringOrder.type === 'b2b' ? 0 : 50;
-    const tax = subtotal * 0.05; // 5% tax
+    // CRITICAL FIX (Issue 2, 11): Use InventoryManager for atomic reservation
+    // This:
+    // 1. Prevents race conditions (uses locks + MongoDB transactions)
+    // 2. Prevents double-processing (isProcessing flag already set)
+    // 3. Rolls back partial failures (all-or-nothing)
+    // 4. Automatically cleans expired reservations (TTL)
+    // 5. Syncs product cache (stockQuantity)
+    const reservationResult = await InventoryManager.reserveForOrder({
+      orderItems: itemsToReserve,
+      orderId: reservationOrderId,
+      buyerId: recurringOrder.buyerId,
+      session: useTransaction ? session : null,
+      requestId: `recurring-${recurringOrder._id}-${Date.now()}`
+    });
+
+    if (!reservationResult.success) {
+      throw new Error(reservationResult.error || 'Failed to reserve inventory for recurring order');
+    }
+    reservationSucceeded = true;
+
+    const reservedLotIds = reservationResult.reservedLots.map((reservedLot) => reservedLot.lotId);
+    orderItems.forEach((item, index) => {
+      item.lotId = reservedLotIds[index];
+    });
+
+    // Calculate totals from the reserved lot location and delivery coordinates
+    const deliveryFeeResult = await calculateDeliveryFeeForOrder({
+      orderType: recurringOrder.type,
+      lotIds: reservedLotIds,
+      deliveryAddressCoordinates: deliveryAddress.coordinates,
+      session: useTransaction ? session : null
+    });
+    const deliveryFee = deliveryFeeResult.deliveryFee;
+    const categoryIds = [...new Set(orderItems.map((item) => item.categoryId).filter(Boolean).map((categoryId) => String(categoryId)))];
+    const categoryDocs = categoryIds.length > 0
+      ? await Category.find({ _id: { $in: categoryIds } }).select('gstRate').session(useTransaction ? session : null)
+      : [];
+    const gstRateMap = new Map(categoryDocs.map((category) => [String(category._id), Number(category.gstRate ?? 0.05)]));
+    const tax = Number(orderItems.reduce((sum, item) => {
+      const gstRate = gstRateMap.get(String(item.categoryId)) ?? 0.05;
+      const taxAmount = Number((item.totalPrice * gstRate).toFixed(2));
+      item.gstRate = gstRate;
+      item.taxAmount = taxAmount;
+      return sum + taxAmount;
+    }, 0).toFixed(2));
     const total = subtotal + deliveryFee + tax;
-    
+
     // Create order (conform to Order.model.js schema)
     const order = new Order({
       type: recurringOrder.type,
@@ -157,35 +208,17 @@ async function processRecurringOrder(recurringOrder) {
       paymentTerms: recurringOrder.type === 'b2b' ? 'net_15' : 'prepaid',
       notes: `Auto-generated from recurring order ${recurringOrder._id}`
     });
-    
+
     if (useTransaction) {
       await order.save({ session });
     } else {
       await order.save();
     }
-    
-    // CRITICAL FIX (Issue 2, 11): Use InventoryManager for atomic reservation
-    // This:
-    // 1. Prevents race conditions (uses locks + MongoDB transactions)
-    // 2. Prevents double-processing (isProcessing flag already set)
-    // 3. Rolls back partial failures (all-or-nothing)
-    // 4. Automatically cleans expired reservations (TTL)
-    // 5. Syncs product cache (stockQuantity)
-    const reservationResult = await InventoryManager.reserveForOrder({
-      orderItems: itemsToReserve,
-      orderId: order._id,
-      buyerId: recurringOrder.buyerId,
-      session: useTransaction ? session : null,
-      requestId: `recurring-${recurringOrder._id}-${Date.now()}`
-    });
-
-    if (!reservationResult.success) {
-      throw new Error(reservationResult.error || 'Failed to reserve inventory for recurring order');
-    }
+    createdOrder = order;
 
     // Commission rate: prefer the negotiated rate from a PriceAgreement when one
     // exists (B2B orders), otherwise fall back to platform defaults.
-    let commissionRate = recurringOrder.type === 'b2b' ? 0.05 : 0.10;
+    let commissionRate = await getCommissionRate(recurringOrder.type);
     if (order.priceAgreementId) {
       const agreement = await PriceAgreement.findById(order.priceAgreementId)
         .select('commissionRate')
@@ -221,6 +254,7 @@ async function processRecurringOrder(recurringOrder) {
     } else {
       await commission.save();
     }
+    createdCommission = commission;
     
     if (useTransaction && session) {
       await session.commitTransaction();
@@ -244,6 +278,43 @@ async function processRecurringOrder(recurringOrder) {
   } catch (error) {
     if (useTransaction && session) {
       await session.abortTransaction();
+    } else {
+      // Manual rollback path for standalone MongoDB deployments.
+      // InventoryManager rolls back partial reservations on its own if the
+      // reservation step fails; this cleanup handles the scheduler-owned
+      // documents created before the failure.
+      if (reservationSucceeded && createdOrder?._id) {
+        try {
+          await InventoryManager.cancelReservation({ orderId: reservationOrderId });
+        } catch (rollbackError) {
+          console.error(
+            `Failed to roll back inventory for recurring order ${recurringOrder._id}:`,
+            rollbackError.message
+          );
+        }
+      }
+
+      if (createdCommission?._id) {
+        try {
+          await Commission.findByIdAndDelete(createdCommission._id);
+        } catch (rollbackError) {
+          console.error(
+            `Failed to remove commission for recurring order ${recurringOrder._id}:`,
+            rollbackError.message
+          );
+        }
+      }
+
+      if (createdOrder?._id) {
+        try {
+          await Order.findByIdAndDelete(createdOrder._id);
+        } catch (rollbackError) {
+          console.error(
+            `Failed to remove order for recurring order ${recurringOrder._id}:`,
+            rollbackError.message
+          );
+        }
+      }
     }
     
     // Clear processing flag on error

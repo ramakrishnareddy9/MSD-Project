@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { Grid, Box, Typography, TextField, MenuItem, Select, InputLabel, FormControl } from '@mui/material';
+import { Grid, Box, Typography, TextField, MenuItem, Select, InputLabel, FormControl, FormControlLabel, Switch } from '@mui/material';
 import { ProductCard } from '../../Components/products';
 import { productAPI } from '../../services/api';
 
@@ -8,13 +8,14 @@ const ProductCatalog = () => {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('price-asc');
   const [loading, setLoading] = useState(true);
+  const [showFutureAvailability, setShowFutureAvailability] = useState(false);
 
   // Fetch products from API
   useEffect(() => {
     const fetchProducts = async () => {
       try {
-        const response = await productAPI.getProducts();
-        setAllProducts(response || []);
+        const response = await productAPI.getAll({ seasonal: showFutureAvailability ? 'all' : 'current' });
+        setAllProducts(response?.data?.products || response?.data || response || []);
       } catch (error) {
         console.error('Error fetching products:', error);
         setAllProducts([]);
@@ -24,7 +25,7 @@ const ProductCatalog = () => {
     };
 
     fetchProducts();
-  }, []);
+  }, [showFutureAvailability]);
 
   const products = useMemo(() => {
     const filtered = allProducts.filter(p =>
@@ -55,6 +56,15 @@ const ProductCatalog = () => {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           fullWidth
+        />
+        <FormControlLabel
+          control={
+            <Switch
+              checked={showFutureAvailability}
+              onChange={(e) => setShowFutureAvailability(e.target.checked)}
+            />
+          }
+          label="Show future availability"
         />
         <FormControl size="small" sx={{ minWidth: 160 }}>
           <InputLabel id="sort-label">Sort by</InputLabel>

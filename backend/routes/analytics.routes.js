@@ -4,7 +4,11 @@ import {
   getUserMetrics,
   getRevenueMetrics,
   getOrderAnalytics,
-  getProductAnalytics
+  getProductAnalytics,
+  getFarmerAnalytics,
+  getAdminDeepAnalytics,
+  getCustomerAnalytics,
+  getInventoryAnalytics
 } from '../controllers/analytics.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
@@ -27,5 +31,17 @@ router.get('/orders', getOrderAnalytics);
 
 // Product analytics
 router.get('/products', getProductAnalytics);
+
+// Farmer analytics
+router.get('/farmer', getFarmerAnalytics);
+
+// Admin deep analytics
+router.get('/admin/deep', authorize('admin'), getAdminDeepAnalytics);
+
+// Customer analytics
+router.get('/customer', getCustomerAnalytics);
+
+// Inventory analytics
+router.get('/inventory', authorize('admin', 'farmer'), getInventoryAnalytics);
 
 export default router;

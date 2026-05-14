@@ -71,10 +71,27 @@ const userSchema = new mongoose.Schema({
   refreshTokenHash: String,  // SHA-256 hash of the current refresh token (for revocation)
   emailOtpHash: String,      // SHA-256 hash of the 6-digit email verification OTP
   emailOtpExpires: Date,     // OTP expiry (10-minute TTL)
+  phoneOtpHash: String,      // SHA-256 hash of the 6-digit phone verification OTP
+  phoneOtpExpires: Date,     // OTP expiry (10-minute TTL)
   loyaltyPoints: {
     type: Number,
     default: 0
   },
+  loyaltyPointsHistory: [{
+    points: {
+      type: Number,
+      default: 0
+    },
+    reason: {
+      type: String,
+      trim: true
+    },
+    awardedAt: {
+      type: Date,
+      default: Date.now
+    },
+    expiresAt: Date
+  }],
   // KYC submission data — populated by POST /users/me/kyc-submit
   kycDocuments: {
     documentType: { type: String, trim: true },  // e.g. 'aadhaar', 'pan', 'passport'
@@ -143,6 +160,10 @@ userSchema.methods.toJSON = function() {
   const obj = this.toObject();
   delete obj.passwordHash;
   delete obj.refreshTokenHash;
+  delete obj.emailOtpHash;
+  delete obj.emailOtpExpires;
+  delete obj.phoneOtpHash;
+  delete obj.phoneOtpExpires;
   return obj;
 };
 

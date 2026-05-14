@@ -11,14 +11,15 @@ const router = express.Router();
 router.get('/', authenticate, authorize('admin'), async (req, res) => {
   try {
     const { role, status, page = 1, limit = 10 } = req.query;
+    const cappedLimit = Math.min(Number(limit) || 10, 100);
     
     const query = {};
     if (role) query.roles = role;
     if (status) query.status = status;
 
     const users = await User.find(query)
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
+      .limit(cappedLimit)
+      .skip((page - 1) * cappedLimit)
       .sort({ createdAt: -1 });
 
     const count = await User.countDocuments(query);
@@ -27,7 +28,7 @@ router.get('/', authenticate, authorize('admin'), async (req, res) => {
       success: true,
       data: {
         users,
-        totalPages: Math.ceil(count / limit),
+        totalPages: Math.ceil(count / cappedLimit),
         currentPage: page,
         total: count
       }
@@ -248,6 +249,14 @@ router.post('/me/kyc-submit', authenticate, async (req, res) => {
       submittedAt: new Date()
     };
     await user.save();
+
+    await notifyUser({
+      userId: user._id,
+      title: 'KYC submitted',
+      message: 'Your KYC documents were submitted successfully and are waiting for admin review.',
+      type: 'system',
+      relatedId: user._id
+    });
 
     res.json({
       success: true,

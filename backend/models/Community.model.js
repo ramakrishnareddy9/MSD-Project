@@ -25,6 +25,9 @@ const joinRequestSchema = new mongoose.Schema({
   reviewedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  reminderSentAt: {
+    type: Date
   }
 });
 

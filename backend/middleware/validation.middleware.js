@@ -140,6 +140,18 @@ export const validateVerifyEmailOtp = [
 ];
 
 /**
+ * Phone Verification OTP Validation
+ */
+export const validateVerifyPhoneOtp = [
+  body('otp')
+    .trim()
+    .matches(/^\d{6}$/)
+    .withMessage('OTP must be a 6-digit code'),
+
+  handleValidationErrors
+];
+
+/**
  * Product Creation/Update Validation
  */
 export const validateProduct = [

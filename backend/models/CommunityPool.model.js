@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { softDeletePlugin } from '../utils/softDelete.plugin.js';
 
 const contributionSchema = new mongoose.Schema({
   member: {
@@ -75,6 +76,9 @@ const communityPoolSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+// Add soft-delete plugin to support softDeleteMany / softDeleteOne statics
+communityPoolSchema.plugin(softDeletePlugin);
 
 // One pool per community + product pair.
 communityPoolSchema.index({ community: 1, product: 1 }, { unique: true });

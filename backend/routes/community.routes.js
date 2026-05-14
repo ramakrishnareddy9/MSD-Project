@@ -12,6 +12,10 @@ router.post('/:id/join', authenticate, communityController.joinCommunity);
 router.post('/:id/leave', authenticate, communityController.leaveCommunity);
 router.post('/:id/transfer-ownership', authenticate, communityController.transferOwnership);
 router.delete('/:id', authenticate, communityController.deleteCommunity);
+// Join via 8-character invite code
+router.post('/join-by-code', authenticate, communityController.joinByInviteCode);
+// Preview community by invite code
+router.get('/invite/:code', authenticate, communityController.getCommunityByInviteCode);
 router.get('/:id/announcements', authenticate, communityController.getCommunityAnnouncements);
 router.post('/:id/announcements', authenticate, communityController.createCommunityAnnouncement);
 
@@ -23,5 +27,8 @@ router.post('/pools/:poolId/contribute', authenticate, communityController.contr
 
 router.get('/:id/chat', authenticate, communityController.getCommunityChat);
 router.post('/:id/chat', authenticate, communityController.sendChatMessage);
+
+// Admin: approve/reject pending join requests
+router.patch('/:id/join-requests/:requestId/review', authenticate, communityController.reviewJoinRequest);
 
 export default router;
