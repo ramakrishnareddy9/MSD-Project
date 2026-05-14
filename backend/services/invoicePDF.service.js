@@ -1,16 +1,12 @@
 import PDFDocument from 'pdfkit';
-import fs from 'fs';
-import path from 'path';
 import Invoice from '../models/Invoice.model.js';
-import { fileURLToPath } from 'url';
+import { v2 as cloudinary } from 'cloudinary';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const uploadsDir = path.join(__dirname, '..', 'uploads', 'invoices');
-
-// Ensure invoices directory exists
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 /**
  * Generate PDF invoice for GST invoice
@@ -34,52 +30,58 @@ export const generateInvoicePDF = async (invoiceId) => {
       size: 'A4'
     });
 
-    // Set up file path
     const fileName = `${invoice.invoiceNumber.replace(/[/-]/g, '_')}_${Date.now()}.pdf`;
-    const filePath = path.join(uploadsDir, fileName);
-    const fileStream = fs.createWriteStream(filePath);
 
-    doc.pipe(fileStream);
-
-    // Render PDF content
-    renderInvoiceHeader(doc, invoice);
-    doc.moveDown(0.5);
-    renderPartyDetails(doc, invoice);
-    doc.moveDown(0.5);
-    renderInvoiceItems(doc, invoice);
-    doc.moveDown(0.5);
-    renderTaxSummary(doc, invoice);
-    doc.moveDown(0.5);
-    renderGSTBreakdown(doc, invoice);
-    doc.moveDown(0.5);
-    renderTermsAndConditions(doc, invoice);
-    renderFooter(doc, invoice);
-
-    // Finalize PDF
-    doc.end();
-
-    // Return promise that resolves when PDF is written
     return new Promise((resolve, reject) => {
-      fileStream.on('finish', async () => {
-        try {
-          // Update invoice with PDF path
-          invoice.pdfPath = filePath;
-          invoice.pdfUrl = `/invoices/${fileName}`;
-          invoice.pdfGeneratedAt = new Date();
-          await invoice.save();
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: 'farmkart/invoices',
+          resource_type: 'raw',
+          public_id: fileName
+        },
+        async (err, result) => {
+          if (err) {
+            reject(err);
+            return;
+          }
 
-          resolve({
-            pdfPath: filePath,
-            pdfUrl: invoice.pdfUrl,
-            fileName
-          });
-        } catch (err) {
-          reject(err);
+          try {
+            invoice.pdfPath = result.public_id;
+            invoice.pdfUrl = result.secure_url;
+            invoice.pdfGeneratedAt = new Date();
+            await invoice.save();
+
+            resolve({
+              pdfPath: result.public_id,
+              pdfUrl: result.secure_url,
+              fileName
+            });
+          } catch (saveError) {
+            reject(saveError);
+          }
         }
-      });
+      );
 
-      fileStream.on('error', reject);
       doc.on('error', reject);
+      uploadStream.on('error', reject);
+      doc.pipe(uploadStream);
+
+      // Render PDF content
+      renderInvoiceHeader(doc, invoice);
+      doc.moveDown(0.5);
+      renderPartyDetails(doc, invoice);
+      doc.moveDown(0.5);
+      renderInvoiceItems(doc, invoice);
+      doc.moveDown(0.5);
+      renderTaxSummary(doc, invoice);
+      doc.moveDown(0.5);
+      renderGSTBreakdown(doc, invoice);
+      doc.moveDown(0.5);
+      renderTermsAndConditions(doc, invoice);
+      renderFooter(doc, invoice);
+
+      // Finalize PDF and flush it to Cloudinary
+      doc.end();
     });
   } catch (error) {
     console.error('Error generating invoice PDF:', error);
@@ -180,7 +182,7 @@ function renderInvoiceItems(doc, invoice) {
   doc.fontSize(8).font('Helvetica');
   let rowY = doc.y;
 
-  invoice.items.forEach((item, index) => {
+  invoice.items.forEach((item) => {
     const itemName = item.productName.substring(0, 20);
     const hsnCode = item.hsnCode || 'N/A';
 
@@ -241,8 +243,6 @@ function renderTaxSummary(doc, invoice) {
  * Render GST breakdown by slab
  */
 function renderGSTBreakdown(doc, invoice) {
-  const y = doc.y;
-
   doc.fontSize(10).font('Helvetica-Bold').text('GST BREAKDOWN:');
   doc.moveDown(0.2);
 

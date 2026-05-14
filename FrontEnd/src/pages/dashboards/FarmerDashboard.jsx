@@ -10,7 +10,7 @@ import {
   Store, ShoppingCart, TrendingUp
 } from '@mui/icons-material';
 import ProfileDropdown from '../../Components/ProfileDropdown';
-import { authAPI, notificationAPI } from '../../services/api';
+import { authAPI, notificationAPI, userAPI } from '../../services/api';
 import { useRealtimeNotifications } from '../../hooks/useRealtimeNotifications';
 import VerificationBanner from '../../Components/VerificationBanner';
 // Custom hooks for data management
@@ -130,7 +130,32 @@ const FarmerDashboard = () => {
       case 'earnings':
         return <FarmerPayoutsPanel payouts={payouts} summary={payoutSummary} loading={payoutsLoading} error={payoutsError} />;
       case 'profile':
-        return <FarmerProfilePanel farmer={farmerData} loading={false} error={null} onUpdate={async (data) => { /* TODO: implement */ }} />;
+        return <FarmerProfilePanel farmer={farmerData} loading={false} error={null} onUpdate={async (data) => {
+          if (!farmerData?._id) {
+            throw new Error('Unable to update profile');
+          }
+
+          const payload = {
+            name: data.name,
+            phone: data.phone,
+            email: data.email
+          };
+
+          const response = await userAPI.update(farmerData._id, payload);
+          const updatedUser = response?.data?.user || response?.data;
+
+          if (updatedUser) {
+            setFarmerData((prev) => ({
+              ...prev,
+              ...updatedUser
+            }));
+          } else {
+            setFarmerData((prev) => ({
+              ...prev,
+              ...payload
+            }));
+          }
+        }} />;
       default:
         // Overview section
         return (

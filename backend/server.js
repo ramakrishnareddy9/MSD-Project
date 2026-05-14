@@ -137,16 +137,6 @@ if (process.env.NODE_ENV === 'development') {
   app.use(requestLogger);
 }
 
-// Static routes for invoices
-app.use('/invoices', express.static('uploads/invoices', {
-  setHeaders: (res, path) => {
-    if (path.endsWith('.pdf')) {
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'inline');
-    }
-  }
-}));
-
 // Database connection
 mongoose.connect(process.env.MONGODB_URI)
 .then(() => console.log('✅ MongoDB connected successfully'))

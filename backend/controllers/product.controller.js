@@ -7,6 +7,29 @@ import { CROP_CATALOG, getCropByName } from '../constants/cropCatalog.js';
 import { getCoordinatesForCity, isCanonicalAddressCoordinate } from '../utils/address.util.js';
 import { getSeasonalAvailability, normalizeMonthList, expandHarvestWindowMonths } from '../utils/seasonal.util.js';
 
+const getUploadedFileUrl = (file) => file?.secure_url || file?.path || file?.url || null;
+
+const normalizeImageList = (images) => {
+  if (Array.isArray(images)) {
+    return images.filter(Boolean).map((image) => String(image).trim()).filter(Boolean);
+  }
+
+  if (typeof images === 'string' && images.trim()) {
+    try {
+      const parsed = JSON.parse(images);
+      if (Array.isArray(parsed)) {
+        return parsed.filter(Boolean).map((image) => String(image).trim()).filter(Boolean);
+      }
+    } catch {
+      return [images.trim()];
+    }
+
+    return [images.trim()];
+  }
+
+  return [];
+};
+
 const resolveAddress = (owner) => {
   const primaryAddress = owner?.addresses?.[0];
   if (primaryAddress) {
@@ -215,6 +238,7 @@ export const getProductById = async (req, res) => {
 export const createProduct = async (req, res) => {
   try {
     const isFarmer = req.user.roles.includes('farmer') && !req.user.roles.includes('admin');
+    const uploadedImageUrl = getUploadedFileUrl(req.file);
 
     // Non-admin farmers can only create products for themselves
     if (isFarmer) {
@@ -246,6 +270,13 @@ export const createProduct = async (req, res) => {
 
     if (Array.isArray(req.body.availableMonths)) {
       req.body.availableMonths = normalizeMonthList(req.body.availableMonths);
+    }
+
+    const existingImages = normalizeImageList(req.body.images);
+    if (uploadedImageUrl) {
+      req.body.images = [uploadedImageUrl, ...existingImages];
+    } else if (existingImages.length > 0) {
+      req.body.images = existingImages;
     }
 
     if (req.body.harvestWindow) {
@@ -305,6 +336,7 @@ export const createProduct = async (req, res) => {
 export const updateProduct = async (req, res) => {
   try {
     const stockQuantityProvided = Object.prototype.hasOwnProperty.call(req.body, 'stockQuantity');
+    const uploadedImageUrl = getUploadedFileUrl(req.file);
     const product = await Product.findById(req.params.id);
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
@@ -342,6 +374,13 @@ export const updateProduct = async (req, res) => {
 
     if (Array.isArray(req.body.availableMonths)) {
       req.body.availableMonths = normalizeMonthList(req.body.availableMonths);
+    }
+
+    const existingImages = normalizeImageList(req.body.images);
+    if (uploadedImageUrl) {
+      req.body.images = [uploadedImageUrl, ...existingImages];
+    } else if (existingImages.length > 0) {
+      req.body.images = existingImages;
     }
 
     if (req.body.harvestWindow) {

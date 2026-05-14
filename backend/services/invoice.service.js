@@ -57,8 +57,8 @@ export const generateGSTInvoice = async (orderId, session = null) => {
       throw new Error(`Invoice already exists for order ${order.orderNumber}`);
     }
 
-    // Calculate GST breakdown by slab
-    const gstBreakdown = calculateGSTBreakdown(order.orderItems);
+    // Calculate GST breakdown by slab using seller/buyer state comparison
+    const gstBreakdown = calculateGSTBreakdown(order, order.orderItems);
 
     // Prepare invoice items with HSN codes
     const invoiceItems = order.orderItems.map((item) => ({
@@ -151,11 +151,14 @@ export const generateGSTInvoice = async (orderId, session = null) => {
 };
 
 /**
- * Calculate GST breakdown by slab (SGST, CGST for intra-state, IGST for inter-state)
+ * Calculate GST breakdown by slab (SGST/CGST for intra-state, IGST for inter-state)
  * Returns array of slab breakdowns with taxable amount and tax amounts
  */
-export const calculateGSTBreakdown = (orderItems) => {
+export const calculateGSTBreakdown = (order, orderItems) => {
   const slabMap = new Map();
+  const sellerState = normalizeState(order?.sellerId?.addresses?.[0]?.state);
+  const buyerState = normalizeState(order?.deliveryAddress?.state || order?.buyerId?.addresses?.[0]?.state);
+  const isInterState = Boolean(sellerState && buyerState && sellerState !== buyerState);
 
   // Group items by GST slab
   orderItems.forEach((item) => {
@@ -174,9 +177,16 @@ export const calculateGSTBreakdown = (orderItems) => {
 
   // Convert to breakdown array
   const breakdown = Array.from(slabMap.entries()).map(([slab, data]) => {
-    // For intra-state: Split SGST/CGST equally (50-50)
-    // For inter-state: Use full IGST rate
-    // Default to intra-state (SGST + CGST)
+    if (isInterState) {
+      return {
+        slab,
+        taxableAmount: Number(data.taxableAmount.toFixed(2)),
+        sgstAmount: 0,
+        cgstAmount: 0,
+        igstAmount: Number(data.taxAmount.toFixed(2))
+      };
+    }
+
     const sgstAmount = data.taxAmount / 2;
     const cgstAmount = data.taxAmount / 2;
 
@@ -185,12 +195,14 @@ export const calculateGSTBreakdown = (orderItems) => {
       taxableAmount: Number(data.taxableAmount.toFixed(2)),
       sgstAmount: Number(sgstAmount.toFixed(2)),
       cgstAmount: Number(cgstAmount.toFixed(2)),
-      igstAmount: 0 // Can be set to full tax amount if inter-state
+      igstAmount: 0
     };
   });
 
   return breakdown;
 };
+
+const normalizeState = (state) => String(state || '').trim().toLowerCase();
 
 /**
  * Calculate due date based on payment terms

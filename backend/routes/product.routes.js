@@ -2,6 +2,7 @@ import express from 'express';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
 import { requireKYC } from '../middleware/rbac.middleware.js';
+import upload from '../middleware/upload.middleware.js';
 import { validateProduct, validateObjectId } from '../middleware/validation.middleware.js';
 import * as productController from '../controllers/product.controller.js';
 import Category from '../models/Category.model.js';
@@ -23,6 +24,7 @@ router.post(
   authenticate,
   authorize('farmer', 'admin'),
   requireKYC,
+  upload.single('product'),
   // Ensure ownerId defaults to the authenticated farmer if not provided
   async (req, res, next) => {
     try {
@@ -55,7 +57,7 @@ router.post(
 );
 
 // Update product (owner or admin)
-router.put('/:id', authenticate, validateObjectId('id'), productController.updateProduct);
+router.put('/:id', authenticate, validateObjectId('id'), upload.single('product'), productController.updateProduct);
 
 // Delete product (owner or admin)
 router.delete('/:id', authenticate, validateObjectId('id'), productController.deleteProduct);

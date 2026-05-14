@@ -3,6 +3,7 @@ import User from '../models/User.model.js';
 import { notifyUser } from '../utils/notification.util.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { authorize } from '../middleware/role.middleware.js';
+import upload from '../middleware/upload.middleware.js';
 import { validateObjectId } from '../middleware/validation.middleware.js';
 
 const router = express.Router();
@@ -132,7 +133,7 @@ router.get('/:id', authenticate, validateObjectId('id'), async (req, res) => {
 });
 
 // Update user (admin or self)
-router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
+router.put('/:id', authenticate, validateObjectId('id'), upload.single('avatar'), async (req, res) => {
   try {
     const isAdmin = req.user.roles?.includes('admin');
     const isSelf = String(req.user._id) === String(req.params.id);
@@ -149,6 +150,7 @@ router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
       'name', 'email', 'phone', 'addresses'
     ];
     const forbiddenFields = ['roles', 'emailVerified', 'phoneVerified', 'kycStatus', 'status'];
+    const uploadedAvatarUrl = req.file?.secure_url || req.file?.path || req.file?.url || null;
 
     // Issue 38 - Prevent privilege escalation
     let updatePayload = isAdmin
@@ -156,6 +158,10 @@ router.put('/:id', authenticate, validateObjectId('id'), async (req, res) => {
       : Object.fromEntries(
           Object.entries(req.body || {}).filter(([key]) => allowedSelfFields.includes(key))
         );
+
+    if (uploadedAvatarUrl) {
+      updatePayload.profileImage = uploadedAvatarUrl;
+    }
     
     // Extra safety: even if admin flag somehow bypassed, block role updates for self
     if (isSelf) {
@@ -216,7 +222,7 @@ router.delete('/:id', authenticate, authorize('admin'), validateObjectId('id'), 
 
 // Submit KYC documents (self-service — any authenticated user)
 // Sets kycStatus to 'pending' so admins can review it.
-router.post('/me/kyc-submit', authenticate, async (req, res) => {
+router.post('/me/kyc-submit', authenticate, upload.single('document'), async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
     if (!user) {
@@ -232,6 +238,7 @@ router.post('/me/kyc-submit', authenticate, async (req, res) => {
     }
 
     const { documentType, documentNumber, documentUrl, selfieUrl } = req.body;
+    const uploadedDocumentUrl = req.file?.secure_url || req.file?.path || req.file?.url || null;
     if (!documentType || !documentNumber) {
       return res.status(400).json({
         success: false,
@@ -244,7 +251,7 @@ router.post('/me/kyc-submit', authenticate, async (req, res) => {
     user.kycDocuments = {
       documentType: String(documentType).trim(),
       documentNumber: String(documentNumber).trim(),
-      documentUrl: documentUrl || undefined,
+      documentUrl: uploadedDocumentUrl || documentUrl || undefined,
       selfieUrl: selfieUrl || undefined,
       submittedAt: new Date()
     };
