@@ -1,7 +1,5 @@
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { registerSchema, resetSchema } from '../utils/validationSchemas';
+import { useForm, Controller } from 'react-hook-form';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
   Typography, 
@@ -46,24 +44,19 @@ const AuthPage = ({ mode }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [validationErrors, setValidationErrors] = useState({});
   
   // Login Form State (react-hook-form)
-  const { register, handleSubmit, formState: { errors } } = useForm();
+  const { register, handleSubmit, setValue, formState: { errors } } = useForm();
 
-  // Register form (zod validated)
-  const regForm = useForm({ resolver: zodResolver(registerSchema) });
+  // Register form
+  const regForm = useForm({ defaultValues: { role: 'customer' } });
   const { register: regRegister, handleSubmit: regHandleSubmit, formState: { errors: regErrors }, watch: regWatch } = regForm;
 
-  // Reset form (zod validated)
-  const resetForm = useForm({ resolver: zodResolver(resetSchema) });
+  // Reset form
+  const resetForm = useForm();
   const { register: resetRegister, handleSubmit: resetHandleSubmit, formState: { errors: resetErrors } } = resetForm;
   
-  // Controlled state kept for register inputs (backwards compatible)
-  const [registerForm, setRegisterForm] = useState({
-    email: '', password: '', name: '', phone: '', address: '', city: '', role: 'customer', farmName: '', totalLand: '', experience: '', companyName: '', businessType: '', owner: '', gst: '', agencyName: '', licenseNumber: '', accountType: ''
-  });
-  const [forgetForm, setForgetForm] = useState({ email: '' });
+  // Controlled state removed — using react-hook-form for register & reset
 
   const buildRegisterPayload = (values) => {
     const v = values || {};
@@ -141,25 +134,12 @@ const AuthPage = ({ mode }) => {
     }
   });
 
-  const handleRegister = async (e) => {
-    e.preventDefault();
+  const submitRegister = regHandleSubmit(async (values) => {
     setError('');
     setSuccess('');
-    // Validate with zod
-    const parsed = registerSchema.safeParse(registerForm);
-    if (!parsed.success) {
-      const fieldErrors = {};
-      for (const issue of parsed.error.issues) {
-        fieldErrors[issue.path[0]] = issue.message;
-      }
-      setValidationErrors(fieldErrors);
-      return;
-    }
-    setValidationErrors({});
     setLoading(true);
-
     try {
-      const res = await authRegister(buildRegisterPayload(registerForm));
+      const res = await authRegister(buildRegisterPayload(values));
 
       if (!res.success) {
         setError(res.error || 'Registration failed');
@@ -167,7 +147,7 @@ const AuthPage = ({ mode }) => {
         return;
       }
 
-      const userRoles = res.user?.roles || [registerForm.role];
+      const userRoles = res.user?.roles || [values.role || 'customer'];
       const from = location.state?.from?.pathname || getDashboardPath(userRoles);
       navigate(from, { replace: true });
     } catch (err) {
@@ -175,27 +155,17 @@ const AuthPage = ({ mode }) => {
     } finally {
       setLoading(false);
     }
-  };
+  });
 
-  const handleForgetPassword = async (e) => {
-    e.preventDefault();
+  const submitReset = resetHandleSubmit(async (data) => {
     setError('');
     setSuccess('');
     setLoading(true);
-
     try {
-      const parsed = resetSchema.safeParse({ email: forgetForm.email });
-      if (!parsed.success) {
-        setValidationErrors({ email: parsed.error.issues[0].message });
-        setLoading(false);
-        return;
-      }
-
-      const response = await authAPI.forgotPassword(forgetForm.email.trim());
+      const response = await authAPI.forgotPassword(data.email.trim());
 
       if (response.success) {
         setSuccess(response.message || 'Password reset link sent to your email');
-        setForgetForm({ email: '' });
         resetForm.reset();
         setActiveTab('Login');
         return;
@@ -207,7 +177,7 @@ const AuthPage = ({ mode }) => {
     } finally {
       setLoading(false);
     }
-  };
+  });
 
   return (
     <div className="min-h-screen flex bg-gradient-to-br from-emerald-100 via-lime-50 to-amber-100">
@@ -379,7 +349,9 @@ const AuthPage = ({ mode }) => {
                     <div 
                       key={index}
                       onClick={() => {
-                        setLoginForm({ email: item.email, password: item.password });
+                        // autofill login form fields
+                        setValue('email', item.email, { shouldValidate: true, shouldDirty: true });
+                        setValue('password', item.password, { shouldValidate: true, shouldDirty: true });
                       }}
                       className="flex items-center cursor-pointer hover:bg-blue-100 p-2 rounded"
                     >
@@ -423,12 +395,11 @@ const AuthPage = ({ mode }) => {
                 </Typography>
               </div>
 
-              <div className="space-y-4 mb-6">
+              <form onSubmit={submitRegister} className="space-y-4 mb-6">
                 <TextField
                   fullWidth
                   placeholder="Full Name"
-                  value={registerForm.name}
-                  onChange={(e) => setRegisterForm({ ...registerForm, name: e.target.value })}
+                  {...regRegister('name', { required: 'Name is required', minLength: { value: 2, message: 'Name is too short' } })}
                   InputProps={{
                     startAdornment: (
                       <InputAdornment position="start">
@@ -439,363 +410,140 @@ const AuthPage = ({ mode }) => {
                   variant="outlined"
                   required
                   disabled={loading}
-                  error={!!validationErrors.name}
-                  helperText={validationErrors.name || ''}
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      backgroundColor: '#f5f5f5',
-                      borderRadius: '8px',
-                      '& fieldset': { border: 'none' },
-                    },
-                  }}
+                  error={!!regErrors.name}
+                  helperText={regErrors.name?.message || ''}
+                  sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }}
                 />
 
                 <TextField
                   fullWidth
                   type="email"
                   placeholder="Email Address"
-                  value={registerForm.email}
-                  onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Email className="text-gray-400" />
-                      </InputAdornment>
-                    ),
-                  }}
+                  {...regRegister('email', { required: 'Email is required', pattern: { value: /\S+@\S+\.\S+/, message: 'Enter a valid email' } })}
+                  InputProps={{ startAdornment: (<InputAdornment position="start"><Email className="text-gray-400" /></InputAdornment>) }}
                   variant="outlined"
                   required
                   disabled={loading}
-                  error={!!validationErrors.email}
-                  helperText={validationErrors.email || ''}
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      backgroundColor: '#f5f5f5',
-                      borderRadius: '8px',
-                      '& fieldset': { border: 'none' },
-                    },
-                  }}
+                  error={!!regErrors.email}
+                  helperText={regErrors.email?.message || ''}
+                  sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }}
                 />
 
                 <TextField
                   fullWidth
                   type="tel"
                   placeholder="Phone Number"
-                  value={registerForm.phone}
-                  onChange={(e) => setRegisterForm({ ...registerForm, phone: e.target.value })}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Phone className="text-gray-400" />
-                      </InputAdornment>
-                    ),
-                  }}
+                  {...regRegister('phone', { required: 'Phone is required', minLength: { value: 10, message: 'Enter a valid phone number' } })}
+                  InputProps={{ startAdornment: (<InputAdornment position="start"><Phone className="text-gray-400" /></InputAdornment>) }}
                   variant="outlined"
                   required
                   disabled={loading}
-                  error={!!validationErrors.phone}
-                  helperText={validationErrors.phone || ''}
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      backgroundColor: '#f5f5f5',
-                      borderRadius: '8px',
-                      '& fieldset': { border: 'none' },
-                    },
-                  }}
+                  error={!!regErrors.phone}
+                  helperText={regErrors.phone?.message || ''}
+                  sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }}
                 />
 
                 <TextField
                   fullWidth
                   type="password"
                   placeholder="Password"
-                  value={registerForm.password}
-                  onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Lock className="text-gray-400" />
-                      </InputAdornment>
-                    ),
-                  }}
+                  {...regRegister('password', { required: 'Password is required', minLength: { value: 8, message: 'Password must be at least 8 characters' } })}
+                  InputProps={{ startAdornment: (<InputAdornment position="start"><Lock className="text-gray-400" /></InputAdornment>) }}
                   variant="outlined"
                   required
                   disabled={loading}
-                  error={!!validationErrors.password}
-                  helperText={validationErrors.password || 'Use 8+ characters with uppercase, lowercase and number'}
+                  error={!!regErrors.password}
+                  helperText={regErrors.password?.message || 'Use 8+ characters with uppercase, lowercase and number'}
                   sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }}
                 />
 
                 <TextField
                   fullWidth
                   placeholder="Address"
-                  value={registerForm.address}
-                  onChange={(e) => setRegisterForm({ ...registerForm, address: e.target.value })}
+                  {...regRegister('address')}
                   InputProps={{ startAdornment: (<InputAdornment position="start"><AccountCircle className="text-gray-400" /></InputAdornment>) }}
                   variant="outlined"
                   disabled={loading}
-                  error={!!validationErrors.address}
-                  helperText={validationErrors.address || ''}
+                  error={!!regErrors.address}
+                  helperText={regErrors.address?.message || ''}
                   sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }}
                 />
 
                 <TextField
                   fullWidth
                   placeholder="City"
-                  value={registerForm.city}
-                  onChange={(e) => setRegisterForm({ ...registerForm, city: e.target.value })}
+                  {...regRegister('city')}
                   InputProps={{ startAdornment: (<InputAdornment position="start"><AccountCircle className="text-gray-400" /></InputAdornment>) }}
                   variant="outlined"
                   disabled={loading}
-                  error={!!validationErrors.city}
-                  helperText={validationErrors.city || ''}
+                  error={!!regErrors.city}
+                  helperText={regErrors.city?.message || ''}
                   sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }}
                 />
 
                 <FormControl fullWidth variant="outlined">
-                  <Select
-                    value={registerForm.role}
-                    onChange={(e) => setRegisterForm({ ...registerForm, role: e.target.value })}
-                    displayEmpty
-                    required
-                    disabled={loading}
-                    sx={{
-                      backgroundColor: '#f5f5f5',
-                      borderRadius: '8px',
-                      '& fieldset': { border: 'none' },
-                    }}
-                  >
-                    <MenuItem value="" disabled>Select Account Type</MenuItem>
-                    <MenuItem value="customer">Customer</MenuItem>
-                    <MenuItem value="farmer">Farmer</MenuItem>
-                    <MenuItem value="business">Business</MenuItem>
-                    <MenuItem value="travel_agency">Travel Agency</MenuItem>
-                    <MenuItem value="restaurant">Restaurant</MenuItem>
-                    <MenuItem value="delivery_large">Delivery Large</MenuItem>
-                    <MenuItem value="delivery_small">Delivery Small</MenuItem>
-                  </Select>
+                  <Controller
+                    name="role"
+                    control={regForm.control}
+                    defaultValue="customer"
+                    render={({ field }) => (
+                      <Select
+                        {...field}
+                        displayEmpty
+                        required
+                        disabled={loading}
+                        sx={{ backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } }}
+                      >
+                        <MenuItem value="" disabled>Select Account Type</MenuItem>
+                        <MenuItem value="customer">Customer</MenuItem>
+                        <MenuItem value="farmer">Farmer</MenuItem>
+                        <MenuItem value="business">Business</MenuItem>
+                        <MenuItem value="travel_agency">Travel Agency</MenuItem>
+                        <MenuItem value="restaurant">Restaurant</MenuItem>
+                        <MenuItem value="delivery_large">Delivery Large</MenuItem>
+                        <MenuItem value="delivery_small">Delivery Small</MenuItem>
+                      </Select>
+                    )}
+                  />
                 </FormControl>
 
-                {registerForm.role === 'farmer' && (
+                {regWatch('role') === 'farmer' && (
                   <>
-                    <TextField
-                      fullWidth
-                      placeholder="Farm Name"
-                      value={registerForm.farmName}
-                      onChange={(e) => setRegisterForm({ ...registerForm, farmName: e.target.value })}
-                      variant="outlined"
-                      disabled={loading}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          backgroundColor: '#f5f5f5',
-                          borderRadius: '8px',
-                          '& fieldset': { border: 'none' },
-                        },
-                      }}
-                    />
-                    <TextField
-                      fullWidth
-                      type="number"
-                      placeholder="Total Land (acres)"
-                      value={registerForm.totalLand}
-                      onChange={(e) => setRegisterForm({ ...registerForm, totalLand: e.target.value })}
-                      variant="outlined"
-                      disabled={loading}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          backgroundColor: '#f5f5f5',
-                          borderRadius: '8px',
-                          '& fieldset': { border: 'none' },
-                        },
-                      }}
-                    />
-                    <TextField
-                      fullWidth
-                      type="number"
-                      placeholder="Experience (years)"
-                      value={registerForm.experience}
-                      onChange={(e) => setRegisterForm({ ...registerForm, experience: e.target.value })}
-                      variant="outlined"
-                      disabled={loading}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          backgroundColor: '#f5f5f5',
-                          borderRadius: '8px',
-                          '& fieldset': { border: 'none' },
-                        },
-                      }}
-                    />
+                    <TextField fullWidth placeholder="Farm Name" {...regRegister('farmName')} variant="outlined" disabled={loading} sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }} />
+                    <TextField fullWidth type="number" placeholder="Total Land (acres)" {...regRegister('totalLand')} variant="outlined" disabled={loading} sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }} />
+                    <TextField fullWidth type="number" placeholder="Experience (years)" {...regRegister('experience')} variant="outlined" disabled={loading} sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }} />
                   </>
                 )}
 
-                {registerForm.role === 'business' && (
+                {regWatch('role') === 'business' && (
                   <>
-                    <TextField
-                      fullWidth
-                      placeholder="Company Name"
-                      value={registerForm.companyName}
-                      onChange={(e) => setRegisterForm({ ...registerForm, companyName: e.target.value })}
-                      variant="outlined"
-                      disabled={loading}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          backgroundColor: '#f5f5f5',
-                          borderRadius: '8px',
-                          '& fieldset': { border: 'none' },
-                        },
-                      }}
-                    />
-                    <TextField
-                      fullWidth
-                      placeholder="Business Type"
-                      value={registerForm.businessType}
-                      onChange={(e) => setRegisterForm({ ...registerForm, businessType: e.target.value })}
-                      variant="outlined"
-                      disabled={loading}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          backgroundColor: '#f5f5f5',
-                          borderRadius: '8px',
-                          '& fieldset': { border: 'none' },
-                        },
-                      }}
-                    />
-                    <TextField
-                      fullWidth
-                      placeholder="Owner"
-                      value={registerForm.owner}
-                      onChange={(e) => setRegisterForm({ ...registerForm, owner: e.target.value })}
-                      variant="outlined"
-                      disabled={loading}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          backgroundColor: '#f5f5f5',
-                          borderRadius: '8px',
-                          '& fieldset': { border: 'none' },
-                        },
-                      }}
-                    />
-                    <TextField
-                      fullWidth
-                      placeholder="GST Number"
-                      value={registerForm.gst}
-                      onChange={(e) => setRegisterForm({ ...registerForm, gst: e.target.value })}
-                      variant="outlined"
-                      disabled={loading}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          backgroundColor: '#f5f5f5',
-                          borderRadius: '8px',
-                          '& fieldset': { border: 'none' },
-                        },
-                      }}
-                    />
+                    <TextField fullWidth placeholder="Company Name" {...regRegister('companyName')} variant="outlined" disabled={loading} sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }} />
+                    <TextField fullWidth placeholder="Business Type" {...regRegister('businessType')} variant="outlined" disabled={loading} sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }} />
+                    <TextField fullWidth placeholder="Owner" {...regRegister('owner')} variant="outlined" disabled={loading} sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }} />
+                    <TextField fullWidth placeholder="GST Number" {...regRegister('gst')} variant="outlined" disabled={loading} sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }} />
                   </>
                 )}
 
-                {registerForm.role === 'restaurant' && (
-                  <TextField
-                    fullWidth
-                    placeholder="Restaurant Name"
-                    value={registerForm.companyName}
-                    onChange={(e) => setRegisterForm({ ...registerForm, companyName: e.target.value })}
-                    variant="outlined"
-                    disabled={loading}
-                    sx={{
-                      '& .MuiOutlinedInput-root': {
-                        backgroundColor: '#f5f5f5',
-                        borderRadius: '8px',
-                        '& fieldset': { border: 'none' },
-                      },
-                    }}
-                  />
+                {regWatch('role') === 'restaurant' && (
+                  <TextField fullWidth placeholder="Restaurant Name" {...regRegister('companyName')} variant="outlined" disabled={loading} sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }} />
                 )}
 
-                {registerForm.role === 'travel_agency' && (
-                  <TextField
-                    fullWidth
-                    placeholder="Agency Name"
-                    value={registerForm.agencyName}
-                    onChange={(e) => setRegisterForm({ ...registerForm, agencyName: e.target.value })}
-                    variant="outlined"
-                    disabled={loading}
-                    sx={{
-                      '& .MuiOutlinedInput-root': {
-                        backgroundColor: '#f5f5f5',
-                        borderRadius: '8px',
-                        '& fieldset': { border: 'none' },
-                      },
-                    }}
-                  />
+                {regWatch('role') === 'travel_agency' && (
+                  <TextField fullWidth placeholder="Agency Name" {...regRegister('agencyName')} variant="outlined" disabled={loading} sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }} />
                 )}
 
-                {(registerForm.role === 'delivery_large' || registerForm.role === 'delivery_small') && (
+                {(regWatch('role') === 'delivery_large' || regWatch('role') === 'delivery_small') && (
                   <>
-                    <TextField
-                      fullWidth
-                      placeholder="Company Name"
-                      value={registerForm.companyName}
-                      onChange={(e) => setRegisterForm({ ...registerForm, companyName: e.target.value })}
-                      variant="outlined"
-                      disabled={loading}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          backgroundColor: '#f5f5f5',
-                          borderRadius: '8px',
-                          '& fieldset': { border: 'none' },
-                        },
-                      }}
-                    />
-                    <TextField
-                      fullWidth
-                      placeholder="License Number"
-                      value={registerForm.licenseNumber}
-                      onChange={(e) => setRegisterForm({ ...registerForm, licenseNumber: e.target.value })}
-                      variant="outlined"
-                      disabled={loading}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          backgroundColor: '#f5f5f5',
-                          borderRadius: '8px',
-                          '& fieldset': { border: 'none' },
-                        },
-                      }}
-                    />
-                    <TextField
-                      fullWidth
-                      placeholder="Account Type"
-                      value={registerForm.accountType}
-                      onChange={(e) => setRegisterForm({ ...registerForm, accountType: e.target.value })}
-                      variant="outlined"
-                      disabled={loading}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          backgroundColor: '#f5f5f5',
-                          borderRadius: '8px',
-                          '& fieldset': { border: 'none' },
-                        },
-                      }}
-                    />
+                    <TextField fullWidth placeholder="Company Name" {...regRegister('companyName')} variant="outlined" disabled={loading} sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }} />
+                    <TextField fullWidth placeholder="License Number" {...regRegister('licenseNumber')} variant="outlined" disabled={loading} sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }} />
+                    <TextField fullWidth placeholder="Account Type" {...regRegister('accountType')} variant="outlined" disabled={loading} sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }} />
                   </>
                 )}
-              </div>
 
-              <Button
-                onClick={handleRegister}
-                fullWidth
-                variant="contained"
-                disabled={loading}
-                sx={{
-                  backgroundColor: '#22c55e',
-                  borderRadius: '8px',
-                  padding: '12px',
-                  fontSize: '16px',
-                  fontWeight: 600,
-                  textTransform: 'none',
-                  '&:hover': { backgroundColor: '#16a34a' },
-                }}
-              >
-                {loading ? 'Creating Account...' : 'Create Account'}
-              </Button>
+                <Button type="submit" fullWidth variant="contained" disabled={loading} sx={{ backgroundColor: '#22c55e', borderRadius: '8px', padding: '12px', fontSize: '16px', fontWeight: 600, textTransform: 'none', '&:hover': { backgroundColor: '#16a34a' } }}>
+                  {loading ? 'Creating Account...' : 'Create Account'}
+                </Button>
+              </form>
             </div>
           )}
 
@@ -811,56 +559,28 @@ const AuthPage = ({ mode }) => {
                 </Typography>
               </div>
 
-              <div className="space-y-4 mb-6">
+              <form onSubmit={submitReset} className="space-y-4 mb-6">
                 <TextField
                   fullWidth
                   type="email"
                   placeholder="Email Address"
-                  value={forgetForm.email}
-                  onChange={(e) => setForgetForm({ ...forgetForm, email: e.target.value })}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Email className="text-gray-400" />
-                      </InputAdornment>
-                    ),
-                  }}
+                  {...resetRegister('email', { required: 'Email is required', pattern: { value: /\S+@\S+\.\S+/, message: 'Enter a valid email' } })}
+                  InputProps={{ startAdornment: (<InputAdornment position="start"><Email className="text-gray-400" /></InputAdornment>) }}
                   variant="outlined"
                   required
                   disabled={loading}
-                  error={!!validationErrors.email}
-                  helperText={validationErrors.email || ''}
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      backgroundColor: '#f5f5f5',
-                      borderRadius: '8px',
-                      '& fieldset': { border: 'none' },
-                    },
-                  }}
+                  error={!!resetErrors.email}
+                  helperText={resetErrors.email?.message || ''}
+                  sx={{ '& .MuiOutlinedInput-root': { backgroundColor: '#f5f5f5', borderRadius: '8px', '& fieldset': { border: 'none' } } }}
                 />
-              </div>
 
-              <Button
-                onClick={handleForgetPassword}
-                fullWidth
-                variant="contained"
-                disabled={loading || !forgetForm.email}
-                sx={{
-                  backgroundColor: '#22c55e',
-                  borderRadius: '8px',
-                  padding: '12px',
-                  fontSize: '16px',
-                  fontWeight: 600,
-                  textTransform: 'none',
-                  marginBottom: '24px',
-                  '&:hover': { backgroundColor: '#16a34a' },
-                }}
-              >
-                {loading ? 'Sending...' : 'Send Reset Link'}
-              </Button>
+                <Button type="submit" fullWidth variant="contained" disabled={loading} sx={{ backgroundColor: '#22c55e', borderRadius: '8px', padding: '12px', fontSize: '16px', fontWeight: 600, textTransform: 'none', marginBottom: '24px', '&:hover': { backgroundColor: '#16a34a' } }}>
+                  {loading ? 'Sending...' : 'Send Reset Link'}
+                </Button>
+              </form>
 
               <div className="text-center">
-                <button 
+                <button
                   onClick={() => setActiveTab('Login')}
                   className="text-green-600 hover:text-green-700 font-medium transition-colors"
                 >

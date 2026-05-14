@@ -401,6 +401,28 @@ export const locationAPI = {
   }
 };
 
+// ===== DISPUTE API =====
+export const disputeAPI = {
+  create: async (payload) => {
+    return apiCall('/disputes', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  getAll: async (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiCall(`/disputes?${query}`);
+  },
+
+  resolve: async (id, payload) => {
+    return apiCall(`/disputes/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    });
+  }
+};
+
 // ===== REVIEW API =====
 export const reviewAPI = {
   getAll: async (params = {}) => {
