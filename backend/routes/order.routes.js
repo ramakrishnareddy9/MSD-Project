@@ -11,6 +11,7 @@ import Commission from '../models/Commission.model.js';
 import Vehicle from '../models/Vehicle.model.js';
 import DeliveryTask from '../models/DeliveryTask.model.js';
 import User from '../models/User.model.js';
+import Invoice from '../models/Invoice.model.js';
 import { notifyUsers } from '../utils/notification.util.js';
 import { assertTransactionVerification } from '../utils/verification.util.js';
 import { authenticate } from '../middleware/auth.middleware.js';
@@ -20,6 +21,7 @@ import { validateTransition, getAllowedTransitions, getTransitionMetadata, creat
 import { safeAtomicDeliveryAcceptance, atomicDeliveryStatusUpdate, createDeliveryAuditLog } from '../utils/deliveryAtomicLocking.util.js';
 import { calculateDeliveryFeeForOrder } from '../utils/deliveryFee.util.js';
 import { getCommissionRate } from '../utils/commission.util.js';
+import { generateGSTInvoice } from '../services/invoice.service.js';
 
 const router = express.Router();
 
@@ -521,6 +523,16 @@ router.patch('/:id/status', authenticate, authorize('farmer', 'delivery', 'deliv
     // ✅ FSM validation passed - proceed with status update
     const previousStatus = order.status;
     order.status = normalizedNewStatus;
+
+    // Generate GST invoice for B2B orders when confirmed
+    if (normalizedNewStatus === 'confirmed' && order.type === 'b2b' && order.total >= 200) {
+      try {
+        await generateGSTInvoice(order._id);
+      } catch (invoiceErr) {
+        console.error('GST invoice generation failed:', invoiceErr.message);
+        // Don't fail order confirmation due to invoice generation error
+      }
+    }
 
     // Handle status-specific side effects
     if (normalizedNewStatus === 'delivered') {
@@ -1216,6 +1228,105 @@ router.post('/:id/auto-assign-delivery', authenticate, authorize('admin', 'farme
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get invoice for an order (GET /orders/:id/invoice)
+// Only for B2B orders above ₹200, returns invoice details and PDF URL
+router.get('/:id/invoice', authenticate, validateObjectId('id'), async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id)
+      .populate('buyerId', 'name email')
+      .populate('sellerId', 'name email');
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Check authorization
+    const isAdmin = req.user.roles?.includes('admin');
+    const isBuyer = String(order.buyerId?._id || order.buyerId) === String(req.user._id);
+    const isSeller = String(order.sellerId?._id || order.sellerId) === String(req.user._id);
+
+    if (!isAdmin && !isBuyer && !isSeller) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: You can only access invoices for orders where you are the buyer or seller'
+      });
+    }
+
+    // Check if invoice is applicable (B2B orders above ₹200)
+    if (order.type !== 'b2b' || order.total < 200) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invoice is only applicable for B2B orders above ₹200'
+      });
+    }
+
+    // Fetch invoice
+    let invoice = await Invoice.findOne({ orderId: order._id })
+      .populate('orderItems.productId', 'name hsnCode');
+
+    if (!invoice) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invoice not found for this order. Invoice is generated when order is confirmed.'
+      });
+    }
+
+    // Generate PDF if not already generated or if requested explicitly
+    const { generatePdf } = req.query;
+    if (generatePdf === 'true' || !invoice.pdfUrl) {
+      try {
+        const { generateInvoicePDF } = await import('../services/invoicePDF.service.js');
+        const pdfResult = await generateInvoicePDF(invoice._id);
+        invoice = await Invoice.findById(invoice._id);
+      } catch (pdfErr) {
+        console.error('PDF generation failed:', pdfErr.message);
+        // Return invoice data even if PDF generation fails
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        invoice: {
+          _id: invoice._id,
+          invoiceNumber: invoice.invoiceNumber,
+          invoiceDate: invoice.invoiceDate,
+          dueDate: invoice.dueDate,
+          orderNumber: invoice.orderNumber,
+          orderType: invoice.orderType,
+          status: invoice.status,
+          sellerName: invoice.sellerName,
+          sellerGSTIN: invoice.sellerGSTIN,
+          buyerName: invoice.buyerName,
+          buyerGSTIN: invoice.buyerGSTIN,
+          items: invoice.items,
+          subtotal: invoice.subtotal,
+          deliveryFee: invoice.deliveryFee,
+          totalGst: invoice.totalGst,
+          totalAmount: invoice.totalAmount,
+          gstBreakdown: invoice.gstBreakdown,
+          paymentTerms: invoice.paymentTerms,
+          placeOfSupply: invoice.placeOfSupply,
+          reverseChargeApplicable: invoice.reverseChargeApplicable,
+          pdfUrl: invoice.pdfUrl,
+          pdfGeneratedAt: invoice.pdfGeneratedAt,
+          createdAt: invoice.createdAt,
+          updatedAt: invoice.updatedAt
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+      code: 'INVOICE_FETCH_ERROR'
+    });
   }
 });
 

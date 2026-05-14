@@ -198,6 +198,8 @@ User, Product, Order, and Community records are never hard-deleted. A Mongoose p
 ### Frontend
 | Technology | Version | Purpose |
 |---|---|---|
+
+**Auth UI note:** The active authentication UI is implemented in `FrontEnd/src/pages/AuthPage.jsx`. Older files `FrontEnd/src/pages/Signup.jsx` and `FrontEnd/src/Components/LoginForm.jsx` were removed to avoid confusion — do not recreate duplicate auth entry points.
 | React | 18 | UI framework |
 | Vite | Latest | Build tool + dev server |
 | React Router DOM | 6 | Client-side routing |

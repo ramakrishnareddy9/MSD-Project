@@ -3,6 +3,8 @@ import CommunityPool from '../models/CommunityPool.model.js';
 import ChatMessage from '../models/ChatMessage.model.js';
 import CommunityAnnouncement from '../models/CommunityAnnouncement.model.js';
 import Product from '../models/Product.model.js';
+import InventoryLot from '../models/InventoryLot.model.js';
+import mongoose from 'mongoose';
 import MarketplaceRequest from '../models/MarketplaceRequest.model.js';
 import Vehicle from '../models/Vehicle.model.js';
 import { notifyUser, notifyUsers } from '../utils/notification.util.js';
@@ -65,10 +67,32 @@ export const createCommunity = async (req, res) => {
 // ─── Get all communities available to user ───────────────────────────
 export const getAllCommunities = async (req, res) => {
   try {
-    const communities = await Community.find({ status: 'active' })
-      .populate('admin', 'name email')
-      .populate('members.user', 'name email');
-    res.json({ success: true, data: { communities } });
+    const { page = 1, limit = 20 } = req.query;
+    const parsedPage = Math.max(Number(page) || 1, 1);
+    const cappedLimit = Math.min(Number(limit) || 20, 100);
+
+    const query = { status: 'active' };
+
+    const [communities, total] = await Promise.all([
+      Community.find(query)
+        .populate('admin', 'name email')
+        .populate('members.user', 'name email')
+        .limit(cappedLimit)
+        .skip((parsedPage - 1) * cappedLimit)
+        .sort({ createdAt: -1 }),
+      Community.countDocuments(query)
+    ]);
+
+    res.json({
+      success: true,
+      data: { communities },
+      pagination: {
+        page: parsedPage,
+        limit: cappedLimit,
+        total,
+        totalPages: Math.max(Math.ceil(total / cappedLimit), 1)
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -77,10 +101,32 @@ export const getAllCommunities = async (req, res) => {
 // ─── Get communities user has joined ─────────────────────────────────
 export const getMyCommunities = async (req, res) => {
   try {
-    const communities = await Community.find({ 'members.user': req.user._id })
-      .populate('admin', 'name email')
-      .populate('members.user', 'name email');
-    res.json({ success: true, data: { communities } });
+    const { page = 1, limit = 20 } = req.query;
+    const parsedPage = Math.max(Number(page) || 1, 1);
+    const cappedLimit = Math.min(Number(limit) || 20, 100);
+
+    const query = { 'members.user': req.user._id };
+
+    const [communities, total] = await Promise.all([
+      Community.find(query)
+        .populate('admin', 'name email')
+        .populate('members.user', 'name email')
+        .limit(cappedLimit)
+        .skip((parsedPage - 1) * cappedLimit)
+        .sort({ createdAt: -1 }),
+      Community.countDocuments(query)
+    ]);
+
+    res.json({
+      success: true,
+      data: { communities },
+      pagination: {
+        page: parsedPage,
+        limit: cappedLimit,
+        total,
+        totalPages: Math.max(Math.ceil(total / cappedLimit), 1)
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -511,12 +557,31 @@ export const getCommunityAnnouncements = async (req, res) => {
       return res.status(403).json({ success: false, message: 'You are not a member of this community' });
     }
 
-    const announcements = await CommunityAnnouncement.find({ community: community._id })
-      .populate('createdBy', 'name email')
-      .sort({ createdAt: -1 })
-      .limit(100);
+    const { page = 1, limit = 20 } = req.query;
+    const parsedPage = Math.max(Number(page) || 1, 1);
+    const cappedLimit = Math.min(Number(limit) || 20, 100);
 
-    return res.json({ success: true, data: { announcements } });
+    const query = { community: community._id };
+
+    const [announcements, total] = await Promise.all([
+      CommunityAnnouncement.find(query)
+        .populate('createdBy', 'name email')
+        .sort({ createdAt: -1 })
+        .limit(cappedLimit)
+        .skip((parsedPage - 1) * cappedLimit),
+      CommunityAnnouncement.countDocuments(query)
+    ]);
+
+    return res.json({
+      success: true,
+      data: { announcements },
+      pagination: {
+        page: parsedPage,
+        limit: cappedLimit,
+        total,
+        totalPages: Math.max(Math.ceil(total / cappedLimit), 1)
+      }
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -647,6 +712,15 @@ export const getPoolFarmers = async (req, res) => {
       .populate('ownerId', 'name email phone roles status')
       .sort({ basePrice: 1, createdAt: -1 });
 
+    // Compute stock per product from InventoryLot to avoid relying on writable Product.stockQuantity
+    const productIds = candidateProducts.map(p => p._id);
+    const objectIds = productIds.map(id => mongoose.Types.ObjectId(id));
+    const stocks = await InventoryLot.aggregate([
+      { $match: { productId: { $in: objectIds }, isDeleted: { $ne: true } } },
+      { $group: { _id: '$productId', stock: { $sum: { $subtract: ['$quantity', '$reservedQuantity'] } } } }
+    ]);
+    const stockMap = new Map(stocks.map(s => [String(s._id), Math.max(0, Number(s.stock || 0))]));
+
     const farmersMap = new Map();
 
     candidateProducts.forEach((product) => {
@@ -664,7 +738,7 @@ export const getPoolFarmers = async (req, res) => {
         productId: String(product._id),
         price: Number(product.basePrice || 0),
         unit: product.unit,
-        stockQuantity: Number(product.stockQuantity || 0),
+        stockQuantity: Number(stockMap.get(String(product._id)) || 0),
         minOrderQuantity: Number(product.minOrderQuantity || 1)
       };
 
@@ -1003,12 +1077,31 @@ export const getCommunityChat = async (req, res) => {
       });
     }
 
-    const messages = await ChatMessage.find({ community: req.params.id })
-      .populate('sender', 'name email')
-      .sort({ createdAt: 1 })
-      .limit(200);
+    const { page = 1, limit = 20 } = req.query;
+    const parsedPage = Math.max(Number(page) || 1, 1);
+    const cappedLimit = Math.min(Number(limit) || 20, 200);
 
-    return res.json({ success: true, data: { messages } });
+    const query = { community: req.params.id };
+
+    const [messages, total] = await Promise.all([
+      ChatMessage.find(query)
+        .populate('sender', 'name email')
+        .sort({ createdAt: 1 })
+        .limit(cappedLimit)
+        .skip((parsedPage - 1) * cappedLimit),
+      ChatMessage.countDocuments(query)
+    ]);
+
+    return res.json({
+      success: true,
+      data: { messages },
+      pagination: {
+        page: parsedPage,
+        limit: cappedLimit,
+        total,
+        totalPages: Math.max(Math.ceil(total / cappedLimit), 1)
+      }
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

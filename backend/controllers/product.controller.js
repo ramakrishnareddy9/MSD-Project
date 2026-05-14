@@ -1,4 +1,5 @@
 import Product from '../models/Product.model.js';
+import mongoose from 'mongoose';
 import User from '../models/User.model.js';
 import InventoryLot from '../models/InventoryLot.model.js';
 import Location from '../models/Location.model.js';
@@ -154,10 +155,14 @@ export const getAllProducts = async (req, res) => {
       .skip((page - 1) * cappedLimit)
       .sort(sort);
 
-    const productsWithAvailability = products.map((product) => ({
-      ...product.toObject(),
-      seasonalAvailability: getSeasonalAvailability(product)
-    }));
+    // Populate stockQuantity virtual from InventoryLot aggregation
+    await Product.populateStockQuantity(products);
+
+    const productsWithAvailability = products.map((product) => {
+      const obj = product.toObject();
+      obj.seasonalAvailability = getSeasonalAvailability(product);
+      return obj;
+    });
     const count = await Product.countDocuments(query);
 
     res.json({
@@ -190,14 +195,14 @@ export const getProductById = async (req, res) => {
       });
     }
 
+    // Populate stockQuantity virtual from InventoryLot aggregation
+    await Product.populateStockQuantitySingle(product);
+    const productObj = product.toObject();
+    productObj.seasonalAvailability = getSeasonalAvailability(product);
+
     res.json({
       success: true,
-      data: {
-        product: {
-          ...product.toObject(),
-          seasonalAvailability: getSeasonalAvailability(product)
-        }
-      }
+      data: { product: productObj }
     });
   } catch (error) {
     res.status(500).json({
@@ -256,6 +261,13 @@ export const createProduct = async (req, res) => {
       }
     }
 
+    // If caller provided stockQuantity, extract it and avoid writing it directly
+    let providedStock = null;
+    if (Object.prototype.hasOwnProperty.call(req.body, 'stockQuantity')) {
+      providedStock = Number(req.body.stockQuantity || 0);
+      delete req.body.stockQuantity;
+    }
+
     const product = new Product(req.body);
     
     // Populate ownerRole from owner's roles (for fast catalog queries without User join)
@@ -267,16 +279,20 @@ export const createProduct = async (req, res) => {
     await product.save();
 
     try {
-      await syncPrimaryInventoryLot(product, Number(product.stockQuantity || 0));
+      await syncPrimaryInventoryLot(product, providedStock);
     } catch (syncError) {
       await Product.findByIdAndDelete(product._id);
       throw syncError;
     }
 
+    // Return product with computed stock from InventoryLot
+    await Product.populateStockQuantitySingle(product);
+    const createdProductObj = product.toObject();
+
     res.status(201).json({
       success: true,
       message: 'Product created successfully',
-      data: { product }
+      data: { product: createdProductObj }
     });
   } catch (error) {
     res.status(500).json({
@@ -341,6 +357,13 @@ export const updateProduct = async (req, res) => {
       }
     }
 
+    // If caller provided stockQuantity, extract and use it to sync InventoryLot
+    let forcedStock = null;
+    if (stockQuantityProvided) {
+      forcedStock = Number(req.body.stockQuantity || 0);
+      delete req.body.stockQuantity;
+    }
+
     Object.assign(product, req.body);
     
     // Sync ownerRole if ownerId changed
@@ -354,12 +377,16 @@ export const updateProduct = async (req, res) => {
     await product.save();
 
     if (stockQuantityProvided) {
-      await syncPrimaryInventoryLot(product, Number(product.stockQuantity || 0));
+      await syncPrimaryInventoryLot(product, forcedStock);
     } else {
       await syncPrimaryInventoryLot(product);
     }
 
-    res.json({ success: true, message: 'Product updated successfully', data: { product } });
+    // Return product with computed stock from InventoryLot
+    await Product.populateStockQuantitySingle(product);
+    const updatedProductObj = product.toObject();
+
+    res.json({ success: true, message: 'Product updated successfully', data: { product: updatedProductObj } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

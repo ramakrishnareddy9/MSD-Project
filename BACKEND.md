@@ -286,7 +286,7 @@ Configures `express-rate-limit` instances. Auth endpoints get a stricter 50 req/
 
 ### `upload.middleware.js`
 
-Configures Multer for file uploads. Saves to `/uploads/` directory. Validates MIME types (images only) and size limits.
+Configures Multer for file uploads. Uses Cloudinary-backed storage via `multer-storage-cloudinary` (recommended) and validates MIME types (images only) and size limits. Legacy local `/uploads/` storage is deprecated to avoid data loss on ephemeral cloud hosts.
 
 ---
 

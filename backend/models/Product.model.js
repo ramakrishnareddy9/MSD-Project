@@ -32,6 +32,10 @@ const productSchema = new mongoose.Schema({
     type: String,
     default: 'INR'
   },
+  hsnCode: {
+    type: String,
+    description: 'Harmonised System of Nomenclature code (8-digit) for GST taxation'
+  },
   images: [String],
   isPerishable: {
     type: Boolean,
@@ -65,10 +69,11 @@ const productSchema = new mongoose.Schema({
     enum: PRODUCT_STATUSES,
     default: 'active'
   },
-  stockQuantity: {
+  _cachedStockQuantity: {
     type: Number,
     default: 0,
-    min: 0
+    min: 0,
+    select: false // Don't expose raw cache in queries; use virtual instead
   },
   minOrderQuantity: {
     type: Number,
@@ -103,6 +108,8 @@ const productSchema = new mongoose.Schema({
     default: 'farmer',
     index: true
   },
+  // REMOVED: stockQuantity is now a virtual field computed from InventoryLot
+  // This ensures InventoryLot is the single source of truth for available stock
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -111,6 +118,25 @@ const productSchema = new mongoose.Schema({
 
 // Soft-delete support
 productSchema.plugin(softDeletePlugin);
+
+/**
+ * CRITICAL: stockQuantity must ONLY be synced from InventoryLot (via InventoryLot.syncProductStockQuantity).
+ * Do NOT allow direct writes to prevent data divergence.
+ * This hook prevents accidental/malicious direct updates to stockQuantity.
+ */
+productSchema.pre('save', function(next) {
+  // If this document has been modified to include stockQuantity, reject it
+  // (stockQuantity should only be synced by InventoryLot operations, never directly)
+  if (this.isModified('stockQuantity') && !this.isNew) {
+    const err = new Error(
+      'stockQuantity must not be modified directly. Use InventoryLot operations instead. ' +
+      'stockQuantity is computed from InventoryLot aggregation.'
+    );
+    err.code = 'DATA_INTEGRITY_VIOLATION';
+    return next(err);
+  }
+  next();
+});
 
 // Indexes
 productSchema.index({ ownerId: 1, status: 1, createdAt: -1 });
@@ -126,6 +152,21 @@ productSchema.virtual('price').get(function() {
   return this.basePrice;
 });
 
+/**
+ * stockQuantity - Virtual field computed from InventoryLot aggregation.
+ * InventoryLot is the authoritative source; Product.stockQuantity is a cached mirror.
+ * Use staticMethod populateStockQuantity() to hydrate this virtual.
+ */
+productSchema.virtual('stockQuantity').get(function() {
+  // Return _cachedStockQuantity (synced from InventoryLot)
+  return this._cachedStockQuantity || 0;
+});
+
+// Set the cache when loading from DB (not exposed in schema)
+productSchema.set('toJSON', { virtuals: true });
+productSchema.set('toObject', { virtuals: true });
+
+// Alias for backward compatibility
 productSchema.virtual('stock').get(function() {
   return this.stockQuantity;
 });
@@ -141,6 +182,70 @@ productSchema.virtual('seller').get(function() {
 productSchema.virtual('avgRating').get(function() {
   return this.averageRating;
 });
+
+/**
+ * Static method to populate stockQuantity virtual from InventoryLot aggregation.
+ * Call this after querying products to hydrate the stockQuantity virtual.
+ * 
+ * @param {Array<Product>} products - Product documents to populate
+ * @returns {Promise<Array>} Products with _stockQuantityCache populated
+ */
+productSchema.statics.populateStockQuantity = async function(products) {
+  if (!Array.isArray(products) || products.length === 0) {
+    return products;
+  }
+
+  const productIds = products.map(p => p._id);
+  const InventoryLot = mongoose.model('InventoryLot');
+
+  // Aggregate available quantity for each product from InventoryLot
+  const stockMap = await InventoryLot.aggregate([
+    {
+      $match: {
+        productId: { $in: productIds },
+        deletedAt: { $exists: false } // Respect soft deletes if InventoryLot uses soft-delete plugin
+      }
+    },
+    {
+      $project: {
+        productId: 1,
+        available: {
+          $max: [{ $subtract: ['$quantity', '$reservedQuantity'] }, 0]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: '$productId',
+        totalAvailable: { $sum: '$available' }
+      }
+    }
+  ]);
+
+  // Build lookup map
+  const stockLookup = {};
+  stockMap.forEach(item => {
+    stockLookup[item._id.toString()] = item.totalAvailable;
+  });
+
+  // Populate cache on each product
+  products.forEach(product => {
+    product._cachedStockQuantity = stockLookup[product._id.toString()] || 0;
+  });
+
+  return products;
+};
+
+/**
+ * Convenience method for single product.
+ * @param {Product} product - Single product document
+ * @returns {Promise<Product>} Product with stockQuantity hydrated
+ */
+productSchema.statics.populateStockQuantitySingle = async function(product) {
+  if (!product) return product;
+  const [populated] = await this.populateStockQuantity([product]);
+  return populated;
+};
 
 const Product = mongoose.model('Product', productSchema);
 

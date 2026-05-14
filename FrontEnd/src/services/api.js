@@ -43,28 +43,7 @@ const attemptSilentRefresh = async () => {
 // ─── Core API helper ───────────────────────────────────────────────────────────
 /**
  * Make an API call with automatic silent refresh on 401.
-
-  // ===== DISPUTE API =====
-  export const disputeAPI = {
-    create: async (payload) => {
-      return apiCall('/disputes', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      });
-    },
-
-    getAll: async (params = {}) => {
-      const query = new URLSearchParams(params).toString();
-      return apiCall(`/disputes?${query}`);
-    },
-
-    resolve: async (id, payload) => {
-      return apiCall(`/disputes/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload)
-      });
-    }
-  };
+ *
  * When the access token expires (15 min), the first 401 triggers a
  * POST /auth/refresh using the long-lived refresh cookie. If refresh
  * succeeds the original request is retried exactly once.

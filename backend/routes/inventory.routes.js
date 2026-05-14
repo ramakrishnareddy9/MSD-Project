@@ -67,7 +67,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // Get lot by ID
-router.get('/:id', validateObjectId('id'), async (req, res) => {
+router.get('/:id', authenticate, validateObjectId('id'), async (req, res) => {
   try {
     const lot = await InventoryLot.findById(req.params.id)
       .populate('productId')

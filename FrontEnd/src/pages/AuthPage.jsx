@@ -447,7 +447,11 @@ const AuthPage = ({ mode }) => {
                   fullWidth
                   type="password"
                   placeholder="Password"
-                  {...regRegister('password', { required: 'Password is required', minLength: { value: 8, message: 'Password must be at least 8 characters' } })}
+                  {...regRegister('password', {
+                    required: 'Password is required',
+                    minLength: { value: 8, message: 'Password must be at least 8 characters' },
+                    pattern: { value: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/, message: 'Must include uppercase, lowercase, and a number' }
+                  })}
                   InputProps={{ startAdornment: (<InputAdornment position="start"><Lock className="text-gray-400" /></InputAdornment>) }}
                   variant="outlined"
                   required

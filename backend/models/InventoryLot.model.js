@@ -116,9 +116,9 @@ inventoryLotSchema.statics.syncProductStockQuantity = async function(productId, 
 
   const ProductModel = Product || mongoose.model('Product');
   const availableQuantity = await this.getAvailableQuantityForProduct(productId, session);
-  const updateQuery = ProductModel.updateOne(
-    { _id: productId },
-    { $set: { stockQuantity: availableQuantity } }
+    const updateQuery = ProductModel.updateOne(
+      { _id: productId },
+      { $set: { _cachedStockQuantity: availableQuantity } }
   );
 
   if (session) {

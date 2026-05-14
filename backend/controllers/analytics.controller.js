@@ -689,3 +689,696 @@ export const getInventoryAnalytics = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Get GMV (Gross Merchandise Value) analytics by period
+// @route   GET /api/analytics/gmv
+// @access  Admin only
+export const getGMVAnalytics = async (req, res) => {
+  try {
+    const { period = 'monthly' } = req.query; // daily, weekly, monthly, yearly
+
+    let dateFormat;
+    switch (period) {
+      case 'daily':
+        dateFormat = '%Y-%m-%d';
+        break;
+      case 'weekly':
+        dateFormat = '%Y-W%V'; // Week number
+        break;
+      case 'yearly':
+        dateFormat = '%Y';
+        break;
+      case 'monthly':
+      default:
+        dateFormat = '%Y-%m';
+    }
+
+    // GMV by period
+    const gmvByPeriod = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      {
+        $group: {
+          _id: { $dateToString: { format: dateFormat, date: '$createdAt' } },
+          gmv: { $sum: '$total' },
+          orderCount: { $sum: 1 },
+          subtotal: { $sum: '$subtotal' },
+          tax: { $sum: '$tax' },
+          deliveryFee: { $sum: '$deliveryFee' },
+          avgOrderValue: { $avg: '$total' }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Overall GMV
+    const totalGmv = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      {
+        $group: {
+          _id: null,
+          gmv: { $sum: '$total' },
+          orderCount: { $sum: 1 },
+          avgOrderValue: { $avg: '$total' },
+          minOrderValue: { $min: '$total' },
+          maxOrderValue: { $max: '$total' }
+        }
+      }
+    ]);
+
+    // GMV by order type
+    const gmvByType = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      {
+        $group: {
+          _id: '$type',
+          gmv: { $sum: '$total' },
+          orderCount: { $sum: 1 },
+          avgOrderValue: { $avg: '$total' }
+        }
+      }
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        period,
+        total: totalGmv[0] || { gmv: 0, orderCount: 0, avgOrderValue: 0 },
+        byPeriod: gmvByPeriod,
+        byOrderType: gmvByType
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get take rate (commission/GMV) analytics
+// @route   GET /api/analytics/take-rate
+// @access  Admin only
+export const getTakeRateAnalytics = async (req, res) => {
+  try {
+    const { period = 'monthly' } = req.query; // daily, weekly, monthly, yearly
+
+    let dateFormat;
+    switch (period) {
+      case 'daily':
+        dateFormat = '%Y-%m-%d';
+        break;
+      case 'weekly':
+        dateFormat = '%Y-W%V';
+        break;
+      case 'yearly':
+        dateFormat = '%Y';
+        break;
+      case 'monthly':
+      default:
+        dateFormat = '%Y-%m';
+    }
+
+    // Take rate by period
+    const takeRateByPeriod = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      {
+        $group: {
+          _id: { $dateToString: { format: dateFormat, date: '$createdAt' } },
+          gmv: { $sum: '$total' },
+          commission: { $sum: { $multiply: ['$total', '$commission.rate'] } },
+          orderCount: { $sum: 1 }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          gmv: 1,
+          commission: 1,
+          orderCount: 1,
+          takeRate: {
+            $cond: [{ $gt: ['$gmv', 0] }, { $multiply: [{ $divide: ['$commission', '$gmv'] }, 100] }, 0]
+          }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Overall take rate
+    const overallStats = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      {
+        $group: {
+          _id: null,
+          gmv: { $sum: '$total' },
+          commission: { $sum: { $multiply: ['$total', '$commission.rate'] } }
+        }
+      },
+      {
+        $project: {
+          gmv: 1,
+          commission: 1,
+          takeRate: {
+            $cond: [{ $gt: ['$gmv', 0] }, { $multiply: [{ $divide: ['$commission', '$gmv'] }, 100] }, 0]
+          }
+        }
+      }
+    ]);
+
+    // Take rate by order type
+    const takeRateByType = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      {
+        $group: {
+          _id: '$type',
+          gmv: { $sum: '$total' },
+          commission: { $sum: { $multiply: ['$total', '$commission.rate'] } },
+          orderCount: { $sum: 1 }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          gmv: 1,
+          commission: 1,
+          orderCount: 1,
+          takeRate: {
+            $cond: [{ $gt: ['$gmv', 0] }, { $multiply: [{ $divide: ['$commission', '$gmv'] }, 100] }, 0]
+          }
+        }
+      }
+    ]);
+
+    // Commission collection status
+    const commissionStatus = await Commission.aggregate([
+      {
+        $group: {
+          _id: '$status',
+          amount: { $sum: '$commissionAmount' },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        period,
+        overall: overallStats[0] || { gmv: 0, commission: 0, takeRate: 0 },
+        byPeriod: takeRateByPeriod,
+        byOrderType: takeRateByType,
+        commissionStatus
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get top farmers analytics with earnings trends
+// @route   GET /api/analytics/top-farmers
+// @access  Admin only
+export const getTopFarmersAnalytics = async (req, res) => {
+  try {
+    const { limit = 10, period = 'monthly' } = req.query;
+    const topLimit = Math.min(parseInt(limit) || 10, 50);
+
+    // Top farmers by revenue
+    const topFarmers = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      {
+        $group: {
+          _id: '$sellerId',
+          totalRevenue: { $sum: '$total' },
+          totalOrders: { $sum: 1 },
+          avgOrderValue: { $avg: '$total' },
+          totalItems: { $sum: { $size: '$orderItems' } }
+        }
+      },
+      { $sort: { totalRevenue: -1 } },
+      { $limit: topLimit },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'seller'
+        }
+      },
+      { $unwind: '$seller' },
+      {
+        $project: {
+          _id: 1,
+          name: '$seller.name',
+          email: '$seller.email',
+          totalRevenue: 1,
+          totalOrders: 1,
+          avgOrderValue: 1,
+          totalItems: 1
+        }
+      }
+    ]);
+
+    // Commission breakdown for top farmers
+    const farmerCommissions = await Commission.aggregate([
+      { $match: { status: { $in: ['collected', 'processing', 'paid'] } } },
+      {
+        $group: {
+          _id: '$sellerId',
+          totalOrderAmount: { $sum: '$orderAmount' },
+          totalCommissionCharged: { $sum: '$commissionAmount' },
+          totalPayoutAmount: { $sum: '$sellerPayout' },
+          orderCount: { $sum: 1 }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          totalOrderAmount: 1,
+          totalCommissionCharged: 1,
+          totalPayoutAmount: 1,
+          orderCount: 1,
+          effectiveCommissionRate: {
+            $cond: [
+              { $gt: ['$totalOrderAmount', 0] },
+              { $multiply: [{ $divide: ['$totalCommissionCharged', '$totalOrderAmount'] }, 100] },
+              0
+            ]
+          }
+        }
+      }
+    ]);
+
+    const commissionMap = new Map(farmerCommissions.map((f) => [String(f._id), f]));
+
+    // Enrich top farmers with commission data
+    const enrichedFarmers = topFarmers.map((farmer) => {
+      const commData = commissionMap.get(String(farmer._id)) || {};
+      return {
+        ...farmer,
+        commission: {
+          totalCharged: commData.totalCommissionCharged || 0,
+          totalPayout: commData.totalPayoutAmount || 0,
+          effectiveRate: commData.effectiveCommissionRate || 0
+        }
+      };
+    });
+
+    // Farmer earnings over time (for first 5 top farmers)
+    const topFarmerIds = topFarmers.slice(0, 5).map((f) => f._id);
+    const earningsTrend = await Order.aggregate([
+      { $match: { status: 'delivered', sellerId: { $in: topFarmerIds } } },
+      {
+        $group: {
+          _id: {
+            sellerId: '$sellerId',
+            period: { $dateToString: { format: '%Y-%m', date: '$createdAt' } }
+          },
+          revenue: { $sum: '$total' },
+          orderCount: { $sum: 1 }
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id.sellerId',
+          foreignField: '_id',
+          as: 'seller'
+        }
+      },
+      { $unwind: '$seller' },
+      {
+        $project: {
+          _id: 1,
+          farmerName: '$seller.name',
+          revenue: 1,
+          orderCount: 1
+        }
+      },
+      { $sort: { '_id.period': 1 } }
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        topFarmers: enrichedFarmers,
+        earningsTrend
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get top crops (most-ordered) analytics
+// @route   GET /api/analytics/top-crops
+// @access  Admin only
+export const getTopCropsAnalytics = async (req, res) => {
+  try {
+    const { limit = 10, sortBy = 'quantity' } = req.query; // sortBy: quantity, revenue
+    const topLimit = Math.min(parseInt(limit) || 10, 50);
+    const sortField = sortBy === 'revenue' ? 'totalRevenue' : 'totalQuantity';
+
+    // Top crops by quantity and revenue
+    const topCrops = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      { $unwind: '$orderItems' },
+      {
+        $group: {
+          _id: {
+            productId: '$orderItems.productId',
+            productName: '$orderItems.productName'
+          },
+          totalQuantity: { $sum: '$orderItems.quantity' },
+          totalRevenue: { $sum: '$orderItems.totalPrice' },
+          totalTax: { $sum: '$orderItems.taxAmount' },
+          avgUnitPrice: { $avg: '$orderItems.unitPrice' },
+          orderCount: { $sum: 1 }
+        }
+      },
+      { $sort: { [sortField]: -1 } },
+      { $limit: topLimit },
+      {
+        $lookup: {
+          from: 'products',
+          localField: '_id.productId',
+          foreignField: '_id',
+          as: 'product'
+        }
+      },
+      { $unwind: { path: '$product', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          _id: '$_id.productId',
+          productName: '$_id.productName',
+          category: { $ifNull: ['$product.category', 'Unknown'] },
+          totalQuantity: 1,
+          totalRevenue: 1,
+          totalTax: 1,
+          avgUnitPrice: 1,
+          orderCount: 1,
+          avgQuantityPerOrder: { $divide: ['$totalQuantity', { $max: [1, '$orderCount'] }] }
+        }
+      }
+    ]);
+
+    // Top crops by region
+    const topCropsByRegion = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      { $unwind: '$orderItems' },
+      {
+        $group: {
+          _id: {
+            state: '$deliveryAddress.state',
+            crop: '$orderItems.productName'
+          },
+          totalQuantity: { $sum: '$orderItems.quantity' },
+          totalRevenue: { $sum: '$orderItems.totalPrice' }
+        }
+      },
+      { $sort: { totalQuantity: -1 } },
+      { $limit: 20 }
+    ]);
+
+    // Crop demand trend over time
+    const cropTrend = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      { $unwind: '$orderItems' },
+      {
+        $group: {
+          _id: {
+            crop: '$orderItems.productName',
+            month: { $dateToString: { format: '%Y-%m', date: '$createdAt' } }
+          },
+          quantity: { $sum: '$orderItems.quantity' },
+          revenue: { $sum: '$orderItems.totalPrice' }
+        }
+      },
+      { $sort: { '_id.month': 1 } }
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        topCrops,
+        topCropsByRegion,
+        cropTrend
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get regional demand heatmap analytics
+// @route   GET /api/analytics/regional-demand
+// @access  Admin only
+export const getRegionalDemandAnalytics = async (req, res) => {
+  try {
+    // Overall regional demand
+    const regionalDemand = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      {
+        $group: {
+          _id: {
+            state: '$deliveryAddress.state',
+            city: '$deliveryAddress.city'
+          },
+          orderCount: { $sum: 1 },
+          totalGmv: { $sum: '$total' },
+          totalItems: { $sum: { $size: '$orderItems' } },
+          avgOrderValue: { $avg: '$total' },
+          totalTax: { $sum: '$tax' },
+          totalDeliveryFee: { $sum: '$deliveryFee' }
+        }
+      },
+      { $sort: { totalGmv: -1 } }
+    ]);
+
+    // Demand by state (for heatmap)
+    const demandByState = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      {
+        $group: {
+          _id: '$deliveryAddress.state',
+          orderCount: { $sum: 1 },
+          totalGmv: { $sum: '$total' },
+          totalItems: { $sum: { $size: '$orderItems' } },
+          avgOrderValue: { $avg: '$total' },
+          buyerCount: { $sum: 1 },
+          uniqueBuyers: { $addToSet: '$buyerId' }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          orderCount: 1,
+          totalGmv: 1,
+          totalItems: 1,
+          avgOrderValue: 1,
+          uniqueBuyerCount: { $size: '$uniqueBuyers' }
+        }
+      },
+      { $sort: { totalGmv: -1 } }
+    ]);
+
+    // Regional trends over time
+    const regionalTrends = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      {
+        $group: {
+          _id: {
+            state: '$deliveryAddress.state',
+            month: { $dateToString: { format: '%Y-%m', date: '$createdAt' } }
+          },
+          orderCount: { $sum: 1 },
+          gmv: { $sum: '$total' }
+        }
+      },
+      { $sort: { '_id.month': 1 } }
+    ]);
+
+    // Top products by region (demand heatmap detail)
+    const topProductsByRegion = await Order.aggregate([
+      { $match: { status: 'delivered' } },
+      { $unwind: '$orderItems' },
+      {
+        $group: {
+          _id: {
+            state: '$deliveryAddress.state',
+            product: '$orderItems.productName'
+          },
+          quantity: { $sum: '$orderItems.quantity' },
+          revenue: { $sum: '$orderItems.totalPrice' }
+        }
+      },
+      { $sort: { quantity: -1 } },
+      { $limit: 50 }
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        regionalDemand,
+        demandByState,
+        regionalTrends,
+        topProductsByRegion
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get farmer earnings trends over time
+// @route   GET /api/analytics/farmer-earnings
+// @access  Admin only or Farmer for their own data
+export const getFarmerEarningsTrends = async (req, res) => {
+  try {
+    const { sellerId, period = 'monthly' } = req.query;
+
+    // Authorization check
+    const isAdmin = req.user.roles?.includes('admin');
+    const isFarmer = req.user.roles?.some((role) => ['farmer', 'business'].includes(role));
+
+    if (!isAdmin && !isFarmer) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to access farmer earnings data'
+      });
+    }
+
+    const targetSellerId = sellerId || req.user._id;
+
+    if (!isAdmin && String(targetSellerId) !== String(req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to view another farmer\'s earnings'
+      });
+    }
+
+    let dateFormat;
+    switch (period) {
+      case 'daily':
+        dateFormat = '%Y-%m-%d';
+        break;
+      case 'weekly':
+        dateFormat = '%Y-W%V';
+        break;
+      case 'yearly':
+        dateFormat = '%Y';
+        break;
+      case 'monthly':
+      default:
+        dateFormat = '%Y-%m';
+    }
+
+    // Earnings by period
+    const earningsByPeriod = await Order.aggregate([
+      { $match: { sellerId: new mongoose.Types.ObjectId(targetSellerId), status: 'delivered' } },
+      {
+        $group: {
+          _id: { $dateToString: { format: dateFormat, date: '$createdAt' } },
+          grossRevenue: { $sum: '$total' },
+          orderCount: { $sum: 1 },
+          avgOrderValue: { $avg: '$total' },
+          totalItems: { $sum: { $size: '$orderItems' } }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Commission breakdown by period
+    const commissionByPeriod = await Commission.aggregate([
+      { $match: { sellerId: new mongoose.Types.ObjectId(targetSellerId) } },
+      {
+        $group: {
+          _id: { $dateToString: { format: dateFormat, date: { $ifNull: ['$collectedAt', '$createdAt'] } } },
+          orderAmount: { $sum: '$orderAmount' },
+          commissionCharged: { $sum: '$commissionAmount' },
+          payoutAmount: { $sum: '$sellerPayout' },
+          orderCount: { $sum: 1 }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          orderAmount: 1,
+          commissionCharged: 1,
+          payoutAmount: 1,
+          orderCount: 1,
+          commissionRate: {
+            $cond: [
+              { $gt: ['$orderAmount', 0] },
+              { $multiply: [{ $divide: ['$commissionCharged', '$orderAmount'] }, 100] },
+              0
+            ]
+          }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Overall statistics
+    const overallStats = await Order.aggregate([
+      { $match: { sellerId: new mongoose.Types.ObjectId(targetSellerId), status: 'delivered' } },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: '$total' },
+          totalOrders: { $sum: 1 },
+          totalItems: { $sum: { $size: '$orderItems' } },
+          avgOrderValue: { $avg: '$total' },
+          minOrderValue: { $min: '$total' },
+          maxOrderValue: { $max: '$total' }
+        }
+      }
+    ]);
+
+    // Payout status breakdown
+    const payoutStatus = await Commission.aggregate([
+      { $match: { sellerId: new mongoose.Types.ObjectId(targetSellerId) } },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$commissionAmount' },
+          totalPayout: { $sum: '$sellerPayout' }
+        }
+      }
+    ]);
+
+    // Top products by this farmer
+    const topProducts = await Order.aggregate([
+      { $match: { sellerId: new mongoose.Types.ObjectId(targetSellerId), status: 'delivered' } },
+      { $unwind: '$orderItems' },
+      {
+        $group: {
+          _id: '$orderItems.productName',
+          quantity: { $sum: '$orderItems.quantity' },
+          revenue: { $sum: '$orderItems.totalPrice' },
+          avgPrice: { $avg: '$orderItems.unitPrice' },
+          orderCount: { $sum: 1 }
+        }
+      },
+      { $sort: { revenue: -1 } },
+      { $limit: 10 }
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        period,
+        overall: overallStats[0] || {
+          totalRevenue: 0,
+          totalOrders: 0,
+          totalItems: 0,
+          avgOrderValue: 0
+        },
+        earningsByPeriod,
+        commissionByPeriod,
+        payoutStatus,
+        topProducts
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+

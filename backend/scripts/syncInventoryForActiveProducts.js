@@ -101,7 +101,7 @@ async function run() {
       }
 
       if (APPLY) {
-        await Product.updateOne({ _id: product._id }, { $set: { stockQuantity: targetQty, status: 'active' } });
+        await Product.updateOne({ _id: product._id }, { $set: { _cachedStockQuantity: targetQty, status: 'active' } });
       }
 
       itemResult.updatedStockQuantity = targetQty;
